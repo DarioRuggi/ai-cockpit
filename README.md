@@ -62,7 +62,7 @@ small stand-ins that answer "not part of the open-source release".
 ## Security
 
 Please report security problems privately to **security@cockpit.ruggi.site** (see `SECURITY.md`). Cockpit runs as your own user and is
-meant for one person on one machine; it has a login lockout (5 wrong tries in 15 minutes) on the admin pages.
+meant for one person on one machine; it is not built to be exposed to the internet.
 
 ## Licence
 
