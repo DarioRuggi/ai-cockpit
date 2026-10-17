@@ -1,0 +1,109 @@
+{
+    "id": "sysadmin",
+    "name": "System administration (read only)",
+    "description": "Diagnose this machine without changing it. Every command only looks (df, free, ps, ss, systemctl status, journalctl, du): nothing is installed, started, stopped, edited or deleted, and nothing needs sudo; it sees what the account running it can see. Report gives the system, load, memory, disks and inodes, the busiest processes, failed services, listening ports, clock sync and whether a reboot is needed, with warnings first; Disk shows where the space went under a folder; Services shows failed units and the state of units you name; Ports lists what listens and which ports are open to the network that usually should not be (VNC, SMB, databases, Redis, Docker API, Ollama); Log reader digests any log file (counts, repeated messages with numbers masked, out of memory, disk and I/O errors, crashes, password guessing); Journal groups this boot's errors by program. To fix something, use the command window or the terminal yourself, with the findings in hand.",
+    "binary": "php",
+    "version_args": "--version",
+    "website": "https://www.freedesktop.org/wiki/Software/systemd/",
+    "packages": {
+        "apt": "php-cli iproute2 procps",
+        "dnf": "php-cli iproute procps-ng",
+        "pacman": "php iproute2 procps-ng",
+        "zypper": "php8 iproute2 procps",
+        "brew": "php"
+    },
+    "presets": [
+        {
+            "id": "report",
+            "optional_input": "/",
+            "label": "Report: the state of this machine",
+            "description": "System, uptime and load, memory and swap, every disk and its inodes, the five busiest processes by memory and by CPU, failed services, listening ports, clock sync, reboot needed. Findings (warnings first) come back as system(1) lines, with Fix with agent.",
+            "input_kinds": [
+                "folder",
+                "file",
+                "text"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "system_report",
+            "command": "php {WEBROOT}/sys_tool report {INPUT} {OUTPUT}",
+            "timeout_seconds": 120
+        },
+        {
+            "id": "disk",
+            "optional_input": "/",
+            "label": "Disk: where did the space go (a folder)",
+            "description": "Free space for the folder's filesystem, its biggest sub-folders, and files over 50 MB. Stays on one filesystem; stops after 60 seconds.",
+            "input_kinds": [
+                "folder"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "disk_use",
+            "command": "php {WEBROOT}/sys_tool disk {INPUT} {OUTPUT}",
+            "timeout_seconds": 180
+        },
+        {
+            "id": "services",
+            "optional_input": "/",
+            "label": "Services: failed units and the ones you name",
+            "description": "Failed systemd units, and for units named in the extra arguments (units=apache2,ollama,ssh) whether each is active and enabled at boot. Warns about a unit that is enabled but not running.",
+            "input_kinds": [
+                "folder",
+                "file",
+                "text"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "services",
+            "command": "php {WEBROOT}/sys_tool services {ARGS} {OUTPUT}",
+            "timeout_seconds": 120
+        },
+        {
+            "id": "ports",
+            "optional_input": "/",
+            "label": "Ports: what listens, and who can reach it",
+            "description": "Every listening TCP port with its address and, for your own programs, the program. Marks the ports open to the network and warns when one of them is a service that usually should not be (VNC, SMB, NetBIOS, databases, Redis, memcached, Docker API, Ollama).",
+            "input_kinds": [
+                "folder",
+                "file",
+                "text"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "ports",
+            "command": "php {WEBROOT}/sys_tool ports {INPUT} {OUTPUT}",
+            "timeout_seconds": 120
+        },
+        {
+            "id": "logs",
+            "label": "Log reader: digest a log file",
+            "description": "Give a log file as the input (the last 20 MB are read): counts by severity, the most repeated error lines with numbers masked, and known trouble: out of memory, disk full, I/O errors, crashes, permission denied, password guessing, kernel trouble.",
+            "input_kinds": [
+                "file",
+                "text"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_digest",
+            "command": "php {WEBROOT}/sys_tool logs {INPUT} {OUTPUT}",
+            "timeout_seconds": 180
+        },
+        {
+            "id": "journal",
+            "optional_input": "/",
+            "label": "Journal: this boot's errors by program",
+            "description": "The systemd journal's error-priority lines since boot, grouped by program with the most repeated messages. Needs an account in the group adm or systemd-journal (it says so if not).",
+            "input_kinds": [
+                "folder",
+                "file",
+                "text"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "journal_errors",
+            "command": "php {WEBROOT}/sys_tool journal {INPUT} {OUTPUT}",
+            "timeout_seconds": 120
+        }
+    ]
+}

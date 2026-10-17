@@ -1,0 +1,13 @@
+# runtime state and build output never go into the repository
+cockpit_data/
+**/logs/
+**/tmp/
+*.log
+*.tar.gz
+*.zip
+*.deb
+Installs/dist/
+.env
+**/users.json
+*.pem
+*.key

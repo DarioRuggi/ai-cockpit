@@ -1,0 +1,41 @@
+{
+    "id": "teaching",
+    "name": "Teaching",
+    "icon": "school",
+    "description": "Lesson plans, rubrics, worksheets and gradebooks that add up.",
+    "detect": [],
+    "note": "This is a teaching project: lesson plans, worksheets, rubrics and gradebooks. Never invent a student's grade, name, attendance or result, and never write or change a grade: the teacher decides marks, and the tools only read and add up. Work from the files given; where the curriculum, the age group or the lesson length is not stated, say what you assumed. Check a plan with the lesson tool: objectives written as what the student will be able to do, activity minutes that add up to the lesson, and an assessment that really tests each objective (the keyword match is only a hint). Rubric weights add up to 100. Worksheets get an answer key and the check; do not state an answer you are not sure of, mark it for the teacher to confirm. Keep student data out of anything that leaves this folder. Word or PDF versions are made with Markdown to DOCX or PDF.",
+    "verify": "lesson plan",
+    "group": "Research & learning",
+    "details": "A teacher's folder: lesson plans in markdown, worksheets with answer keys, rubrics and gradebooks as CSV. The Teaching tool checks a plan (objectives present, activity minutes against the lesson length, each objective mentioned in the assessment by keyword), checks a rubric CSV (weights must add up to 100) and lays it out with points per level, summarises a gradebook (weighted averages from a weight row, missing grades, the distribution, who is below a threshold) and checks a worksheet against its answer key (missing, duplicate or out-of-order numbers, a multiple-choice letter that is not an option). These are reading and arithmetic aids: they never mark work and never decide who passes; keep real student records out of the project unless you mean to. Pandoc makes Word or PDF handouts.",
+    "examples": [
+        "Check that a 50-minute lesson plan really adds up",
+        "Turn a list of criteria into a rubric and check the weights",
+        "Summarise the term's gradebook and list who is below 60",
+        "Check a worksheet against its answer key before printing"
+    ],
+    "tools": [
+        {
+            "tool": "lesson",
+            "why": "check plans, rubrics, gradebooks and worksheets against their answer keys"
+        },
+        {
+            "tool": "pandoc",
+            "why": "handouts and plans to Word or PDF"
+        },
+        {
+            "tool": "data",
+            "why": "questions about a larger gradebook in SQL"
+        }
+    ],
+    "starter": [
+        {
+            "path": "lessons/TEMPLATE.md",
+            "content": "# Lesson: title\n\nLength: 50 minutes\n\n## Objectives\n- Students will be able to ...\n\n## Activities\n- 10 min: warm-up\n- 25 min: main task\n- 10 min: practice\n- 5 min: wrap-up\n\n## Assessment\n- \n"
+        },
+        {
+            "path": "gradebook/TEMPLATE.csv",
+            "content": "student,quiz 1,essay,exam\nweight,20,30,50\nmax,10,100,100\nStudent A,8,75,82\nStudent B,6,,64\n"
+        }
+    ]
+}

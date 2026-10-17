@@ -1,0 +1,131 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// php_tool — the PHP project tools' work, for the tool presets (tools_builtins/phpdev.json). A command-line program, never reachable over the web.
+//
+//   php php_tool lint    FOLDER|FILE OUTPUT              php -l on every .php/.phtml/.inc file: syntax errors as file(line) Error: lines, then [exit code N]
+//   php php_tool scan    FOLDER|FILE OUTPUT              risky patterns found by reading the code: command and code execution with request data, SQL built from request data,
+//                                                        unescaped output of request data, include of request data, unserialize, removed functions, disabled TLS checks ...
+//   php php_tool guard   FOLDER OUTPUT [auth=auth.php]   the web-reachable scripts that do not include the auth guard (a script that answers requests with no login check)
+//   php php_tool outline FOLDER|FILE OUTPUT              classes, functions and methods with their file and line
+//   php php_tool version FOLDER|FILE OUTPUT              the oldest PHP version the code needs, from the language features it uses (match, enum, readonly, ?->, attributes ...)
+//
+// Reads only: nothing is run or included. vendor/, node_modules/ and .git/ are skipped. The scan is heuristic: it lists CANDIDATES for a person to check, with false positives.
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "php_tool: $m\n"); exit($rc); }
+[$sub, $in, $out] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? ''];
+$args = array_slice($argv, 4); $opt = []; foreach ($args as $a) foreach (preg_split('/\s+(?=\w+=)/', trim($a)) as $p) if (strpos($p, '=') !== false) { [$k, $v] = explode('=', $p, 2); $opt[strtolower(trim($k))] = trim($v); }
+if (!in_array($sub, ['lint', 'scan', 'guard', 'outline', 'version'], true) || $in === '' || $out === '') fail('usage: php_tool lint|scan|guard|outline|version FOLDER|FILE OUTPUT', 2);
+if (!file_exists($in)) fail("no such file or folder: $in");
+$root = is_dir($in) ? rtrim($in, '/') : dirname($in);
+function php_files(string $in): array {
+    if (is_file($in)) return [$in];
+    $res = []; $it = new RecursiveIteratorIterator(new RecursiveCallbackFilterIterator(new RecursiveDirectoryIterator($in, FilesystemIterator::SKIP_DOTS), function ($f) { return !in_array($f->getFilename(), ['vendor', 'node_modules', '.git', '.svn', 'cache'], true) && !$f->isLink(); }));
+    foreach ($it as $f) if ($f->isFile() && preg_match('/\.(php|phtml|inc|php8)$/i', $f->getFilename()) && $f->getSize() < 3000000) $res[] = $f->getPathname();
+    sort($res); return $res;
+}
+$files = php_files($in); if (!$files) fail('no PHP files found');
+if (count($files) > 3000) fail('more than 3000 PHP files: give a sub-folder');
+$rel = fn($f) => is_dir($in) ? substr($f, strlen($root) + 1) : basename($f);
+
+if ($sub === 'lint') {
+    $php = PHP_BINARY ?: 'php'; $err = 0; $msgs = []; $ok = 0;
+    foreach ($files as $f) {
+        $o = []; exec(escapeshellarg($php) . ' -d display_errors=1 -d error_reporting=-1 -l ' . escapeshellarg($f) . ' 2>&1', $o, $rc); $txt = implode("\n", $o);
+        if ($rc === 0 && !preg_match('/Parse error|Fatal error/', $txt)) { $ok++; continue; }
+        if (preg_match('/(?:PHP )?(Parse|Fatal) error:\s+(.+?) in .+? on line (\d+)/', $txt, $m)) { $msgs[] = $rel($f) . "({$m[3]}) Error: {$m[2]}"; $err++; } else { $msgs[] = $rel($f) . '(1) Error: ' . trim(substr($txt, 0, 200)); $err++; }
+    }
+    $rep = "# PHP syntax check: " . basename($in) . "\n\n- Files: " . count($files) . "; clean: $ok; PHP " . PHP_VERSION . "\n\n" . ($msgs ? "## Problems ($err errors)\n\n" . implode("\n", $msgs) . "\n" : "No syntax errors.\n") . "\n[exit code " . ($err ? 1 : 0) . "]\n";
+    file_put_contents($out, $rep); echo "Wrote $out ($err errors in " . count($files) . " files)\n"; exit(0);
+}
+
+if ($sub === 'outline') {
+    $o = "# Outline: " . basename($in) . "\n\n"; $nc = 0; $nf = 0;
+    foreach ($files as $f) {
+        $tk = @token_get_all((string)file_get_contents($f)); $items = []; $class = null; $depth = 0; $classDepth = null; $n = count($tk);
+        for ($i = 0; $i < $n; $i++) {
+            $t = $tk[$i]; if (!is_array($t)) { if ($t === '{') $depth++; elseif ($t === '}') { $depth--; if ($classDepth !== null && $depth < $classDepth) $class = $classDepth = null; } continue; }
+            if (in_array($t[0], [T_CURLY_OPEN, T_DOLLAR_OPEN_CURLY_BRACES], true)) $depth++;
+            if (in_array($t[0], [T_CLASS, T_INTERFACE, T_TRAIT, defined('T_ENUM') ? T_ENUM : -1], true)) { $prev = $tk[$i - 1] ?? null; if (is_array($prev) && $prev[0] === T_DOUBLE_COLON) continue; for ($j = $i + 1; $j < $n; $j++) if (is_array($tk[$j]) && $tk[$j][0] === T_STRING) { $class = $tk[$j][1]; $classDepth = $depth + 1; $items[] = [$t[2], strtolower($t[1]) . ' ' . $class]; $nc++; break; } }
+            elseif ($t[0] === T_FUNCTION) { for ($j = $i + 1; $j < $n; $j++) { if (is_array($tk[$j]) && $tk[$j][0] === T_STRING) { $items[] = [$t[2], ($class ? "  method $class::" : 'function ') . $tk[$j][1] . '()']; $nf++; break; } if ($tk[$j] === '(') break; } }
+        }
+        if ($items) { $o .= '## ' . $rel($f) . "\n\n"; foreach ($items as [$ln, $d]) $o .= "- line $ln: $d\n"; $o .= "\n"; }
+    }
+    file_put_contents($out, $o . "$nc class(es)/interface(s)/trait(s), $nf function(s)/method(s).\n\n[exit code 0]\n"); echo "Wrote $out\n"; exit(0);
+}
+
+if ($sub === 'version') {
+    $F = [['T_MATCH', '8.0', 'match expression'], ['T_NULLSAFE_OBJECT_OPERATOR', '8.0', 'the ?-> operator'], ['T_ATTRIBUTE', '8.0', 'attributes #[...]'], ['T_ENUM', '8.1', 'enum'], ['T_READONLY', '8.1', 'readonly'], ['T_FN', '7.4', 'arrow function fn'], ['T_COALESCE_EQUAL', '7.4', '??= operator'], ['T_ELLIPSIS', '5.6', '... (spread / variadic)'], ['T_POW', '5.6', '** operator'], ['T_SPACESHIP', '7.0', '<=> operator']];
+    $need = ['5.4' => []]; $maxV = '5.4'; $use = [];
+    foreach ($files as $f) {
+        $src = (string)file_get_contents($f); $tk = @token_get_all($src);
+        foreach ($tk as $i => $t) { if (!is_array($t)) continue; foreach ($F as [$c, $v, $d]) if (defined($c) && $t[0] === constant($c)) { $use[$v][$d][] = $rel($f) . ':' . $t[2]; if (version_compare($v, $maxV, '>')) $maxV = $v; } }
+        $lines = explode("\n", $src);
+        foreach ($lines as $ln => $l) {
+            if (preg_match('/\)\s*:\s*(?:\?)?(?:static|mixed|never)\b|\bfunction\s+\w+\s*\([^)]*\)\s*:\s*\??(?:mixed|never)\b/', $l) || preg_match('/\b(?:mixed|never)\s+\$\w+/', $l)) { $use['8.0']['mixed/never/static types'][] = $rel($f) . ':' . ($ln + 1); if (version_compare('8.0', $maxV, '>')) $maxV = '8.0'; }
+            if (preg_match('/function\s+\w+\s*\([^)]*\b(?:int|string|float|bool|array)\|/', $l) || preg_match('/(?:public|private|protected)\s+(?:readonly\s+)?\??\w+(?:\|\w+)+\s+\$/', $l)) { $use['8.0']['union types'][] = $rel($f) . ':' . ($ln + 1); if (version_compare('8.0', $maxV, '>')) $maxV = '8.0'; }
+            if (preg_match('/function\s+\w+\s*\([^)]*\b(?:int|string|float|bool|array|\?\w+)\s+\$/', $l)) { $use['7.0']['scalar type declarations'][] = $rel($f) . ':' . ($ln + 1); if (version_compare('7.0', $maxV, '>')) $maxV = '7.0'; }
+            if (preg_match('/\bdeclare\s*\(\s*strict_types/', $l)) { $use['7.0']['strict_types'][] = $rel($f) . ':' . ($ln + 1); if (version_compare('7.0', $maxV, '>')) $maxV = '7.0'; }
+            if (preg_match('/\b(?:str_contains|str_starts_with|str_ends_with)\s*\(/', $l)) { $use['8.0']['str_contains/starts_with/ends_with'][] = $rel($f) . ':' . ($ln + 1); if (version_compare('8.0', $maxV, '>')) $maxV = '8.0'; }
+            if (preg_match('/\b(?:array_is_list|enum_exists)\s*\(/', $l)) { $use['8.1']['array_is_list/enum_exists'][] = $rel($f) . ':' . ($ln + 1); if (version_compare('8.1', $maxV, '>')) $maxV = '8.1'; }
+            if (preg_match('/\b(?:json_validate|mb_str_pad|array_find|array_any|array_all)\s*\(/', $l)) { $use['8.3+']['json_validate / array_find / mb_str_pad'][] = $rel($f) . ':' . ($ln + 1); $maxV = '8.3'; }
+            if (preg_match('/\bnew\s+\w+\([^)]*\b\w+\s*:\s*[^:]/', $l) && preg_match('/\w+\(\s*\w+\s*:\s*\S/', $l) && !preg_match('/\?\s*[^:]*\w+\(/', $l)) { /* named arguments are hard to tell from ternaries on one line: not counted */ }
+        }
+    }
+    krsort($use); $o = "# Minimum PHP version: " . basename($in) . "\n\n- Needs PHP **$maxV** or newer (from the features found; functions that exist only in newer versions are matched by name).\n- This machine runs PHP " . PHP_VERSION . ".\n- Files read: " . count($files) . "\n\n";
+    foreach ($use as $v => $feats) { $o .= "## $v\n\n"; foreach ($feats as $d => $where) $o .= "- $d: " . count($where) . ' use(s), e.g. ' . implode(', ', array_slice($where, 0, 3)) . "\n"; $o .= "\n"; }
+    file_put_contents($out, $o . "[exit code 0]\n"); echo "Wrote $out (PHP $maxV)\n"; exit(0);
+}
+
+if ($sub === 'guard') {
+    $auth = $opt['auth'] ?? 'auth.php'; if (preg_match('/[^A-Za-z0-9._\-\/]/', $auth)) fail('not a file name: ' . $auth);
+    $base = preg_quote(basename($auth), '/'); $msgs = []; $n = 0; $guarded = 0;
+    foreach ($files as $f) {
+        $b = basename($f); $src = (string)file_get_contents($f); if (strpos($rel($f), '/') !== false && preg_match('~^(lib|includes?|src|vendor)/~', $rel($f))) continue;
+        if (!preg_match('/\$_(GET|POST|REQUEST|COOKIE|SERVER|FILES)\b|php:\/\/input|header\s*\(\s*[\'"]Content-Type|echo\b|json_encode/i', $src)) continue;        // a script that neither reads a request nor answers one
+        if (preg_match('/\b(?:require|include)(?:_once)?\b[^;]*' . $base . '/i', $src) || preg_match('/PHP_SAPI\s*[!=]==?\s*[\'"]cli[\'"]/', $src) || preg_match('/^\s*<\?php\s*\n?\s*\/\/[^\n]*(?:library|included|not a page)/i', $src)) { $guarded++; continue; }
+        if (!preg_match('/\$_(GET|POST|REQUEST|COOKIE|FILES)\b|php:\/\/input/', $src)) continue;      // reads nothing from the request: lower interest
+        $n++; $msgs[] = $rel($f) . '(1) Warning: reads the request and does not include ' . basename($auth) . ' (and has no command-line-only guard): reachable without a login check?';
+    }
+    $rep = "# Guard check: " . basename($in) . "\n\n- Auth file looked for: " . basename($auth) . "\n- Scripts that read a request: " . ($n + $guarded) . "; guarded or command-line only: $guarded; NOT guarded: $n\n- A script may guard itself some other way (a session check inline, a web-server rule): each one listed needs a look.\n\n";
+    $rep .= ($msgs ? "## Not guarded ($n)\n\n" . implode("\n", $msgs) . "\n" : "Every script that reads a request is guarded.\n") . "\n[exit code 0]\n";
+    file_put_contents($out, $rep); echo "Wrote $out ($n not guarded)\n"; exit(0);
+}
+
+// ---- scan --------------------------------------------------------------------------------------------------------------------------------------
+$REQ = '\$_(?:GET|POST|REQUEST|COOKIE|FILES|SERVER\s*\[\s*[\'"](?:HTTP_|QUERY_STRING|REQUEST_URI|PHP_SELF))';
+$RULES = [
+ ['Error',   'command execution with request data',          '/\b(?:shell_exec|exec|system|passthru|popen|proc_open|pcntl_exec)\s*\([^;]*' . $REQ . '/'],
+ ['Error',   'code execution (eval/assert/create_function)', '/\b(?:eval|create_function)\s*\(|\bassert\s*\(\s*[\'"$]/'],
+ ['Error',   'backtick command execution',                    '/`[^`\n]*\$[a-zA-Z_]+[^`\n]*`/'],
+ ['Error',   'include of request data',                       '/\b(?:include|require)(?:_once)?\b[^;]*' . $REQ . '/'],
+ ['Error',   'SQL built from request data',                   '/(?:SELECT|INSERT|UPDATE|DELETE|REPLACE)\b[^;\n]*["\'][^;\n]*(?:\.\s*' . $REQ . '|\{?' . $REQ . ')/i'],
+ ['Error',   'unserialize of request data',                   '/\bunserialize\s*\([^;]*' . $REQ . '/'],
+ ['Error',   'a removed function (mysql_*, ereg, split, each)', '/\b(?:mysql_(?:query|connect|fetch_\w+|escape_string|real_escape_string)|ereg(?:i)?(?:_replace)?|split|each)\s*\(/'],
+ ['Error',   'extract() of request data',                     '/\bextract\s*\(\s*' . $REQ . '/'],
+ ['Error',   'preg_replace with the /e modifier',             '/preg_replace\s*\(\s*([\'"]).+?\/[a-z]*e[a-z]*\1/'],
+ ['Warning', 'output of request data without escaping',       '/\b(?:echo|print)\b[^;\n]*' . $REQ . '(?![^;\n]*(?:htmlspecialchars|htmlentities|intval|json_encode|\(int\)|urlencode|escapeshellarg))/'],
+ ['Warning', 'redirect to a request value',                   '/header\s*\(\s*[\'"]Location:[^;\n]*' . $REQ . '/i'],
+ ['Warning', 'file access with request data',                 '/\b(?:file_get_contents|fopen|file_put_contents|readfile|unlink|rename|copy|mkdir|rmdir|move_uploaded_file)\s*\([^;\n]*' . $REQ . '/'],
+ ['Warning', 'TLS certificate checks switched off',           '/CURLOPT_SSL_VERIFY(?:PEER|HOST)\s*,\s*(?:false|0)|verify_peer\s*[\'"]?\s*=>\s*false/i'],
+ ['Warning', 'errors hidden or shown to the visitor',         '/error_reporting\s*\(\s*0\s*\)|ini_set\s*\(\s*[\'"]display_errors[\'"]\s*,\s*[\'"]?(?:1|on|true)/i'],
+ ['Warning', 'weak hash used for a password',                 '/\b(?:md5|sha1)\s*\([^;\n]*pass(?:word|wd)?/i'],
+ ['Warning', 'an unseeded or weak random for a secret',       '/\b(?:rand|mt_rand|uniqid)\s*\([^;\n]*\)[^;\n]*(?:token|secret|key|nonce|csrf|password)|(?:token|secret|key|nonce|csrf|password)[^;\n]*=[^;\n]*\b(?:rand|mt_rand|uniqid)\s*\(/i'],
+ ['Warning', 'a password or secret compared with ==',         '/(?:pass(?:word)?|token|secret|hash)[^;\n]*[^=!<>]==[^=][^;\n]*(?:\$_|\$\w+)|(?:\$_[A-Z]+\[[^\]]+\])\s*==\s*\$\w*(?:pass|token|secret|hash)/i'],
+ ['Note',    'error suppression with @',                      '/@\s*(?:\$\w+\s*\(|[a-z_]+\s*\()/'],
+ ['Note',    'a hard-coded password, key or token',           '/(?:pass(?:word|wd)?|secret|api[_-]?key|token)[\'"]?\s*(?:=|=>)\s*[\'"][A-Za-z0-9+\/_\-]{12,}[\'"]/i'],
+];
+$msgs = []; $cnt = ['Error' => 0, 'Warning' => 0, 'Note' => 0];
+foreach ($files as $f) {
+    $lines = explode("\n", (string)file_get_contents($f)); $block = false;
+    foreach ($lines as $i => $l) {
+        $t = ltrim($l); if (strncmp($t, '//', 2) === 0 || strncmp($t, '#', 1) === 0 && strncmp($t, '#[', 2) !== 0) continue; if (strncmp($t, '/*', 2) === 0) $block = true; if ($block) { if (strpos($l, '*/') !== false) $block = false; continue; } if (strncmp($t, '*', 1) === 0) continue;
+        foreach ($RULES as [$sev, $what, $re]) { if (@preg_match($re, $l)) { $msgs[] = [$rel($f), $i + 1, $sev, $what, trim(mb_substr($l, 0, 120))]; $cnt[$sev]++; } }
+    }
+}
+$o = "# PHP scan: " . basename($in) . "\n\n- Files: " . count($files) . "; candidates: " . count($msgs) . " (" . $cnt['Error'] . ' errors, ' . $cnt['Warning'] . ' warnings, ' . $cnt['Note'] . " notes)\n- Found by reading the code with patterns: some are false alarms, and some risks have no pattern. A person decides.\n\n";
+$by = []; foreach ($msgs as $m) $by[$m[3]][] = $m;
+$o .= $msgs ? "## Candidates\n\n" : "No candidates found.\n"; foreach (array_slice($msgs, 0, 300) as [$f, $l, $sev, $what, $code]) $o .= "$f($l) $sev: $what   [ $code ]\n";
+if (count($msgs) > 300) $o .= "\n… " . (count($msgs) - 300) . " more.\n";
+file_put_contents($out, $o . "\n[exit code " . ($cnt['Error'] > 0 ? 1 : 0) . "]\n"); echo "Wrote $out ({$cnt['Error']} errors, {$cnt['Warning']} warnings, {$cnt['Note']} notes)\n";

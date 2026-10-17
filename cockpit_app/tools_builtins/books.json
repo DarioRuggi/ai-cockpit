@@ -1,0 +1,81 @@
+{
+    "id": "books",
+    "name": "Bookkeeping",
+    "description": "Check and summarise a CSV ledger or bank export. Column names are recognised in several languages (more can be added): date, description, amount or debit and credit, category, invoice, tax, currency; amounts such as 1,234.56, 1.234,56, (12.50) and 12.50- are all read. Check finds unreadable dates and amounts, future dates, duplicates, rows with no category, zero amounts, unusually large amounts for their category, gaps and repeats in invoice numbers, and mixed currencies; Summary gives income, expenses and net, by category and by month, and the biggest payees; Reconcile matches a bank export against the ledger by amount and date (3 days either way) and lists what is only on one side; Tax totals the tax inside gross amounts by rate and by quarter. Plain arithmetic on your own data, not accounting or tax advice. The original is never changed. Receipts scanning is the Receipts feature; free-form questions in SQL are in the Data analysis tool.",
+    "binary": "php",
+    "version_args": "--version",
+    "website": "https://www.sqlite.org",
+    "packages": {
+        "apt": "php-cli php-mbstring",
+        "dnf": "php-cli php-mbstring",
+        "pacman": "php",
+        "zypper": "php8 php8-mbstring",
+        "brew": "php"
+    },
+    "presets": [
+        {
+            "id": "check",
+            "label": "Check the ledger",
+            "description": "Unreadable dates and amounts (error), future dates, duplicates, zero amounts, an amount more than 8 times the usual for its category, repeated invoice numbers (warnings), no category, gaps in the invoice numbers (notes), several currencies. Problems come back as file(line), with Fix with agent.",
+            "input_kinds": [
+                "csv",
+                "file",
+                "spreadsheet",
+                "text"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_check",
+            "command": "php {WEBROOT}/books_tool check {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "summary",
+            "label": "Summary: income, expenses, by category and month",
+            "description": "Income, expenses and net; totals by category and by month; the ten biggest payees. Type positive=expense in the extra arguments if a positive amount in your file means money spent (the default is a negative amount).",
+            "input_kinds": [
+                "csv",
+                "file",
+                "spreadsheet",
+                "text"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_summary",
+            "command": "php {WEBROOT}/books_tool summary {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "reconcile",
+            "label": "Reconcile with a bank export",
+            "description": "The input is the ledger; give the bank file in the extra arguments: with=/path/to/bank.csv. Matches by amount and date (within 3 days), and lists the rows only in the ledger, only in the bank file, and matched with a date difference. Bank files with debit and credit columns and with 1.234,56 amounts are read.",
+            "input_kinds": [
+                "csv",
+                "file",
+                "spreadsheet",
+                "text"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_reconciliation",
+            "command": "php {WEBROOT}/books_tool reconcile {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "tax",
+            "label": "Tax by rate and by quarter (VAT / IVA / GST)",
+            "description": "Needs a tax column: a column called \"tax rate\" (or numbers with a % sign) holds rates, any other tax column holds tax amounts. Amounts are taken as gross (the tax is inside them); money in is sales, money out is purchases. Totals per rate and per quarter, and the net to pay. Check against your invoices.",
+            "input_kinds": [
+                "csv",
+                "file",
+                "spreadsheet",
+                "text"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_tax",
+            "command": "php {WEBROOT}/books_tool tax {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        }
+    ]
+}

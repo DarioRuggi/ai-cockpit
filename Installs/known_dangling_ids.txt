@@ -1,0 +1,16 @@
+# Element ids that are read but never defined. Each is a latent bug: the read
+# returns null and the code silently does nothing. Triage and remove them —
+# this list should only ever shrink.
+#
+# Found 2026-09-29 while three features turned out to share one wrong id
+# (#promptInput instead of #prompt-in). These survivors are all guarded, so they
+# fail quietly rather than throwing:
+bgtasks-count-badge
+bgtasks-running-dot
+font-size-display
+usage-server-time
+session-status-label
+ollama-model-hidden
+# orchestrator's sentOllamaModelGet() returns '' when this is missing, so the
+# broadcast path sends no model and the server falls back to a default.
+ollama-model

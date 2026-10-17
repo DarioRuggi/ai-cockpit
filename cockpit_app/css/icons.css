@@ -1,0 +1,42 @@
+/* =============================================================================
+   icons.css — Material Symbols, served from this machine.
+
+   The icon font used to come from fonts.googleapis.com on every page load. On a
+   machine with no internet — a normal state for a local-first app, and the
+   assumption behind the kiosk/appliance plans — the font simply never arrived
+   and every icon in the UI rendered as its literal ligature text: "settings",
+   "attach_file", "deployed_code". Not a cosmetic defect at that point; the whole
+   interface becomes unreadable.
+
+   assets/fonts/material-symbols-rounded.woff2 is a SUBSET built from the icon
+   names this app actually uses (Installs/build_icon_font.sh rebuilds it and
+   lists what changed). 21 KB against ~3.5 MB for the complete set.
+
+   Adding an icon to the UI means re-running that script, otherwise the new glyph
+   renders as its own name. Installs/check_icons.sh compares the source against
+   the vendored list and fails when something is missing; rebuild_tarballs runs
+   it on every build.
+   ============================================================================= */
+@font-face {
+  font-family: 'Material Symbols Rounded';
+  font-style: normal;
+  font-weight: 300;
+  font-display: block;   /* never flash the ligature text while the font loads */
+  src: url('../assets/fonts/material-symbols-rounded.woff2') format('woff2');
+}
+
+.material-symbols-rounded {
+  font-family: 'Material Symbols Rounded';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 24px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+}

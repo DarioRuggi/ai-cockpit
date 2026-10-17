@@ -1,0 +1,162 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// petcare_tool — the Pets tools' work, for the tool presets (tools_builtins/petcare.json). A command-line program, never reachable over the web.
+//
+//   php petcare_tool due      LOG OUTPUT [today=YYYY-MM-DD] [within=30]   reminders: for every pet and task, the last time it was done + its interval = next due: overdue / due soon / fine
+//   php petcare_tool vaccines LOG OUTPUT [schedule=FILE.csv] [today=...]  vaccination / treatment check: what is overdue, never recorded, or was given earlier than the interval you set
+//   php petcare_tool weight   LOG OUTPUT [unit=kg|lb] [threshold=10]      weight trend per pet: first / last, change, per month, and a mention when it changed by more than threshold % in ~90 days
+//   php petcare_tool feeding  LOG OUTPUT guide=KG:G,KG:G,... [weight=KG] [meals=2] [kcal=KCAL_PER_100G] [pet=NAME]   amount per day from the PACKAGE table you type in, by interpolation
+//
+// LOG is a CSV with a header: date (YYYY-MM-DD), pet, task (vaccination, flea treatment, worming, vet visit, grooming, weight ...), interval_days (optional: repeat every N days),
+// weight_kg (optional, or weight_lb), notes. Column names are also found in French, German, Italian, Portuguese and Spanish.
+// THIS IS NOT MEDICAL OR VETERINARY ADVICE. It does date arithmetic on what you recorded and reads numbers off a table you supply. It does not know your animal, its health, or the right
+// dose, diet or vaccine schedule: ask the vet. The original is never changed.
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "petcare_tool: $m\n"); exit($rc); }
+[$sub, $in, $out] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? ''];
+if (!in_array($sub, ['due', 'vaccines', 'weight', 'feeding'], true) || $in === '' || $out === '') fail('usage: petcare_tool due|vaccines|weight|feeding LOG OUTPUT [today= within= schedule= unit= threshold= guide=KG:G,... weight= meals= kcal= pet=]', 2);
+$opt = []; foreach (array_slice($argv, 4) as $a) foreach (preg_split('/\s+(?=\w+=)/', trim($a)) as $p) if (strpos($p, '=') !== false) { [$k, $v] = explode('=', $p, 2); $opt[strtolower(trim($k))] = trim($v); }
+date_default_timezone_set('UTC');
+
+function read_csv(string $f): array {
+    if (!is_file($f)) fail("no such file: $f");
+    $t = (string)file_get_contents($f); if (strncmp($t, "\xEF\xBB\xBF", 3) === 0) $t = substr($t, 3);
+    if (!mb_check_encoding($t, 'UTF-8')) $t = mb_convert_encoding($t, 'UTF-8', 'CP1252');
+    $t = str_replace(["\r\n", "\r"], "\n", $t); $first = strtok($t, "\n"); if ($first === false || trim($first) === '') fail("$f is empty");
+    $c = ["\t" => substr_count($first, "\t"), ';' => substr_count($first, ';'), ',' => substr_count($first, ',')]; arsort($c); $sep = array_key_first($c);
+    $rows = []; $h = fopen('php://memory', 'r+'); fwrite($h, $t); rewind($h); $ln = 0; $header = null;
+    while (($r = fgetcsv($h, 0, $sep, '"', '')) !== false) { $ln++; if ($r === [null] || (count($r) === 1 && trim((string)$r[0]) === '')) continue; if ($header === null) { $header = array_map(fn($x) => trim((string)$x), $r); continue; } $rows[] = ['line' => $ln, 'cells' => $r]; }
+    fclose($h); if ($header === null) fail('the file is empty'); return [$header, $rows];
+}
+function find_col(array $header, array $names): ?int { foreach ($header as $i => $h) { $x = mb_strtolower(trim(preg_replace('/[\s_\-.]+/u', ' ', $h))); foreach ($names as $n) if ($x === $n) return $i; } foreach ($header as $i => $h) { $x = mb_strtolower(trim(preg_replace('/[\s_\-.]+/u', ' ', $h))); foreach ($names as $n) if (in_array($n, explode(' ', $x), true)) return $i; } return null; }
+function cell(array $r, ?int $i): string { return $i === null ? '' : trim((string)($r['cells'][$i] ?? '')); }
+function num(string $s): ?float { $s = trim(str_replace(',', '.', $s)); return preg_match('/^\d+(\.\d+)?$/', $s) ? (float)$s : null; }
+function parse_date(string $s, bool &$amb): ?string {
+    $amb = false; $s = trim($s);
+    if (preg_match('/^(\d{4})-(\d{1,2})-(\d{1,2})/', $s, $m)) return checkdate((int)$m[2], (int)$m[3], (int)$m[1]) ? sprintf('%04d-%02d-%02d', $m[1], $m[2], $m[3]) : null;
+    if (preg_match('/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{4})$/', $s, $m)) { [$a, $b, $y] = [(int)$m[1], (int)$m[2], (int)$m[3]]; if ($a > 12) [$d, $mo] = [$a, $b]; elseif ($b > 12) [$d, $mo] = [$b, $a]; else { $amb = $a !== $b; [$d, $mo] = [$a, $b]; } return checkdate($mo, $d, $y) ? sprintf('%04d-%02d-%02d', $y, $mo, $d) : null; }
+    return null;
+}
+function dd(string $a, string $b): int { return (int)(new DateTime($a))->diff(new DateTime($b))->format('%r%a'); }
+function plus(string $d, int $n): string { return (new DateTime($d))->modify(($n >= 0 ? '+' : '') . $n . ' days')->format('Y-m-d'); }
+function nf(float $v, int $dp = 1): string { $s = number_format($v, $dp, '.', ''); return strpos($s, '.') === false ? $s : rtrim(rtrim($s, '0'), '.'); }
+$today = $opt['today'] ?? date('Y-m-d'); $amb0 = false; if (parse_date($today, $amb0) === null) fail('today= must be YYYY-MM-DD', 2); $today = parse_date($today, $amb0);
+$name = basename($in);
+if ($sub === 'feeding' && !isset($opt['guide'])) fail('give the package table: guide=KG:GRAMS,KG:GRAMS (for example guide=5:80,10:140,20:230, from the package)', 2);
+
+/** Read the care log into entries; problems are collected. [date, pet, task, interval|null, weight_kg|null, line] */
+function load_log(string $f, string $today, array &$msgs, int &$err, int &$warn): array {
+    [$h, $rows] = read_csv($f); $n = basename($f);
+    $cd = find_col($h, ['date', 'fecha', 'datum', 'data']); $cp = find_col($h, ['pet', 'animal', 'name', 'nom', 'mascota', 'tier', 'nome']); $ct = find_col($h, ['task', 'type', 'care', 'item', 'tarea', 'tache', 'aufgabe', 'compito', 'tarefa', 'treatment']);
+    $ci = find_col($h, ['interval days', 'interval', 'every days', 'repeat days', 'repeat']); $cw = find_col($h, ['weight kg', 'weight', 'poids', 'gewicht', 'peso']); $cl = find_col($h, ['weight lb', 'weight lbs']);
+    if ($cd === null || $ct === null) fail('the care log needs the columns date and task (pet, interval_days, weight_kg are optional)');
+    $e = []; $ambNoted = false; $seen = [];
+    $add = function (string $k, int $l, string $m) use (&$msgs, &$err, &$warn, $n) { $msgs[] = "$n($l) $k: $m"; if ($k === 'Error') $err++; elseif ($k === 'Warning') $warn++; };
+    foreach ($rows as $r) {
+        $l = $r['line']; $amb = false; $d = parse_date(cell($r, $cd), $amb); $task = cell($r, $ct); $pet = $cp !== null ? cell($r, $cp) : '';
+        if ($d === null) { $add('Error', $l, 'the date "' . cell($r, $cd) . '" cannot be read (use YYYY-MM-DD)'); continue; }
+        if ($amb && !$ambNoted) { $add('Note', $l, 'the date "' . cell($r, $cd) . '" could be day-first or month-first: read as day first; use YYYY-MM-DD to be exact'); $ambNoted = true; }
+        if ($d > $today) $add('Warning', $l, "the date $d is in the future (after $today)");
+        $iv = null; if ($ci !== null && cell($r, $ci) !== '') { $iv = num(cell($r, $ci)); if ($iv === null || $iv <= 0) { $add('Warning', $l, 'interval_days "' . cell($r, $ci) . '" is not a positive number: ignored'); $iv = null; } }
+        $w = null; if ($cw !== null && cell($r, $cw) !== '') { $w = num(cell($r, $cw)); if ($w === null || $w <= 0) $add('Warning', $l, 'the weight "' . cell($r, $cw) . '" is not a positive number'); }
+        elseif ($cl !== null && cell($r, $cl) !== '') { $w = num(cell($r, $cl)); if ($w === null || $w <= 0) $add('Warning', $l, 'the weight "' . cell($r, $cl) . '" is not a positive number'); else $w *= 0.45359237; }
+        if ($task === '' && $w === null) { $add('Warning', $l, 'no task and no weight on this row'); continue; }
+        $k = mb_strtolower("$d|$pet|$task"); if (isset($seen[$k])) $add('Warning', $l, 'looks like a duplicate of line ' . $seen[$k]); else $seen[$k] = $l;
+        $e[] = ['d' => $d, 'pet' => $pet, 'task' => $task, 'iv' => $iv, 'w' => $w, 'line' => $l];
+    }
+    usort($e, fn($a, $b) => strcmp($a['d'], $b['d']) ?: ($a['line'] <=> $b['line']));
+    if (!$e) fail('no usable rows in ' . $n);
+    return $e;
+}
+$msgs = []; $err = 0; $warn = 0; $entries = load_log($in, $today, $msgs, $err, $warn);
+$DISC = "\nThis is date arithmetic on what you recorded, not veterinary advice: it does not know your animal. Follow your vet's schedule and ask them when in doubt.\n";
+function label(array $e): string { return ($e['pet'] !== '' ? $e['pet'] . ': ' : '') . $e['task']; }
+/** last entry and interval per pet+task */
+function by_task(array $entries): array {
+    $g = []; foreach ($entries as $e) { if ($e['task'] === '') continue; $k = mb_strtolower($e['pet'] . '|' . $e['task']); if (!isset($g[$k])) $g[$k] = ['pet' => $e['pet'], 'task' => $e['task'], 'dates' => [], 'iv' => null, 'line' => 0]; $g[$k]['dates'][] = $e['d']; $g[$k]['last'] = $e['d']; $g[$k]['line'] = $e['line']; if ($e['iv'] !== null) $g[$k]['iv'] = $e['iv']; }
+    return $g;
+}
+$VAC = '/(vaccin|vacun|vacin|impf|booster|rappel|richiamo|refuerzo|refor[cç]o|rabies|rage|tollwut|rabbia|rabia|raiva|worm|verm|wurm|parass|desparasit|parasit|flea|tick|puce|tique|floh|zecke|pulce|zecca|pulga|garrapata|pulga|carrapato|treatment|traitement|behandlung|trattamento|tratamiento|tratamento|deworm)/iu';
+
+// ---- due ----------------------------------------------------------------------------------------------------------------------------------------------
+if ($sub === 'due') {
+    $within = (int)($opt['within'] ?? 30); $g = by_task($entries); $rows = []; $noIv = [];
+    foreach ($g as $x) {
+        if ($x['iv'] === null) { if (!preg_match('/^(weight|poids|gewicht|peso|weigh)/iu', $x['task'])) $noIv[] = $x; continue; }
+        $next = plus($x['last'], (int)round($x['iv'])); $delta = dd($today, $next); $st = $delta < 0 ? 'OVERDUE by ' . (-$delta) . ' days' : ($delta === 0 ? 'due TODAY' : ($delta <= $within ? "due in $delta days" : "fine (in $delta days)"));
+        $rows[] = [$delta, $x, $next, $st];
+    }
+    usort($rows, fn($a, $b) => $a[0] <=> $b[0]);
+    $o = "# Care reminders on $today\n\nSource: $name. Next due = last time done + interval_days.\n\n"; $lines = [];
+    if ($rows) { $o .= "| Pet / task | Last done | Every | Next due | Status |\n|---|---|---|---|---|\n"; foreach ($rows as [$dl, $x, $next, $st]) { $o .= '| ' . label($x) . ' | ' . $x['last'] . ' | ' . nf((float)$x['iv'], 0) . ' days | ' . $next . " | $st |\n"; if ($dl < 0) $lines[] = "$name({$x['line']}) Warning: " . label($x) . " was due $next ($st)"; } }
+    else $o .= "No task has an interval_days, so nothing can be scheduled.\n";
+    if ($noIv) { $o .= "\n## Done, but no interval given\n\n"; foreach ($noIv as $x) $o .= '- ' . label($x) . ' last done ' . $x['last'] . ' (' . dd($x['last'], $today) . " days ago)\n"; $o .= "\nAdd interval_days to these rows to get reminders.\n"; }
+    $o .= $DISC . ($msgs ? "\n## Log problems\n\n" . implode("\n", $msgs) . "\n" : '') . ($lines ? "\n" . implode("\n", $lines) . "\n" : '') . "\n[exit code " . ($err > 0 ? 1 : 0) . "]\n";
+    file_put_contents($out, $o); echo "Wrote $out (" . count($rows) . ' scheduled, ' . count(array_filter($rows, fn($r) => $r[0] < 0)) . " overdue)\n"; exit(0);
+}
+
+// ---- vaccines -----------------------------------------------------------------------------------------------------------------------------------------
+if ($sub === 'vaccines') {
+    $sched = [];
+    if (isset($opt['schedule'])) { [$h, $rows] = read_csv($opt['schedule']); $ct = find_col($h, ['task', 'type', 'item', 'treatment', 'tarea', 'tache']); $ci = find_col($h, ['interval days', 'interval', 'every days']); $cp = find_col($h, ['pet', 'animal', 'name']);
+        if ($ct === null || $ci === null) fail('the schedule CSV needs the columns task and interval_days (pet is optional)'); foreach ($rows as $r) { $iv = num(cell($r, $ci)); if (cell($r, $ct) !== '' && $iv) $sched[] = ['pet' => cell($r, $cp), 'task' => cell($r, $ct), 'iv' => $iv]; } if (!$sched) fail('no usable rows in the schedule'); }
+    $g = by_task($entries); $o = "# Vaccination and treatment check on $today\n\nSource: $name" . ($sched ? ' against the schedule ' . basename($opt['schedule']) : ' (intervals from the log)') . ".\n\n"; $res = []; $pets = array_unique(array_column($entries, 'pet'));
+    $note = function (string $k, int $l, string $m) use (&$res, &$err, &$warn, $name) { $res[] = "$name($l) $k: $m"; if ($k === 'Warning') $warn++; if ($k === 'Error') $err++; };
+    if ($sched) {
+        foreach ($sched as $s) foreach (($s['pet'] !== '' ? [$s['pet']] : $pets) as $pet) {
+            $k = mb_strtolower($pet . '|' . $s['task']); $x = $g[$k] ?? null; if ($x === null) { foreach ($g as $kk => $gx) if (mb_strtolower($gx['pet']) === mb_strtolower($pet) && mb_stripos($gx['task'], $s['task']) !== false) { $x = $gx; break; } }
+            $lab = ($pet !== '' ? "$pet: " : '') . $s['task'];
+            if ($x === null) { $note('Warning', 1, "$lab is in the schedule but was never recorded"); continue; }
+            $next = plus($x['last'], (int)$s['iv']); $dl = dd($today, $next); if ($dl < 0) $note('Warning', $x['line'], "$lab is overdue: last $x[last], every " . (int)$s['iv'] . " days, was due $next (" . (-$dl) . ' days ago)'); elseif ($dl <= 30) $note('Note', $x['line'], "$lab is due in $dl days ($next)"); else $note('Note', $x['line'], "$lab is up to date (next $next)");
+            for ($i = 1; $i < count($x['dates']); $i++) { $gap = dd($x['dates'][$i - 1], $x['dates'][$i]); if ($gap < 0.9 * $s['iv']) $note('Warning', $x['line'], "$lab: two doses $gap days apart ({$x['dates'][$i]}) but the schedule says " . (int)$s['iv'] . ' days'); }
+        }
+    } else {
+        $any = false; foreach ($g as $x) { if (!preg_match($VAC, $x['task'])) continue; $any = true; $lab = label($x);
+            if ($x['iv'] === null) { $note('Note', $x['line'], "$lab last done $x[last]: no interval_days, so no due date (add one from your vet's schedule)"); continue; }
+            $next = plus($x['last'], (int)round($x['iv'])); $dl = dd($today, $next); if ($dl < 0) $note('Warning', $x['line'], "$lab is overdue: last $x[last], every " . (int)$x['iv'] . " days, was due $next (" . (-$dl) . ' days ago)'); elseif ($dl <= 30) $note('Note', $x['line'], "$lab is due in $dl days ($next)"); else $note('Note', $x['line'], "$lab is up to date (next $next)");
+            for ($i = 1; $i < count($x['dates']); $i++) { $gap = dd($x['dates'][$i - 1], $x['dates'][$i]); if ($gap > 1.5 * $x['iv']) $note('Warning', $x['line'], "$lab: a gap of $gap days before {$x['dates'][$i]} (interval $x[iv])"); }
+        } if (!$any) $note('Note', 1, 'no task looks like a vaccination or treatment (vaccination, rabies, worming, flea, tick ...): nothing to check');
+    }
+    $o .= implode("\n", $res) . "\n" . $DISC . ($msgs ? "\n## Log problems\n\n" . implode("\n", $msgs) . "\n" : '') . "\n[exit code " . ($err > 0 ? 1 : 0) . "]\n";
+    file_put_contents($out, $o); echo "Wrote $out ($warn warnings)\n"; exit(0);
+}
+
+// ---- weight -------------------------------------------------------------------------------------------------------------------------------------------
+$unit = strtolower($opt['unit'] ?? 'kg'); if (!in_array($unit, ['kg', 'lb'], true)) fail('unit must be kg or lb', 2); $fx = $unit === 'lb' ? 2.20462262 : 1.0;
+if ($sub === 'weight') {
+    $th = (float)($opt['threshold'] ?? 10); $per = []; foreach ($entries as $e) if ($e['w'] !== null) $per[$e['pet']][] = $e;
+    if (!$per) fail('no weights in the log (a weight_kg or weight_lb column)');
+    $o = "# Weight trend on $today\n\nSource: $name. Weights in $unit.\n\n";
+    foreach ($per as $pet => $ws) {
+        $n = count($ws); $a = $ws[0]; $b = $ws[$n - 1]; $days = dd($a['d'], $b['d']); $chg = ($b['w'] - $a['w']) * $fx; $pct = $a['w'] > 0 ? ($b['w'] - $a['w']) / $a['w'] * 100 : 0;
+        $o .= '## ' . ($pet !== '' ? $pet : 'Pet') . "\n\n- $n reading" . ($n === 1 ? "" : "s") . ", " . $a['d'] . ' to ' . $b['d'] . " ($days days)\n- First " . nf($a['w'] * $fx, 2) . " $unit, last " . nf($b['w'] * $fx, 2) . " $unit: " . ($chg >= 0 ? '+' : '') . nf($chg, 2) . " $unit (" . ($pct >= 0 ? '+' : '') . nf($pct, 1) . "%)\n";
+        if ($days >= 14) $o .= '- About ' . ($chg >= 0 ? '+' : '') . nf($chg / $days * 30, 2) . " $unit per 30 days\n";
+        if ($n >= 3) { $l3 = array_slice($ws, -3); $dir = ($l3[2]['w'] > $l3[1]['w'] && $l3[1]['w'] > $l3[0]['w']) ? 'rising' : (($l3[2]['w'] < $l3[1]['w'] && $l3[1]['w'] < $l3[0]['w']) ? 'falling' : 'mixed'); $o .= "- The last three readings are $dir\n"; }
+        $cut = plus($b['d'], -90); $ref = null; foreach ($ws as $w) if ($w['d'] >= $cut) { $ref = $w; break; }
+        if ($ref !== null && $ref['d'] !== $b['d'] && $ref['w'] > 0) { $p90 = ($b['w'] - $ref['w']) / $ref['w'] * 100; if (abs($p90) > $th) $o .= '- NOTE: ' . ($p90 > 0 ? 'up ' : 'down ') . nf(abs($p90), 1) . '% since ' . $ref['d'] . ' (more than ' . nf($th, 0) . "%): worth mentioning at the next vet visit\n"; }
+        $o .= "\n| Date | Weight ($unit) |\n|---|---|\n"; foreach (array_slice($ws, -12) as $w) $o .= '| ' . $w['d'] . ' | ' . nf($w['w'] * $fx, 2) . " |\n"; $o .= "\n";
+    }
+    $o .= $DISC . "A weight change can have many causes and says nothing by itself about health.\n" . ($msgs ? "\n## Log problems\n\n" . implode("\n", $msgs) . "\n" : '');
+    file_put_contents($out, $o); echo "Wrote $out (" . count($per) . " pets)\n"; exit(0);
+}
+
+// ---- feeding ------------------------------------------------------------------------------------------------------------------------------------------
+$pairs = []; foreach (explode(',', $opt['guide']) as $p) { if (!preg_match('/^\s*(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)\s*$/', $p, $m)) fail('guide= must look like 5:80,10:140,20:230 (weight in kg : grams per day, from the package)', 2); $pairs[] = [(float)$m[1], (float)$m[2]]; }
+usort($pairs, fn($a, $b) => $a[0] <=> $b[0]); if (count($pairs) < 2) fail('guide= needs at least two weight:grams points', 2);
+for ($i = 1; $i < count($pairs); $i++) if ($pairs[$i][0] == $pairs[$i - 1][0]) fail('guide= has the same weight twice', 2);
+$meals = max(1, (int)($opt['meals'] ?? 2)); $kc = isset($opt['kcal']) ? (float)$opt['kcal'] : null; $who = [];
+if (isset($opt['weight'])) { $w = num($opt['weight']); if ($w === null || $w <= 0) fail('weight= must be a positive number (kg)', 2); $who[$opt['pet'] ?? 'Pet'] = $w; }
+else { foreach ($entries as $e) if ($e['w'] !== null && (!isset($opt['pet']) || mb_strtolower($e['pet']) === mb_strtolower($opt['pet']))) $who[$e['pet'] !== '' ? $e['pet'] : 'Pet'] = $e['w']; }
+if (!$who) fail('no weight to use: give weight=KG or a weight column in the log' . (isset($opt['pet']) ? ' for that pet' : ''));
+$lo = $pairs[0][0]; $hi = $pairs[count($pairs) - 1][0];
+$o = "# Feeding amount from the package table\n\nSource: $name; package table " . implode(', ', array_map(fn($p) => nf($p[0]) . ' kg = ' . nf($p[1]) . ' g', $pairs)) . ".\n\n| Pet | Weight | Per day | Per meal (" . $meals . ") |" . ($kc ? ' Energy per day |' : '') . "\n|---|---|---|---|" . ($kc ? '---|' : '') . "\n"; $refused = [];
+foreach ($who as $pet => $w) {
+    if ($w < $lo || $w > $hi) { $refused[] = "$pet weighs " . nf($w, 2) . ' kg, outside the table (' . nf($lo) . '-' . nf($hi) . " kg): the package gives no amount for it; ask the vet"; continue; }
+    $g = null; for ($i = 1; $i < count($pairs); $i++) if ($w <= $pairs[$i][0] + 1e-9) { [$w0, $g0] = $pairs[$i - 1]; [$w1, $g1] = $pairs[$i]; $g = $g0 + ($g1 - $g0) * ($w - $w0) / ($w1 - $w0); break; }
+    $o .= "| $pet | " . nf($w, 2) . ' kg | ' . nf($g, 0) . ' g | ' . nf($g / $meals, 0) . ' g |' . ($kc ? ' ' . nf($g * $kc / 100, 0) . ' kcal |' : '') . "\n";
+}
+foreach ($refused as $r) $o .= "\n$r\n";
+$o .= "\nThe amount is read from the table you typed in, between its two nearest rows (a straight line); nothing is extrapolated beyond the table. Package amounts are a starting point only: age, activity, neutering, treats and health change what an animal needs. Not veterinary advice: ask the vet about the right food and amount.\n";
+file_put_contents($out, $o); echo "Wrote $out\n"; exit($refused && count($refused) === count($who) ? 1 : 0);

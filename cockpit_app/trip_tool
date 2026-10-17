@@ -1,0 +1,199 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// trip_tool — the Travel planning tool's work, for the tool presets (tools_builtins/trip.json). A command-line program, never reachable over the web.
+//
+//   php trip_tool check   ITINERARY OUTPUT [min=60]        overlaps, gaps in lodging, impossible or tight connections, time-zone-aware durations
+//   php trip_tool budget  ITINERARY OUTPUT [base=EUR rates=USD=0.92,GBP=1.17]   totals by day, by category and by currency, with YOUR rates
+//   php trip_tool packing TRIP OUTPUT [days=7 climate=cold activities=hiking,beach]  a deduplicated packing list from the length, the climate and the activities
+//
+// ITINERARY is a CSV (comma, semicolon or tab) with a header row. Columns are found by name: type (flight, train, hotel, ...), description, start (departure, check-in), end (arrival,
+// check-out), from, to, start offset and end offset (UTC offsets such as +02:00, UTC-5, +0530; one column "offset" serves both), amount, currency, category. Dates: 2026-03-05, 2026-03-05 14:30,
+// 05/03/2026 14:30. Words for types are read in several languages (flight/vol/Flug/volo/voo/vuelo, hotel/hôtel/Unterkunft/albergo/alojamiento ...). Rates are the ones YOU give: nothing is looked up.
+// TRIP for packing is the itinerary or any text/markdown; days, climate and activities are also read from its words. The original is never changed. Arithmetic and lists, not travel advice:
+// check visa, health and entry rules with the official sources.
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "trip_tool: $m\n"); exit($rc); }
+[$sub, $in, $out] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? ''];
+$args = array_slice($argv, 4);
+if (!in_array($sub, ['check', 'budget', 'packing'], true) || $in === '' || $out === '') fail('usage: trip_tool check|budget|packing ITINERARY OUTPUT [ARGS]', 2);
+$opt = []; foreach ($args as $a) foreach (preg_split('/\s+(?=\w+=)/', trim($a)) as $p) if (strpos($p, '=') !== false) { [$k, $v] = explode('=', $p, 2); $opt[strtolower(trim($k))] = trim($v); }
+function read_csv(string $f): array {
+    if (!is_file($f)) fail("no such file: $f");
+    $t = (string)file_get_contents($f); if (strncmp($t, "\xEF\xBB\xBF", 3) === 0) $t = substr($t, 3);
+    if (!mb_check_encoding($t, 'UTF-8')) { $c = preg_match('/[\xE0-\xFA]{3,}/', $t) ? 'CP1255' : 'CP1252'; $t = mb_convert_encoding($t, 'UTF-8', $c); }
+    $t = str_replace(["\r\n", "\r"], "\n", $t); $first = strtok($t, "\n"); $c = ["\t" => substr_count($first, "\t"), ';' => substr_count($first, ';'), ',' => substr_count($first, ',')]; arsort($c); $sep = array_key_first($c);
+    $rows = []; $h = fopen('php://memory', 'r+'); fwrite($h, $t); rewind($h); $ln = 0; $header = null;
+    while (($r = fgetcsv($h, 0, $sep, '"', '')) !== false) { $ln++; if ($r === [null] || (count($r) === 1 && trim((string)$r[0]) === '')) continue; if ($header === null) { $header = array_map(fn($x) => trim((string)$x), $r); continue; } $rows[] = ['line' => $ln, 'cells' => $r]; }
+    fclose($h); if ($header === null) fail('the file is empty'); return [$header, $rows];
+}
+function find_col(array $header, array $names): ?int { foreach ($header as $i => $h) { $x = mb_strtolower(trim(preg_replace('/[\s_\-.]+/u', ' ', $h))); $words = explode(' ', $x); foreach ($names as $n) if ($x === $n || (strpos($n, ' ') === false && in_array($n, $words, true)) || (mb_strlen($n) > 4 && mb_strpos($x, $n) !== false) || (strpos($n, ' ') !== false && mb_strpos($x, $n) !== false)) return $i; } return null; }
+function parse_num(?string $s): ?float {
+    $s = trim((string)$s); if ($s === '') return null; $neg = false;
+    if (preg_match('/^\((.+)\)$/', $s, $m)) { $neg = true; $s = $m[1]; } if (substr($s, -1) === '-') { $neg = true; $s = substr($s, 0, -1); } if (substr($s, 0, 1) === '-' || substr($s, 0, 1) === '−') { $neg = !$neg; $s = substr($s, 1); }
+    $s = preg_replace('/[^\d.,]/u', '', $s); if ($s === '' || !preg_match('/\d/', $s)) return null;
+    $lc = strrpos($s, ','); $ld = strrpos($s, '.');
+    if ($lc !== false && $ld !== false) { if ($lc > $ld) $s = str_replace('.', '', $s); else $s = str_replace(',', '', $s); $s = str_replace(',', '.', $s); }
+    elseif ($lc !== false) { if (strlen($s) - $lc - 1 <= 2 && substr_count($s, ',') === 1) $s = str_replace(',', '.', $s); else $s = str_replace(',', '', $s); }
+    elseif ($ld !== false && substr_count($s, '.') > 1) $s = str_replace('.', '', $s);
+    $v = (float)$s; return $neg ? -$v : $v;
+}
+/** a date in Y-m-d, or null; $dmy tells how to read ambiguous d/m/y */
+function parse_date(?string $s, bool $dmy = true): ?string {
+    $s = trim((string)$s); if ($s === '') return null;
+    if (preg_match('/^(\d{4})-(\d{1,2})-(\d{1,2})/', $s, $m)) return checkdate((int)$m[2], (int)$m[3], (int)$m[1]) ? sprintf('%04d-%02d-%02d', $m[1], $m[2], $m[3]) : null;
+    if (preg_match('/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})/', $s, $m)) { [$a, $b, $y] = [(int)$m[1], (int)$m[2], (int)$m[3]]; if ($y < 100) $y += 2000; [$d, $mo] = $dmy ? [$a, $b] : [$b, $a]; if (!checkdate($mo, $d, $y)) { [$d, $mo] = [$mo, $d]; if (!checkdate($mo, $d, $y)) return null; } return sprintf('%04d-%02d-%02d', $y, $mo, $d); }
+    $t = strtotime($s); return $t === false ? null : date('Y-m-d', $t);
+}
+function dmy_guess(array $rows, ?int $c): bool { if ($c === null) return true; $a1 = 0; $a2 = 0; foreach ($rows as $r) if (preg_match('/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-]\d{2,4}/', trim($r['cells'][$c] ?? ''), $m)) { if ((int)$m[1] > 12) $a1++; if ((int)$m[2] > 12) $a2++; } return !($a2 > 0 && $a1 === 0); }
+function money(float $v): string { return number_format($v, 2, '.', ','); }
+
+function text_of(string $f): string {
+    if (!is_file($f)) fail("no such file: $f"); $t = (string)file_get_contents($f); if (strncmp($t, "\xEF\xBB\xBF", 3) === 0) $t = substr($t, 3);
+    if (!mb_check_encoding($t, 'UTF-8')) fail('the file is not UTF-8 text'); if (trim($t) === '') fail('the file is empty'); return $t;
+}
+/** a UTC offset in minutes, or null */
+function parse_off(?string $s): ?int {
+    $s = trim((string)$s); if ($s === '') return null; if (preg_match('/^(utc|gmt)?\s*z$/i', $s) || preg_match('/^(utc|gmt)$/i', $s)) return 0;
+    if (!preg_match('/^(?:utc|gmt)?\s*([+\-−])\s*(\d{1,2})(?::?(\d{2}))?$/i', $s, $m)) return null; $v = (int)$m[2] * 60 + (int)($m[3] ?? 0); if ($v > 14 * 60 + 59) return null; return $m[1] === '+' ? $v : -$v;
+}
+/** [local epoch (as if UTC), hasTime] or null; $dmy for ambiguous d/m/y */
+function parse_dt(?string $s, bool $dmy): ?array {
+    $s = trim((string)$s); if ($s === '') return null; $time = null;
+    if (preg_match('/[ T](\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?$/i', $s, $m)) { $h = (int)$m[1]; $mi = (int)$m[2]; if (!empty($m[4])) { $h = $h % 12 + (strtolower($m[4]) === 'pm' ? 12 : 0); } if ($h > 23 || $mi > 59) return null; $time = [$h, $mi]; $s = trim(substr($s, 0, -strlen($m[0]))); }
+    $d = parse_date($s, $dmy); if ($d === null) return null;
+    return [gmmktime($time[0] ?? 0, $time[1] ?? 0, 0, (int)substr($d, 5, 2), (int)substr($d, 8, 2), (int)substr($d, 0, 4)), $time !== null];
+}
+function hm(int $min): string { $min = abs($min); return sprintf('%dh%02d', intdiv($min, 60), $min % 60); }
+function kind_of(string $t): string {
+    $t = mb_strtolower(trim($t));
+    if (preg_match('/flight|fly|plane|air|vol\b|vuelo|flug|volo|voo|vlucht|avion|aereo|aéreo/u', $t)) return 'transport';
+    if (preg_match('/train|rail|bus|coach|ferry|boat|ferr|car\b|rental|taxi|transfer|metro|tren|zug|treno|trem|bahn|autobus|bateau|barco|nave|voiture|coche|auto/u', $t)) return 'transport';
+    if (preg_match('/hotel|hôtel|hostel|lodg|stay|apartment|airbnb|b&b|bnb|inn|camp|resort|accommodation|unterkunft|albergo|alojamiento|alojamento|logement|alloggio|pension|casa/u', $t)) return 'lodging';
+    return 'other';
+}
+function load_trip(string $in, array $opt): array {
+    $text = text_of($in); [$H, $R] = read_csv($in); if (!$R) fail('the itinerary has no rows under the header');
+    $HX = array_map(fn($h) => preg_match('/offset|utc|\btz\b|time ?zone/i', $h) ? '' : $h, $H);
+    $c = ['type' => find_col($H, ['type', 'kind', 'mode', 'typ', 'tipo']), 'desc' => find_col($H, ['description', 'name', 'item', 'details', 'descripcion', 'descrizione', 'beschreibung']),
+          'start' => find_col($HX, ['start', 'departure', 'depart', 'departs', 'check in', 'checkin', 'begin', 'from date', 'date', 'abflug', 'partenza', 'salida']),
+          'end' => find_col($HX, ['end', 'arrival', 'arrive', 'arrives', 'check out', 'checkout', 'to date', 'finish', 'ankunft', 'arrivo', 'llegada']),
+          'from' => find_col($HX, ['from', 'origin', 'de', 'von', 'da']), 'to' => find_col($HX, ['to', 'destination', 'nach', 'a', 'vers']),
+          'so' => find_col($H, ['start offset', 'start utc', 'start tz', 'dep utc', 'dep offset', 'dep tz', 'from utc', 'from tz']), 'eo' => find_col($H, ['end offset', 'end utc', 'end tz', 'arr utc', 'arr offset', 'arr tz', 'to utc', 'to tz']),
+          'off' => find_col($H, ['utc offset', 'offset', 'utc', 'timezone', 'time zone', 'tz']),
+          'amt' => find_col($H, ['amount', 'cost', 'price', 'importe', 'betrag', 'prix', 'costo', 'preco']), 'cur' => find_col($H, ['currency', 'moneda', 'devise', 'währung', 'valuta', 'moeda', 'ccy']), 'cat' => find_col($H, ['category', 'categoría', 'categoria', 'catégorie', 'kategorie'])];
+    if ($c['start'] === null) fail('no start column found (a header like start, departure or check-in)');
+    $dmy = true; $a1 = 0; $a2 = 0; foreach ([$c['start'], $c['end']] as $ci) if ($ci !== null) foreach ($R as $r) if (preg_match('/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-]\d{2,4}/', trim($r['cells'][$ci] ?? ''), $m)) { if ((int)$m[1] > 12) $a1++; if ((int)$m[2] > 12) $a2++; } if ($a2 > 0 && $a1 === 0) $dmy = false;
+    $items = [];
+    foreach ($R as $r) {
+        $x = $r['cells']; $g = fn($k) => $c[$k] === null ? '' : trim((string)($x[$c[$k]] ?? ''));
+        $s = parse_dt($g('start'), $dmy); $e = $c['end'] !== null && $g('end') !== '' ? parse_dt($g('end'), $dmy) : null; $so = parse_off($g('so') !== '' ? $g('so') : $g('off')); $eo = parse_off($g('eo') !== '' ? $g('eo') : ($g('so') === '' ? $g('off') : ''));
+        $type = $g('type'); $items[] = ['line' => $r['line'], 'type' => $type, 'kind' => kind_of($type !== '' ? $type : $g('desc')), 'desc' => $g('desc'), 'from' => $g('from'), 'to' => $g('to'), 's' => $s, 'e' => $e, 'so' => $so, 'eo' => $eo, 'rs' => $g('start'), 're' => $g('end'),
+            'amt' => $c['amt'] !== null ? parse_num($g('amt')) : null, 'ramt' => $g('amt'), 'cur' => strtoupper($g('cur')), 'cat' => $g('cat')];
+    }
+    return [$items, $c, $H, $dmy];
+}
+function utc(array $t, string $side): ?int { $p = $t[$side]; if ($p === null) return null; $o = $side === 's' ? $t['so'] : ($t['eo'] ?? $t['so']); return $p[0] - ($o ?? 0) * 60; }
+function label(array $t): string { $l = $t['desc'] !== '' ? $t['desc'] : ($t['type'] !== '' ? $t['type'] : 'item'); if ($t['from'] !== '' || $t['to'] !== '') $l .= ' (' . $t['from'] . ' > ' . $t['to'] . ')'; return $l; }
+function dstr(array $p): string { return gmdate($p[1] ? 'Y-m-d H:i' : 'Y-m-d', $p[0]); }
+$name = basename($in);
+
+if ($sub === 'check') {
+    $min = isset($opt['min']) && ctype_digit($opt['min']) ? (int)$opt['min'] : 60;
+    [$items, $c, $H, $dmy] = load_trip($in, $opt); $msgs = []; $err = 0; $warn = 0;
+    $add = function (string $k, int $l, string $m) use (&$msgs, &$err, &$warn, $name) { $msgs[] = "$name($l) $k: $m"; if ($k === 'Error') $err++; elseif ($k === 'Warning') $warn++; };
+    $ok = []; foreach ($items as $t) {
+        if ($t['s'] === null) { $add('Error', $t['line'], 'the start "' . $t['rs'] . '" cannot be read'); continue; }
+        if ($t['re'] !== '' && $t['e'] === null) { $add('Error', $t['line'], 'the end "' . $t['re'] . '" cannot be read'); continue; }
+        if ($t['e'] !== null && utc($t, 'e') < utc($t, 's')) { $add('Error', $t['line'], 'it ends before it starts (' . dstr($t['s']) . ' to ' . dstr($t['e']) . ')'); continue; }
+        if ($t['e'] === null && $t['kind'] !== 'other') $add('Note', $t['line'], 'no end date: it cannot be checked against the others');
+        $ok[] = $t;
+    }
+    $haveOff = array_filter($ok, fn($t) => $t['so'] !== null || $t['eo'] !== null); $noOffTransport = array_filter($ok, fn($t) => $t['kind'] === 'transport' && $t['so'] === null && $t['eo'] === null);
+    if ($noOffTransport) $add('Note', 1, 'no UTC offsets on ' . count($noOffTransport) . ' transport line(s): their times are compared as written, so a connection across time zones may be wrong. Add start offset / end offset columns (e.g. +02:00).');
+    // transport: sorted by start (UTC); a person cannot be on two at once, nor arrive after the next one leaves
+    $tr = array_values(array_filter($ok, fn($t) => $t['kind'] === 'transport' && $t['e'] !== null)); usort($tr, fn($a, $b) => utc($a, 's') <=> utc($b, 's'));
+    for ($i = 0; $i + 1 < count($tr); $i++) {
+        [$a, $b] = [$tr[$i], $tr[$i + 1]]; $gap = intdiv(utc($b, 's') - utc($a, 'e'), 60);
+        if ($gap < 0) $add('Error', $b['line'], 'impossible connection: "' . label($a) . '" (line ' . $a['line'] . ') arrives ' . dstr($a['e']) . ', ' . hm($gap) . ' AFTER "' . label($b) . '" departs ' . dstr($b['s']));
+        elseif ($gap < $min) $add('Warning', $b['line'], 'tight connection: only ' . hm($gap) . ' between the arrival of "' . label($a) . '" (line ' . $a['line'] . ') and this departure (the limit is ' . $min . ' minutes)');
+        if ($gap >= 0 && $a['to'] !== '' && $b['from'] !== '' && mb_strtolower($a['to']) !== mb_strtolower($b['from']) && $gap < 24 * 60) $add('Note', $b['line'], 'it leaves from "' . $b['from'] . '" but line ' . $a['line'] . ' arrives at "' . $a['to'] . '" ' . hm($gap) . ' earlier');
+    }
+    // lodging: overlaps and uncovered nights
+    $lo = array_values(array_filter($ok, fn($t) => $t['kind'] === 'lodging' && $t['e'] !== null)); usort($lo, fn($a, $b) => $a['s'][0] <=> $b['s'][0]); $day = fn($p) => intdiv($p[0], 86400);
+    for ($i = 0; $i + 1 < count($lo); $i++) { [$a, $b] = [$lo[$i], $lo[$i + 1]]; $ae = $day($a['e']); $bs = $day($b['s']);
+        if ($bs < $ae) $add('Warning', $b['line'], 'lodging overlaps line ' . $a['line'] . ': two places booked for the night(s) ' . gmdate('Y-m-d', $bs * 86400) . ' to ' . gmdate('Y-m-d', ($ae - 1) * 86400));
+        elseif ($bs > $ae) $add('Warning', $b['line'], 'no lodging for ' . ($bs - $ae) . ' night(s): ' . gmdate('Y-m-d', $ae * 86400) . ' to ' . gmdate('Y-m-d', ($bs - 1) * 86400) . ' (between lines ' . $a['line'] . ' and ' . $b['line'] . ')'); }
+    $allD = []; foreach ($ok as $t) { $allD[] = $day($t['s']); if ($t['e'] !== null) $allD[] = $day($t['e']); }
+    if ($lo && $tr) { $first = min(array_map(fn($t) => $day($t['s']), $tr)); $last = max(array_map(fn($t) => $day($t['e']), $tr)); $ls = min(array_map(fn($t) => $day($t['s']), $lo)); $le = max(array_map(fn($t) => $day($t['e']), $lo));
+        if ($ls > $first + 1) $add('Note', $lo[0]['line'], 'the first lodging starts ' . gmdate('Y-m-d', $ls * 86400) . ', ' . ($ls - $first) . ' days after the first transport (' . gmdate('Y-m-d', $first * 86400) . ')');
+        if ($le < $last - 1) $add('Note', end($lo)['line'], 'the last lodging ends ' . gmdate('Y-m-d', $le * 86400) . ', ' . ($last - $le) . ' days before the last transport ends (' . gmdate('Y-m-d', $last * 86400) . ')'); }
+    // other overlaps among non-lodging, non-transport items with end times are not an error (a tour can overlap a hotel stay)
+    $rep = "# Itinerary check: $name\n\n- Rows: " . count($items) . "; readable: " . count($ok) . "; dates read " . ($dmy ? 'day-first' : 'month-first') . " where ambiguous\n- Tight-connection limit: $min minutes (change it with min=)\n- Time zones: " . ($haveOff ? count($haveOff) . ' line(s) have UTC offsets; durations below are real elapsed time' : 'no UTC offsets given: durations are differences of the clock times as written') . "\n\n";
+    $rep .= "## Durations\n\n| Line | What | Start | End | Duration |\n|---|---|---|---|---|\n";
+    foreach ($ok as $t) if ($t['e'] !== null) { $d = intdiv(utc($t, 'e') - utc($t, 's'), 60); $rep .= '| ' . $t['line'] . ' | ' . str_replace('|', '/', label($t)) . ' | ' . dstr($t['s']) . ($t['so'] !== null ? ' ' . sprintf('%+03d:%02d', intdiv($t['so'], 60), abs($t['so']) % 60) : '') . ' | ' . dstr($t['e']) . (($t['eo'] ?? $t['so']) !== null ? ' ' . sprintf('%+03d:%02d', intdiv($t['eo'] ?? $t['so'], 60), abs($t['eo'] ?? $t['so']) % 60) : '') . ' | ' . ($t['kind'] === 'lodging' ? max(0, $day($t['e']) - $day($t['s'])) . ' night(s)' : hm($d)) . " |\n"; }
+    $rep .= "\n" . ($msgs ? "## Problems ($err errors, $warn warnings)\n\n" . implode("\n", $msgs) . "\n" : "No problems found.\n") . "\nThese are date arithmetic on what the file says; confirm every booking with its provider.\n\n[exit code " . ($err > 0 ? 1 : 0) . "]\n";
+    file_put_contents($out, $rep); echo "Wrote $out ($err errors, $warn warnings)\n"; exit(0);
+}
+
+if ($sub === 'budget') {
+    [$items, $c, $H, $dmy] = load_trip($in, $opt); if ($c['amt'] === null) fail('no amount column found (amount, cost or price)');
+    $base = strtoupper($opt['base'] ?? ''); $rates = []; foreach (preg_split('/[,;]+/', $opt['rates'] ?? '') as $p) if (preg_match('/^\s*([A-Za-z]{3})\s*=\s*([\d.,]+)\s*$/', $p, $m)) $rates[strtoupper($m[1])] = parse_num($m[2]);
+    if ($base !== '') $rates[$base] = 1.0; elseif ($rates) fail('rates= needs base=: the currency the totals are in (rates say how much of the base one unit is worth)');
+    $msgs = []; $by = []; $cat = []; $day = []; $nat = []; $skipped = 0; $rows = 0; $anyCur = false;
+    foreach ($items as $t) {
+        if ($t['ramt'] === '') continue; if ($t['amt'] === null) { $msgs[] = "$name({$t['line']}) Error: the amount \"{$t['ramt']}\" cannot be read"; $skipped++; continue; } if ($t['s'] === null) { $msgs[] = "$name({$t['line']}) Error: the date \"{$t['rs']}\" cannot be read"; $skipped++; continue; }
+        $cur = $t['cur'] !== '' ? $t['cur'] : '(none)'; if ($t['cur'] === '') $msgs[] = "$name({$t['line']}) Warning: no currency on this line: kept apart as (none)"; else $anyCur = true; $nat[$cur] = ($nat[$cur] ?? 0) + $t['amt'];
+        $v = $t['amt']; if ($base !== '') { if (!isset($rates[$cur])) { $msgs[] = "$name({$t['line']}) Error: no rate for $cur (give rates=$cur=...): left out of the $base totals"; $skipped++; continue; } $v = $t['amt'] * $rates[$cur]; }
+        $k = $t['cat'] !== '' ? $t['cat'] : ($t['kind'] !== 'other' ? $t['kind'] : ($t['type'] !== '' ? mb_strtolower($t['type']) : '(no category)'));
+        $d0 = intdiv($t['s'][0], 86400); $n = ($t['kind'] === 'lodging' && $t['e'] !== null) ? max(1, intdiv($t['e'][0], 86400) - $d0) : 1;    // lodging: spread evenly over its nights
+        for ($i = 0; $i < $n; $i++) { $dk = gmdate('Y-m-d', ($d0 + $i) * 86400); $day[$dk][$k] = ($day[$dk][$k] ?? 0) + $v / $n; } $cat[$k] = ($cat[$k] ?? 0) + $v; $rows++;
+    }
+    if (!$rows) fail('no line has a readable date and amount');
+    ksort($day); arsort($cat); $unit = $base !== '' ? $base : ''; $total = array_sum($cat);
+    $o = "# Trip budget: $name\n\n- Lines with an amount: $rows" . ($skipped ? "; left out: $skipped (see the problems below)" : '') . "\n- " . ($base !== '' ? "Totals are in $base, converted with YOUR rates (" . implode(', ', array_map(fn($k, $v) => "1 $k = $v $base", array_keys(array_diff_key($rates, [$base => 1])), array_diff_key($rates, [$base => 1]))) . '): nothing is looked up, and real card or cash rates differ' : 'No base= and rates= given: each currency is totalled on its own, never added together') . "\n- A hotel or other lodging amount is spread evenly over its nights; every other amount falls on its start date.\n\n";
+    if ($base !== '') { $o .= "**Total: " . money($total) . " $base**\n\n"; }
+    $o .= "## Totals in each currency as written\n\n| Currency | Total |\n|---|---|\n"; ksort($nat); foreach ($nat as $k => $v) $o .= "| $k | " . money($v) . " |\n";
+    if ($base !== '') { $o .= "\n## By category ($base)\n\n| Category | Total | Share |\n|---|---|---|\n"; foreach ($cat as $k => $v) $o .= "| $k | " . money($v) . ' | ' . ($total ? round(100 * $v / $total) : 0) . "% |\n"; $o .= "\n## By day ($base)\n\n| Day | Total | Of which |\n|---|---|---|\n"; foreach ($day as $d => $ks) { arsort($ks); $o .= "| $d | " . money(array_sum($ks)) . ' | ' . implode(', ', array_map(fn($k, $v) => "$k " . money($v), array_keys($ks), $ks)) . " |\n"; } $nd = count($day); $o .= "\nDays with spending: $nd; average per such day: " . money($total / $nd) . " $base\n"; }
+    else { $o .= "\nGive base=CUR and rates=OTHER=value,... to get totals by category and by day in one currency.\n"; }
+    if ($msgs) $o .= "\n## Problems\n\n" . implode("\n", $msgs) . "\n";
+    $errs = count(array_filter($msgs, fn($m) => strpos($m, ' Error:') !== false)); file_put_contents($out, $o . "\n[exit code " . ($errs ? 1 : 0) . "]\n"); echo "Wrote $out\n"; exit(0);
+}
+
+// ---- packing -----------------------------------------------------------------------------------------------------------------------------------
+$text = text_of($in); $low = mb_strtolower($text . ' ' . ($opt['climate'] ?? '') . ' ' . ($opt['activities'] ?? ''));
+$days = isset($opt['days']) && ctype_digit($opt['days']) ? (int)$opt['days'] : 0; $how = 'from days=';
+if (!$days && preg_match('/^[^\n]*(start|departure|depart|check.?in|begin)[^\n]*[,;\t]/iu', $text)) { try { [$items] = load_trip($in, []); $ds = []; foreach ($items as $t) { if ($t['s']) $ds[] = intdiv($t['s'][0], 86400); if ($t['e']) $ds[] = intdiv($t['e'][0], 86400); } if (count($ds) >= 2) { $days = max($ds) - min($ds) + 1; $how = 'from the itinerary dates'; } } catch (Throwable $e) {} }
+if (!$days && preg_match('/(\d{1,3})\s*(days?|nights?|jours?|nuits?|tage?|nächte|giorni|notti|dias|días|noches|noites)/iu', $text, $m)) { $days = (int)$m[1] + (stripos($m[2], 'n') === 0 || preg_match('/nuit|nächte|notti|noche|noite/iu', $m[2]) ? 1 : 0); $how = 'from the words of the file'; }
+if ($days < 1) fail('cannot tell the trip length: give days=N, or use an itinerary with dates, or write "N days" in the file');
+if ($days > 365) fail('days=' . $days . ' is over a year: give a shorter trip, or pack in stages');
+$W = fn(string $re) => (bool)preg_match('/(?<![\p{L}])(' . $re . ')/iu', $low);
+$cold = $W('cold|winter|snow|skis?\b|skiing|freez|arctic|froid|hiver|neige|kalt|schnee|freddo|inverno|neve|frío|invierno|nieve|frio'); $hot = $W('hot\b|warm|summer|tropic|beach|desert|sunny|sunshine|chaud|été|chaleur|heiß|sommer|caldo|estate|calor|verano|verão|playa');
+$wet = $W('rain|monsoon|wet|drizzle|pluie|regen|pioggia|lluvia|chuva'); $mild = $W('mild|spring|autumn|fall|temperate|printemps|automne|frühling|herbst|primavera|autunno|otoño|outono');
+$act = ['hiking' => 'hik|trek|mountain|walk|randonn|wander|escursion|senderis|caminh', 'beach' => 'beach|swim|snorkel|dive|diving|surf|plage|strand|spiaggia|playa|praia|nager|schwimmen|nuotare|nadar', 'snow' => 'skis?\b|skiing|snowboard|sled|snow|skier|schnee|sci\b|nieve|neve',
+    'business' => 'business|meeting|conference|work|congrès|konferenz|riunione|reunión|reunião|presentation', 'camping' => 'camp|tent|bivouac|zelt|campeggio|acampar', 'city' => 'city|museum|sightsee|tour|musée|stadt|museo|ville|ciudad|città|cidade', 'formal' => 'wedding|gala|formal|opera|theatre|theater|mariage|hochzeit|matrimonio|boda|casamento'];
+$A = []; foreach ($act as $k => $re) if ($W($re)) $A[$k] = true;
+$L = []; $add = function (string $cat, string $item, int $q = 1) use (&$L) { $key = mb_strtolower($item); foreach ($L as $c2 => $its) if (isset($its[$key])) { if ($q > $L[$c2][$key][1]) $L[$c2][$key][1] = $q; return; } $L[$cat][$key] = [$item, $q]; };
+$tops = min($days, 7); $unders = min($days + 1, 8); $socks = min($days + 1, 8);
+foreach (['Passport or ID card', 'Tickets and booking confirmations (paper or offline copy)', 'Travel insurance details', 'Payment cards and some cash', 'Phone, charger and plug adapter', 'Medication you take (with the prescription)', 'Keys and a copy of the addresses where you stay'] as $i) $add('Documents and essentials', $i);
+$add('Clothes', 'Underwear', $unders); $add('Clothes', 'Socks', $socks); $add('Clothes', 'T-shirts or tops', $tops); $add('Clothes', 'Trousers or skirts', max(2, intdiv($days + 2, 3))); $add('Clothes', 'Sleepwear'); $add('Clothes', 'Comfortable walking shoes');
+foreach (['Toothbrush and toothpaste', 'Deodorant', 'Shampoo and soap (travel size)', 'Hairbrush or comb'] as $i) $add('Toiletries', $i); if ($days > 3) $add('Toiletries', 'Laundry detergent sheets or a small bottle');
+if ($cold) { foreach (['Warm jacket', 'Gloves', 'Hat or beanie', 'Scarf', 'Thermal base layer'] as $i) $add('Clothes', $i); $add('Clothes', 'Warm sweaters', min(max(2, intdiv($days, 3)), 4)); $add('Clothes', 'Warm socks', min($days, 5)); $add('Toiletries', 'Lip balm and moisturiser'); }
+if ($hot) { $add('Clothes', 'Light shorts or skirts', min($days, 5)); $add('Clothes', 'Sun hat'); $add('Clothes', 'Sunglasses'); $add('Toiletries', 'Sunscreen'); $add('Toiletries', 'After-sun lotion'); $add('Other', 'Refillable water bottle'); }
+if ($wet) { $add('Clothes', 'Waterproof jacket'); $add('Other', 'Compact umbrella'); $add('Other', 'Dry bag or rain cover for the backpack'); }
+if ($mild && !$cold && !$hot) { $add('Clothes', 'Light jacket'); $add('Clothes', 'Long-sleeve layer', 2); }
+if (!$cold && !$hot && !$wet && !$mild) $add('Clothes', 'One warm layer (climate not stated: check the forecast)');
+if (isset($A['hiking'])) { foreach (['Hiking boots or sturdy shoes', 'Daypack', 'First-aid kit', 'Blister plasters', 'Offline map or paper map', 'Refillable water bottle'] as $i) $add('Activities: hiking', $i); $add('Activities: hiking', 'Quick-dry hiking socks', min($days, 4)); }
+if (isset($A['beach'])) { foreach (['Swimwear', 'Beach towel', 'Flip-flops or water shoes', 'Sunscreen', 'Sunglasses'] as $i) $add('Activities: beach and water', $i); $add('Activities: beach and water', 'Swimwear', 2); }
+if (isset($A['snow'])) { foreach (['Ski or snow jacket and trousers', 'Gloves', 'Goggles', 'Thermal base layer', 'Warm socks'] as $i) $add('Activities: snow', $i); }
+if (isset($A['business'])) { foreach (['Business outfit(s)', 'Laptop and charger', 'Business cards or files for the meetings', 'Smart shoes'] as $i) $add('Activities: business', $i); }
+if (isset($A['camping'])) { foreach (['Tent and pegs', 'Sleeping bag', 'Sleeping mat', 'Head torch and spare batteries', 'Stove, fuel and lighter', 'Water filter or purification tablets'] as $i) $add('Activities: camping', $i); }
+if (isset($A['city'])) { foreach (['Day bag', 'Power bank', 'Comfortable walking shoes'] as $i) $add('Activities: city', $i); }
+if (isset($A['formal'])) { foreach (['Formal outfit', 'Smart shoes'] as $i) $add('Activities: formal events', $i); }
+// items the file already lists are not repeated
+$have = []; foreach (preg_split('/\n/', $text) as $ln) if (preg_match('/^\s*[-*]\s*\[[ xX]\]\s*(.+)$/u', $ln, $m)) $have[mb_strtolower(trim($m[1]))] = true;
+$skip = 0; foreach ($L as $c2 => $its) foreach ($its as $key => [$it, $q]) foreach (array_keys($have) as $h) if ($h !== '' && (mb_strpos($key, $h) !== false || mb_strpos($h, $key) !== false)) { unset($L[$c2][$key]); $skip++; break; }
+$w = array_keys(array_filter(['cold' => $cold, 'hot or sunny' => $hot, 'rain' => $wet, 'mild' => $mild])); $o = "# Packing list: $name\n\n- Trip length: $days day(s) ($how)\n- Climate words found: " . ($w ? implode(', ', $w) : 'none (set climate=cold, hot, rain or mild)') . "\n- Activities found: " . ($A ? implode(', ', array_keys($A)) : 'none (set activities=hiking,beach,...)') . "\n- Amounts assume you wash clothes once on a trip over a week (underwear and socks capped at 8, tops at 7); every item appears once, in the first group that needs it, with the largest quantity asked.\n" . ($skip ? "- Skipped $skip item(s) your file already lists as a checkbox.\n" : '') . "\n";
+foreach ($L as $c2 => $its) { if (!$its) continue; $o .= "## $c2\n\n"; foreach ($its as [$it, $q]) $o .= '- [ ] ' . ($q > 1 ? "$q x " : '') . $it . "\n"; $o .= "\n"; }
+$o .= "A starting point, not a guarantee: check the forecast, airline baggage rules, and entry, visa and health requirements with the official sources.\n\n[exit code 0]\n"; file_put_contents($out, $o); echo "Wrote $out\n";

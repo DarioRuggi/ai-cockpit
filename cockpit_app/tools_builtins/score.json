@@ -1,0 +1,148 @@
+{
+    "id": "score",
+    "name": "Music scores (LilyPond)",
+    "description": "Write, check and play sheet music in LilyPond. Check compiles the score and lists errors and warnings as file(line,col), with bar-check failures (a bar with the wrong number of beats) called out; Build PDF engraves it; MIDI, PNG and Play (WAV or MP3, through TiMidity++) give the other outputs; Update syntax brings an old file to the installed LilyPond with convert-ly; MusicXML to LilyPond and ABC to LilyPond import scores from MuseScore, Finale, Sibelius and ABC tune books; New tune scaffolds a lead sheet. SAFETY: a LilyPond file can contain code that runs commands, and LilyPond's own safe mode was removed because it could not be made safe, so every run happens inside bubblewrap (no network, no home folder, read-only system, only a scratch copy writable); without bwrap the tool refuses to run LilyPond. The original is never changed.",
+    "binary": "lilypond",
+    "version_args": "--version",
+    "website": "https://lilypond.org",
+    "packages": {
+        "apt": "lilypond bubblewrap timidity fluid-soundfont-gm php-cli ffmpeg",
+        "dnf": "lilypond bubblewrap timidity++ php-cli",
+        "pacman": "lilypond bubblewrap timidity++ php",
+        "zypper": "lilypond bubblewrap timidity php8",
+        "brew": "lilypond php"
+    },
+    "presets": [
+        {
+            "id": "check",
+            "label": "Check (errors, warnings, bar checks)",
+            "description": "Compiles the score in a sandbox and reports every error and warning as file(line,col), with Fix with agent. A \"barcheck failed\" warning means the bar before that point has the wrong number of beats.",
+            "input_kinds": [
+                "code",
+                "file",
+                "text"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_check",
+            "command": "php {WEBROOT}/score_tool check {INPUT} {OUTPUT}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "build",
+            "label": "Build the PDF",
+            "description": "Engraves the score as a PDF (in a sandbox, in a scratch copy: your folder gets no extra files).",
+            "input_kinds": [
+                "code",
+                "file",
+                "text"
+            ],
+            "output_kind": "document",
+            "output_ext": "pdf",
+            "output_stem": "{NAME}",
+            "command": "php {WEBROOT}/score_tool build {INPUT} {OUTPUT}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "midi",
+            "label": "MIDI file",
+            "description": "The score's MIDI file (the score needs a \\midi { } block inside \\score { }).",
+            "input_kinds": [
+                "code",
+                "file",
+                "text"
+            ],
+            "output_kind": "audio",
+            "output_ext": "mid",
+            "output_stem": "{NAME}",
+            "command": "php {WEBROOT}/score_tool midi {INPUT} {OUTPUT}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "play",
+            "label": "Play: the score as audio (MP3)",
+            "description": "The score played through TiMidity++ and its sound font, as an MP3 (needs a \\midi block).",
+            "input_kinds": [
+                "code",
+                "file",
+                "text"
+            ],
+            "output_kind": "audio",
+            "output_ext": "mp3",
+            "output_stem": "{NAME}",
+            "command": "php {WEBROOT}/score_tool wav {INPUT} {OUTPUT}",
+            "timeout_seconds": 900
+        },
+        {
+            "id": "png",
+            "label": "First page as a picture (PNG)",
+            "description": "Page 1 of the engraved score as a PNG.",
+            "input_kinds": [
+                "code",
+                "file",
+                "text"
+            ],
+            "output_kind": "image",
+            "output_ext": "png",
+            "output_stem": "{NAME}",
+            "command": "php {WEBROOT}/score_tool png {INPUT} {OUTPUT}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "update",
+            "label": "Update the syntax (convert-ly)",
+            "description": "Brings an old .ly file to the syntax of the installed LilyPond and writes it as a new file.",
+            "input_kinds": [
+                "code",
+                "file",
+                "text"
+            ],
+            "output_kind": "code",
+            "output_ext": "ly",
+            "output_stem": "{NAME}_updated",
+            "command": "php {WEBROOT}/score_tool update {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "from-musicxml",
+            "label": "MusicXML to LilyPond",
+            "description": "Converts a MusicXML file (exported from MuseScore, Finale, Sibelius ...) to a .ly file. Run Check on the result: converted files often need a bar or a repeat fixed.",
+            "input_kinds": [
+                "file",
+                "text"
+            ],
+            "output_kind": "code",
+            "output_ext": "ly",
+            "output_stem": "{NAME}",
+            "command": "php {WEBROOT}/score_tool musicxml {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "from-abc",
+            "label": "ABC notation to LilyPond",
+            "description": "Converts an ABC tune file to a .ly file.",
+            "input_kinds": [
+                "file",
+                "text"
+            ],
+            "output_kind": "code",
+            "output_ext": "ly",
+            "output_stem": "{NAME}",
+            "command": "php {WEBROOT}/score_tool abc {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "new-tune",
+            "label": "New tune (lead sheet)",
+            "description": "Creates NAME.ly in the folder you give: a melody with chord names. Type the name in the extra arguments, then optionally key=d time=3/4 tempo=100. Never overwrites.",
+            "input_kinds": [
+                "folder"
+            ],
+            "output_kind": "text",
+            "output_ext": "txt",
+            "output_stem": "score_new",
+            "command": "php {WEBROOT}/score_tool new {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 60
+        }
+    ]
+}

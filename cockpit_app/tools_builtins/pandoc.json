@@ -1,0 +1,109 @@
+{
+  "id": "pandoc",
+  "name": "Pandoc",
+  "description": "Universal document converter: Markdown ↔ HTML ↔ DOCX ↔ PDF ↔ EPUB and many more.",
+  "binary": "pandoc",
+  "website": "https://pandoc.org",
+  "presets": [
+    {
+      "id": "md-to-pdf",
+      "label": "Markdown → PDF",
+      "description": "Render markdown as PDF (requires LaTeX installed: texlive-xetex)",
+      "input_kinds": [
+        "text",
+        "document"
+      ],
+      "output_kind": "document",
+      "output_ext": "pdf",
+      "command": "pandoc {INPUT} -o {OUTPUT} --pdf-engine=xelatex"
+    },
+    {
+      "id": "md-to-docx",
+      "label": "Markdown → DOCX",
+      "description": "Convert markdown to Microsoft Word document",
+      "input_kinds": [
+        "text",
+        "document"
+      ],
+      "output_kind": "document",
+      "output_ext": "docx",
+      "command": "pandoc {INPUT} -o {OUTPUT}"
+    },
+    {
+      "id": "md-to-html",
+      "label": "Markdown → HTML",
+      "description": "Standalone HTML page with embedded CSS",
+      "input_kinds": [
+        "text",
+        "document"
+      ],
+      "output_kind": "document",
+      "output_ext": "html",
+      "command": "pandoc {INPUT} -o {OUTPUT} --standalone --embed-resources"
+    },
+    {
+      "id": "md-to-epub",
+      "label": "Markdown → EPUB",
+      "description": "Convert markdown to EPUB ebook",
+      "input_kinds": [
+        "text",
+        "document"
+      ],
+      "output_kind": "document",
+      "output_ext": "epub",
+      "command": "pandoc {INPUT} -o {OUTPUT}"
+    },
+    {
+      "id": "docx-to-md",
+      "label": "DOCX → Markdown",
+      "description": "Extract content from Word document as markdown",
+      "input_kinds": [
+        "document"
+      ],
+      "output_kind": "text",
+      "output_ext": "md",
+      "command": "pandoc {INPUT} -o {OUTPUT} --wrap=none"
+    },
+    {
+      "id": "html-to-md",
+      "label": "HTML → Markdown",
+      "description": "Convert HTML page to clean markdown",
+      "input_kinds": [
+        "document"
+      ],
+      "output_kind": "text",
+      "output_ext": "md",
+      "command": "pandoc {INPUT} -o {OUTPUT} --wrap=none"
+    },
+    {
+      "id": "docx-to-pdf",
+      "label": "DOCX → PDF",
+      "description": "Convert Word document to PDF (requires LaTeX)",
+      "input_kinds": [
+        "document"
+      ],
+      "output_kind": "document",
+      "output_ext": "pdf",
+      "command": "pandoc {INPUT} -o {OUTPUT} --pdf-engine=xelatex"
+    },
+    {
+      "id": "epub-to-md",
+      "label": "EPUB → Markdown",
+      "description": "Convert ebook to markdown for editing",
+      "input_kinds": [
+        "document"
+      ],
+      "output_kind": "text",
+      "output_ext": "md",
+      "command": "pandoc {INPUT} -o {OUTPUT} --wrap=none"
+    }
+  ],
+  "packages": {
+    "apt": "pandoc",
+    "dnf": "pandoc",
+    "pacman": "pandoc",
+    "zypper": "pandoc",
+    "apk": "pandoc",
+    "brew": "pandoc"
+  }
+}

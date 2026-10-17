@@ -1,0 +1,12 @@
+{
+  "id": "opencode", "display": "opencode", "kind": "agent", "transport": "process",
+  "command": "opencode",
+  "args": ["run", {"when": "model", "args": ["-m", "{model}"]}, {"when": "session", "args": ["-s", "{session}"]}, "{prompt}"],
+  "parser": "plain",
+  "tiers": {"shell": []},
+  "detect": {"cmd": "opencode", "version_args": ["--version"]},
+  "cwd_policy": "project",
+  "limits": {"timeout_s": 900},
+  "notes": "opencode run has no flag to restrict its rights, so ONLY tier shell is declared: a read_only or edit request is refused rather than run with more rights than asked for. Cockpit's note: opencode INVENTS an image description instead of erroring when given a picture; images need a vision-capable route.",
+  "docs_checked": "2026-10-05"
+}

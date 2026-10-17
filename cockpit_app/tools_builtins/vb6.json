@@ -1,0 +1,16 @@
+{
+  "id": "vb6",
+  "name": "VB6 migration",
+  "description": "Prepare a Visual Basic 6 project for porting to Free Pascal / Lazarus. VB6 sources are ANSI (Windows-1252, or another code page such as Windows-1251 for Cyrillic or Windows-1255 for Hebrew), never UTF-8, so they are converted to UTF-8 COPIES first (the originals are never changed), proved identical by a round trip, and inventoried (forms, modules, classes, references and OCX controls, API declares, the VB6 features that behave differently in Pascal) with an order to port in. Give the project's folder (the one with the .vbp) as the input.",
+  "binary": "php",
+  "version_args": "--version",
+  "website": "https://www.lazarus-ide.org",
+  "packages": {"apt": "php-cli php-mbstring", "dnf": "php-cli php-mbstring", "pacman": "php", "zypper": "php8 php8-mbstring", "brew": "php"},
+  "presets": [
+    {"id": "encoding-detect", "label": "Encodings of the sources (read-only)", "description": "The encoding of every VB6 text file, how sure that is, and the files a person should look at (the same lines decoded under each candidate). Writes nothing beside the sources.", "input_kinds": ["folder"], "output_kind": "text", "output_ext": "md", "output_stem": "vb6_encodings", "command": "php {WEBROOT}/vb_tool detect {INPUT} {OUTPUT}", "timeout_seconds": 300},
+    {"id": "to-utf8", "label": "Convert to UTF-8 copies", "description": "Writes UTF-8 copies into the sibling folder FOLDER_utf8 (refused if it already exists); the .frx binaries and every other file are copied along unchanged, so the copy is a complete project. The originals are never touched.", "input_kinds": ["folder"], "output_kind": "text", "output_ext": "md", "output_stem": "vb6_to_utf8", "command": "php {WEBROOT}/vb_tool to-utf8 {INPUT} {OUTPUT}", "timeout_seconds": 600},
+    {"id": "verify", "label": "Verify the round trip", "description": "Converts the UTF-8 copies back to the original encodings and compares with the originals byte for byte: proof that nothing was lost (run after Convert).", "input_kinds": ["folder"], "output_kind": "text", "output_ext": "md", "output_stem": "vb6_verify", "command": "php {WEBROOT}/vb_tool verify {INPUT} {OUTPUT}", "timeout_seconds": 600},
+    {"id": "inventory", "label": "Project inventory and port order", "description": "Forms, modules, classes, references and OCX controls, Windows API declares, the controls used (with their Lazarus equivalents), and per file the things to watch (16-bit Integer, Currency, Variant, On Error, GoSub, Option Base, COM objects ...) in an order to port in: leaf modules first, forms last.", "input_kinds": ["folder"], "output_kind": "text", "output_ext": "md", "output_stem": "vb6_inventory", "command": "php {WEBROOT}/vb_tool inventory {INPUT} {OUTPUT}", "timeout_seconds": 300},
+    {"id": "cheatsheet", "optional_input": true, "label": "VB6 to Pascal cheat sheet", "description": "The mapping tables: types, operators, control flow, errors, strings, arrays, files, forms and controls, database, classes. For you and for the agent. (The folder is only there to satisfy the tool; any folder will do.)", "input_kinds": ["folder"], "output_kind": "text", "output_ext": "md", "output_stem": "vb6_cheatsheet", "command": "php {WEBROOT}/vb_tool cheatsheet {INPUT} {OUTPUT}", "timeout_seconds": 60}
+  ]
+}

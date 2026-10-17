@@ -1,0 +1,24 @@
+{
+  "id": "game-castle",
+  "name": "Castle Game Engine",
+  "icon": "sports_esports",
+  "description": "A game or application built with the Castle Game Engine (Pascal).",
+  "detect": [
+    "CastleEngineManifest.xml"
+  ],
+  "note": "This is a Castle Game Engine project (Object Pascal). The engine's own build tool and the Free Pascal compiler are the judge. Design files (user interface, transformations) are text: edit them like any other file. State the engine version you assume.",
+  "verify": "castle-engine / fpc",
+  "group": "Software & games",
+  "details": "A Castle Game Engine project in Object Pascal. The engine's own build tool and the Free Pascal compiler are the judge. Design files (user interface, scenes) are edited as data, and the agent does not invent engine API: it reads the engine's documentation first. The Castle tools create a project, compile the whole game and report each error with file and line, then package a Linux archive.",
+  "examples": [
+    "A 3D walking demo in a small level",
+    "A 2D platformer using Castle's design files",
+    "Package a Linux build of a finished game"
+  ],
+  "tools": [
+    {
+      "tool": "castle",
+      "why": "create a project, check or compile the game (the compiler is the judge: errors with file and line, then Fix with agent), clean, package a Linux archive"
+    }
+  ]
+}

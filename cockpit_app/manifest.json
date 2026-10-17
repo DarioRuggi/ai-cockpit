@@ -1,0 +1,13 @@
+{
+  "name": "AI Cockpit",
+  "short_name": "Cockpit",
+  "description": "Local AI agent orchestration console",
+  "start_url": "/cockpit/",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#0f141c",
+  "theme_color": "#0f141c",
+  "icons": [
+    { "src": "favicon.ico", "sizes": "48x48", "type": "image/x-icon" }
+  ]
+}

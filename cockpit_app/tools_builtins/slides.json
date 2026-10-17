@@ -1,0 +1,115 @@
+{
+    "id": "slides",
+    "name": "Presentations",
+    "description": "Make, read and check slide decks (.pptx, .odp, and older .ppt through LibreOffice). Write the deck as a markdown file (one # heading per slide, bullets, ::: notes blocks for speaker notes) and build a .pptx from it with pandoc (and an .odp through LibreOffice): an agent edits text well and binary decks badly, so the markdown stays the source. The outline lists every slide's title, text, notes and pictures. The check finds what a good deck avoids: slides with no title or no content, walls of text, tiny text, pictures with no description (alt text), missing speaker notes, too many fonts, repeated titles. The contact sheet shows every slide as a thumbnail on one picture. The original deck is never changed, and macros in a deck are neither read nor run.",
+    "binary": "php",
+    "version_args": "--version",
+    "website": "https://pandoc.org",
+    "packages": {
+        "apt": "php-cli php-xml php-zip pandoc libreoffice-impress poppler-utils imagemagick",
+        "dnf": "php-cli php-xml pandoc libreoffice-impress poppler-utils ImageMagick",
+        "pacman": "php pandoc libreoffice-fresh poppler imagemagick",
+        "zypper": "php8 php8-zip pandoc libreoffice-impress poppler-tools ImageMagick",
+        "brew": "php pandoc poppler imagemagick"
+    },
+    "presets": [
+        {
+            "id": "check",
+            "label": "Check the deck (titles, text, pictures, notes)",
+            "description": "Lints a .pptx / .odp / .ppt: slides with no title or empty, more than 50 words on a slide, a line of more than 25 words, text under 14 pt, pictures without a description, missing speaker notes, more than 3 fonts, repeated titles. Problems come back as file(slide number), with Fix with agent.",
+            "input_kinds": [
+                "document",
+                "file"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_check",
+            "command": "php {WEBROOT}/slides_tool check {INPUT} {OUTPUT}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "outline",
+            "label": "Outline (titles, text, notes, pictures)",
+            "description": "A markdown outline of the deck: for every slide its title, text, speaker notes and pictures. The way for an agent to read a deck.",
+            "input_kinds": [
+                "document",
+                "file"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_outline",
+            "command": "php {WEBROOT}/slides_tool outline {INPUT} {OUTPUT}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "sheet",
+            "label": "Contact sheet (every slide as a thumbnail)",
+            "description": "One picture with all the slides side by side, to see the whole deck at a glance.",
+            "input_kinds": [
+                "document",
+                "file"
+            ],
+            "output_kind": "image",
+            "output_ext": "png",
+            "output_stem": "{NAME}_sheet",
+            "command": "php {WEBROOT}/slides_tool sheet {INPUT} {OUTPUT}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "to-pdf",
+            "label": "Deck to PDF",
+            "description": "The deck as a PDF, drawn by LibreOffice in a throw-away profile.",
+            "input_kinds": [
+                "document",
+                "file"
+            ],
+            "output_kind": "document",
+            "output_ext": "pdf",
+            "output_stem": "{NAME}",
+            "command": "php {WEBROOT}/slides_tool topdf {INPUT} {OUTPUT}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "md-to-pptx",
+            "label": "Markdown to PowerPoint (.pptx)",
+            "description": "Builds a PowerPoint deck from a markdown file with pandoc: a # heading starts a slide, bullets are the content, a ::: notes block is the speaker notes, ![description](picture.png) is a picture (a missing picture file stops the build and says which). Put the metadata title/author in a --- block at the top for a title slide.",
+            "input_kinds": [
+                "text",
+                "document"
+            ],
+            "output_kind": "document",
+            "output_ext": "pptx",
+            "output_stem": "{NAME}",
+            "command": "pandoc {INPUT} -t pptx -o {OUTPUT}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "to-odp",
+            "label": "Deck to LibreOffice Impress (.odp)",
+            "description": "Converts a .pptx or .ppt deck to an OpenDocument presentation with LibreOffice. Macros are not carried over.",
+            "input_kinds": [
+                "document",
+                "file"
+            ],
+            "output_kind": "document",
+            "output_ext": "odp",
+            "output_stem": "{NAME}",
+            "command": "php {WEBROOT}/slides_tool convert {INPUT} {OUTPUT}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "to-pptx",
+            "label": "Deck to PowerPoint (.pptx)",
+            "description": "Converts an .odp or older .ppt deck to a PowerPoint .pptx with LibreOffice. Macros are not carried over.",
+            "input_kinds": [
+                "document",
+                "file"
+            ],
+            "output_kind": "document",
+            "output_ext": "pptx",
+            "output_stem": "{NAME}",
+            "command": "php {WEBROOT}/slides_tool convert {INPUT} {OUTPUT}",
+            "timeout_seconds": 600
+        }
+    ]
+}

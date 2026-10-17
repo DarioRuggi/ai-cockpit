@@ -1,0 +1,144 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// lesson_tool — the Teaching tools' work, for the tool presets (tools_builtins/lesson.json). A command-line program, never reachable over the web.
+//
+//   php lesson_tool plan    PLAN.md      OUTPUT [minutes=50]  lesson-plan check: objectives present, activity minutes add up to the lesson length, each objective has an assessment (by keyword)
+//   php lesson_tool rubric  RUBRIC.csv   OUTPUT               rubric from a CSV (criterion, weight, then level descriptions, best level first): weights must sum to 100; writes the table with points per level
+//   php lesson_tool grades  GRADES.csv   OUTPUT [below=60]    gradebook summary: weighted averages, missing grades, distribution, students below the threshold
+//   php lesson_tool answers WORKSHEET.md OUTPUT               worksheet consistency: numbered questions against the numbered answer key
+//
+// Reading and arithmetic aids. They never grade a student's work and never decide a pass or fail; the teacher does. The original is never changed.
+// Problems come back as file(line) Error|Warning|Note: ... so the app can offer "Fix with agent".
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "lesson_tool: $m\n"); exit($rc); }
+[$sub, $in, $out] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? '']; $args = array_slice($argv, 4);
+if (!in_array($sub, ['plan', 'rubric', 'grades', 'answers'], true) || $in === '' || $out === '') fail('usage: lesson_tool plan|rubric|grades|answers INPUT OUTPUT [minutes=N | below=N]', 2);
+if (!is_file($in)) fail("no such file: $in");
+$raw = (string)file_get_contents($in); if (strncmp($raw, "\xEF\xBB\xBF", 3) === 0) $raw = substr($raw, 3);
+if (!mb_check_encoding($raw, 'UTF-8')) fail('the file is not valid UTF-8: convert it first');
+$raw = str_replace(["\r\n", "\r"], "\n", $raw); if (trim($raw) === '') fail('the file is empty');
+$name = basename($in); $opt = []; foreach ($args as $a) foreach (preg_split('/\s+/', trim($a)) as $p) if (strpos($p, '=') !== false) { [$k, $v] = explode('=', $p, 2); $opt[strtolower(trim($k))] = trim($v); }
+$msgs = []; $nerr = 0; $nwarn = 0;
+$add = function (string $k, int $l, string $m) use (&$msgs, &$nerr, &$nwarn, $name) { $msgs[] = "$name($l) $k: $m"; if ($k === 'Error') $nerr++; elseif ($k === 'Warning') $nwarn++; };
+function finish(string $out, string $body, array $msgs, int $nerr, int $nwarn): void {
+    $o = $body . "\n## Problems found\n\n" . ($msgs ? implode("\n", $msgs) . "\n" : "None.\n") . "\n$nerr errors, $nwarn warnings.\n[exit code " . ($nerr > 0 ? 1 : 0) . "]\n";
+    file_put_contents($out, $o); echo "Wrote $out ($nerr errors, $nwarn warnings)\n"; exit($nerr > 0 ? 1 : 0);
+}
+function num(string $s): ?float { $s = trim(str_replace(['%', ' '], '', $s)); if ($s === '') return null; if (preg_match('/^-?\d+,\d+$/', $s)) $s = str_replace(',', '.', $s); return is_numeric($s) ? (float)$s : null; }
+function read_csv(string $raw): array {
+    $first = strtok($raw, "\n"); $sep = ','; $best = substr_count($first, ','); foreach ([';', "\t"] as $c) if (substr_count($first, $c) > $best) { $sep = $c; $best = substr_count($first, $c); }
+    $rows = []; $header = null; $ln = 0; $h = fopen('php://temp', 'r+'); fwrite($h, $raw); rewind($h);
+    while (($r = fgetcsv($h, 0, $sep, '"', '')) !== false) { $ln++; if ($r === [null] || (count($r) === 1 && trim((string)$r[0]) === '')) continue; $r = array_map(fn($x) => trim((string)$x), $r); if ($header === null) { $header = $r; continue; } $rows[] = ['line' => $ln, 'cells' => $r]; }
+    return [$header ?? [], $rows];
+}
+$STOP = 'the a an and or of to in on for with that this from have has had are was were will would can could should must may be been being their there which what when where who how not but its it as at by into than then them they you your our we us is do does did also more most any all each other such only own same so too very just about over under again further once here these those both few some no nor out off up down if because until while during before after above below between through against students student learner learners lesson class able understand explain identify describe learn know apply list define use using show given les des une dans pour avec sont der die das und mit von nicht ein eine für sind los las una por con que para del il lo gli per che con non sono uma dos para com não';
+$stop = array_flip(explode(' ', $STOP));
+function stems(string $t, array $stop): array { preg_match_all('/[\p{L}][\p{L}\'-]{3,}/u', mb_strtolower($t), $m); $r = []; foreach ($m[0] as $w) if (!isset($stop[$w])) $r[mb_substr($w, 0, 5)] = $w; return $r; }
+
+// ---- plan ---------------------------------------------------------------------------------------------------------------------------------------
+if ($sub === 'plan') {
+    $kinds = ['obj' => 'objectives?|goals?|outcomes?|aims?|objectifs?|ziele?|lernziele?|obiettivi|objetivos?|objetivos',
+              'act' => 'activit(?:y|ies)|schedule|agenda|timing|procedure|lesson flow|activit[ée]s|d[ée]roulement|ablauf|attivit[àa]|actividades|atividades',
+              'ass' => 'assessment|evaluation|check for understanding|exit ticket|[ée]valuation|bewertung|valutazione|evaluaci[óo]n|avalia[çc][ãa]o'];
+    $sec = []; $cur = null; $length = isset($opt['minutes']) ? (int)$opt['minutes'] : null; $lenLine = 0;
+    foreach (explode("\n", $raw) as $i => $l) { $ln = $i + 1;
+        if (preg_match('/^\s*#{1,6}\s*(.+?)\s*#*\s*$/u', $l, $m) || preg_match('/^\s*\**(' . implode('|', $kinds) . ')\**\s*:\s*$/iu', $l, $m)) { $cur = null; foreach ($kinds as $k => $re) if (preg_match('/^(?:' . $re . ')\b/iu', trim($m[1], ' *'))) $cur = $k; if ($cur !== null) $sec[$cur] = $sec[$cur] ?? ['line' => $ln, 'rows' => []]; continue; }
+        if ($length === null && preg_match('/^\s*(?:[-*]\s*)?\**(?:length|duration|minutes|time|dur[ée]e|dauer|durata|duraci[óo]n|dura[çc][ãa]o)\**\s*:\s*(\d+)/iu', $l, $m)) { $length = (int)$m[1]; $lenLine = $ln; continue; }
+        if ($cur !== null && trim($l) !== '' && !preg_match('/^\s*\|?[\s:|-]+\|?\s*$/', $l)) $sec[$cur]['rows'][] = [$ln, trim($l)];
+    }
+    $obj = []; foreach ($sec['obj']['rows'] ?? [] as [$ln, $t]) { $t = trim(preg_replace('/^(?:[-*•]|\d+[.)])\s*/u', '', $t)); if ($t !== '') $obj[] = [$ln, $t]; }
+    $o = "# Lesson plan check: $name\n\n";
+    if (!isset($sec['obj'])) $add('Error', 1, 'no Objectives section found (a heading such as "## Objectives")'); elseif (!$obj) $add('Error', $sec['obj']['line'], 'the Objectives section is empty');
+    $o .= '- Objectives: ' . count($obj) . "\n"; foreach ($obj as [$ln, $t]) if (mb_strlen($t) < 12) $add('Warning', $ln, "the objective \"$t\" is very short: say what the student will be able to do");
+    $total = 0; $acts = [];
+    if (!isset($sec['act'])) $add('Error', 1, 'no Activities section found (a heading such as "## Activities" with the minutes of each)');
+    else foreach ($sec['act']['rows'] as [$ln, $t]) { if (!preg_match('/^\s*(?:[-*•]|\d+[.)]|\|)/u', $t)) continue;
+        if (preg_match('/(\d+(?:[.,]\d+)?)\s*(?:min(?:ute)?s?|mn|m\b|\')/iu', $t, $m)) { $mm = (float)str_replace(',', '.', $m[1]); $total += $mm; $acts[] = [$ln, $t, $mm]; } else { $add('Warning', $ln, 'no minutes given for this activity: "' . mb_substr($t, 0, 60) . '"'); $acts[] = [$ln, $t, null]; } }
+    $o .= '- Activities: ' . count($acts) . ", adding up to $total minutes\n";
+    if ($length === null) $add('Note', 1, 'no lesson length (a line "Length: 50 minutes", or minutes=50 in the extra arguments): the activity total cannot be compared');
+    else { $o .= "- Lesson length: $length minutes\n"; $l0 = $lenLine ?: 1;
+        if ($total > $length) $add('Error', $sec['act']['line'] ?? $l0, "the activities add up to $total minutes, " . ($total - $length) . " more than the lesson of $length");
+        elseif ($total < $length && $acts) $add('Warning', $sec['act']['line'] ?? $l0, "the activities add up to $total minutes, " . ($length - $total) . " short of the lesson of $length (a gap, or an activity missing)"); }
+    $asst = implode(' ', array_map(fn($r) => $r[1], $sec['ass']['rows'] ?? []));
+    if (!isset($sec['ass']) || trim($asst) === '') $add('Warning', $sec['ass']['line'] ?? 1, 'no Assessment: how will you know each objective was met?');
+    else { $as = stems($asst, $stop); foreach ($obj as [$ln, $t]) { $st = stems($t, $stop); if (!$st) continue; $hit = array_intersect_key($st, $as); if (!$hit) $add('Warning', $ln, "nothing in the Assessment mentions \"" . mb_substr($t, 0, 60) . "\" (keywords: " . implode(', ', array_slice($st, 0, 4)) . ')'); } }
+    $o .= "\nThe match between objectives and assessment is by shared keywords only: a match does not prove the assessment tests the objective, and a miss may only be different wording.\n";
+    finish($out, $o, $msgs, $nerr, $nwarn);
+}
+
+// ---- rubric -------------------------------------------------------------------------------------------------------------------------------------
+if ($sub === 'rubric') {
+    [$hd, $rows] = read_csv($raw); if (count($hd) < 3) fail('the rubric needs at least a criterion column, a weight column and one level column');
+    $wi = null; foreach ($hd as $i => $h) if (preg_match('/weight|%|points|peso|poids|gewicht|punti|pondération/iu', $h)) { $wi = $i; break; } if ($wi === null) $wi = 1;
+    $ci = $wi === 0 ? 1 : 0; $lv = []; foreach ($hd as $i => $h) if ($i !== $wi && $i !== $ci) $lv[] = $i; $nl = count($lv);
+    if ($nl < 1) fail('no level columns found'); $sum = 0; $names = []; $tab = [];
+    foreach ($rows as $r) { $c = $r['cells']; $cr = $c[$ci] ?? ''; $w = num($c[$wi] ?? '');
+        if ($cr === '') { $add('Error', $r['line'], 'a row without a criterion name'); continue; }
+        if (isset($names[mb_strtolower($cr)])) $add('Warning', $r['line'], "the criterion \"$cr\" appears twice (first on line " . $names[mb_strtolower($cr)] . ')'); $names[mb_strtolower($cr)] = $r['line'];
+        if ($w === null) { $add('Error', $r['line'], "the weight \"" . ($c[$wi] ?? '') . "\" of \"$cr\" is not a number"); continue; } if ($w <= 0) $add('Error', $r['line'], "the weight of \"$cr\" must be above zero");
+        $sum += $w; foreach ($lv as $i) if (trim($c[$i] ?? '') === '') $add('Warning', $r['line'], "no description for the level \"" . $hd[$i] . "\" of \"$cr\"");
+        $tab[] = [$cr, $w, array_map(fn($i) => $c[$i] ?? '', $lv)]; }
+    if (!$tab) fail('no criteria rows found');
+    if (abs($sum - 100) > 0.001) $add('Error', 1, 'the weights add up to ' . rtrim(rtrim(number_format($sum, 2, '.', ''), '0'), '.') . ', not 100');
+    $o = "# Rubric: $name\n\nLevels run from the best (left) to the weakest (right); the points of a level are the weight times its place on a scale of $nl steps (best = full weight, weakest = 1/$nl of it). Change the scale if your school uses another.\n\n| Criterion | Weight |";
+    foreach ($lv as $i) $o .= ' ' . $hd[$i] . ' |'; $o .= "\n|---|---|" . str_repeat('---|', $nl) . "\n";
+    foreach ($tab as [$cr, $w, $d]) { $o .= "| $cr | " . rtrim(rtrim(number_format($w, 2, '.', ''), '0'), '.') . ' |'; foreach ($d as $k => $t) $o .= ' ' . str_replace('|', '/', $t) . ' (' . rtrim(rtrim(number_format($w * ($nl - $k) / $nl, 2, '.', ''), '0'), '.') . ' pts) |'; $o .= "\n"; }
+    $o .= "\nTotal weight: " . rtrim(rtrim(number_format($sum, 2, '.', ''), '0'), '.') . " from " . count($tab) . " criteria and $nl levels.\n";
+    finish($out, $o, $msgs, $nerr, $nwarn);
+}
+
+// ---- grades -------------------------------------------------------------------------------------------------------------------------------------
+if ($sub === 'grades') {
+    [$hd, $rows] = read_csv($raw); if (count($hd) < 2) fail('the gradebook needs a student column and at least one assessment column');
+    $below = isset($opt['below']) ? (float)$opt['below'] : 60.0; $W = []; $M = []; $st = [];
+    $isw = fn($s) => preg_match('/^(weights?|peso|pesos|poids|gewicht|gewichtung|pesi)$/iu', trim($s)); $ism = fn($s) => preg_match('/^(max|maximum|out of|sur|von|su|sobre)$/iu', trim($s));
+    foreach ($rows as $r) { $c = $r['cells'];
+        if ($isw($c[0])) { foreach ($c as $i => $v) if ($i > 0) $W[$i] = num($v); continue; }
+        if ($ism($c[0])) { foreach ($c as $i => $v) if ($i > 0) $M[$i] = num($v); continue; }
+        $st[] = $r; }
+    if (!$st) fail('no student rows found');
+    foreach ($hd as $i => $h) if ($i > 0) { if (!isset($W[$i]) || $W[$i] === null) $W[$i] = 1.0; if (!isset($M[$i]) || !$M[$i]) $M[$i] = 100.0; if ($W[$i] < 0) $add('Error', 1, "negative weight for \"$h\""); }
+    $avg = []; $missN = []; $perCol = [];
+    foreach ($st as $r) { $c = $r['cells']; $stn = $c[0]; if ($stn === '') { $add('Error', $r['line'], 'a row without a student name'); continue; }
+        $sw = 0; $s = 0; $miss = [];
+        foreach ($hd as $i => $h) { if ($i === 0) continue; $v = trim($c[$i] ?? ''); $n = num($v);
+            if ($v === '' || preg_match('/^(-+|n\/?a|absent|abs|missing|excused|ex|\?)$/iu', $v)) { $miss[] = $h; continue; }
+            if ($n === null) { $add('Error', $r['line'], "the grade \"$v\" of $stn in \"$h\" is not a number"); continue; }
+            if ($n < 0 || $n > $M[$i]) { $add('Error', $r['line'], "the grade $v of $stn in \"$h\" is outside 0 to " . $M[$i]); continue; }
+            $s += $W[$i] * 100 * $n / $M[$i]; $sw += $W[$i]; $perCol[$i][] = 100 * $n / $M[$i]; }
+        foreach ($miss as $h) $missN[] = [$r['line'], $stn, $h];
+        if ($miss) $add('Warning', $r['line'], "$stn has no grade for: " . implode(', ', $miss) . ' (the average uses the grades that exist)');
+        if ($sw > 0) $avg[$stn] = [round($s / $sw, 1), $r['line']]; else $add('Warning', $r['line'], "$stn has no grades at all"); }
+    $o = "# Gradebook summary: $name\n\nWeights from the \"weight\" row if there is one, otherwise equal; a row \"max\" gives each column's maximum, otherwise 100. Missing grades are left out of an average (the average of what was handed in), not counted as zero: decide with your school's policy.\n\n";
+    $v = array_column($avg, 0); sort($v); $n = count($v); $mean = $n ? array_sum($v) / $n : 0; $med = $n ? ($n % 2 ? $v[intdiv($n, 2)] : ($v[$n / 2 - 1] + $v[$n / 2]) / 2) : 0;
+    $o .= "- Students with an average: $n\n- Class mean: " . round($mean, 1) . "; median: " . round($med, 1) . "; lowest: " . ($v[0] ?? '-') . "; highest: " . ($v ? $v[$n - 1] : '-') . "\n- Missing grades: " . count($missN) . "\n\n## Averages\n\n| Student | Weighted average |\n|---|---|\n";
+    foreach ($avg as $s => [$a, $l]) $o .= "| $s | $a |\n";
+    $bands = ['below 50' => 0, '50-59' => 0, '60-69' => 0, '70-79' => 0, '80-89' => 0, '90-100' => 0]; $ks = array_keys($bands);
+    foreach ($v as $a) $bands[$ks[$a < 50 ? 0 : min(5, (int)(($a - 50) / 10) + 1)]]++;
+    $o .= "\n## Distribution of averages\n\n| Band | Students |\n|---|---|\n"; foreach ($bands as $b => $c) $o .= "| $b | $c |\n";
+    $o .= "\n## Below " . rtrim(rtrim(number_format($below, 1, '.', ''), '0'), '.') . "\n\n"; $bl = array_filter($avg, fn($x) => $x[0] < $below); if ($bl) { foreach ($bl as $s => [$a, $l]) { $o .= "- $s: $a\n"; $add('Note', $l, "$s is below $below with an average of $a"); } } else $o .= "None.\n";
+    $o .= "\n## Per assessment (percent of the maximum)\n\n| Assessment | Handed in | Mean |\n|---|---|---|\n"; foreach ($hd as $i => $h) if ($i > 0 && isset($perCol[$i])) $o .= "| $h | " . count($perCol[$i]) . ' | ' . round(array_sum($perCol[$i]) / count($perCol[$i]), 1) . " |\n";
+    finish($out, $o, $msgs, $nerr, $nwarn);
+}
+
+// ---- answers ------------------------------------------------------------------------------------------------------------------------------------
+$lines = explode("\n", $raw); $key = null; $Q = []; $A = []; $cur = null;
+foreach ($lines as $i => $l) { $ln = $i + 1;
+    if (preg_match('/^\s*#{0,6}\s*\**(answer\s*key|answers?|solutions?|key|corrig[ée]|r[ée]ponses?|l[öo]sungen?|antworten|soluzioni|risposte|soluciones|respuestas|gabarito|respostas)\**\s*:?\s*$/iu', $l)) { $key = $ln; $cur = null; continue; }
+    if (preg_match('/^\s*(?:\*\*)?(?:Q(?:uestion)?\s*)?(\d{1,3})\s*[.):]\s*\**\s*(.*)$/iu', $l, $m)) { $n = (int)$m[1]; $cur = $n; if ($key === null) { if (isset($Q[$n])) $add('Error', $ln, "question $n appears twice (first on line " . $Q[$n]['line'] . ')'); else $Q[$n] = ['line' => $ln, 'text' => $m[2], 'opts' => []]; } else { if (isset($A[$n])) $add('Error', $ln, "answer $n appears twice (first on line " . $A[$n]['line'] . ')'); else $A[$n] = ['line' => $ln, 'text' => trim($m[2])]; } continue; }
+    if ($key === null && $cur !== null && isset($Q[$cur]) && preg_match('/^\s*\(?([a-eA-E])[.)]\s+\S/u', $l, $m)) $Q[$cur]['opts'][strtolower($m[1])] = true; }
+$o = "# Worksheet answer-key check: $name\n\n";
+if ($key === null) { $add('Error', 1, 'no answer key found (a heading such as "Answer key" or "Answers" before the answers)'); }
+if (!$Q) $add('Error', 1, 'no numbered questions found before the answer key (1. ... 2. ...)');
+$o .= '- Questions: ' . count($Q) . "\n- Answers: " . count($A) . "\n";
+foreach ($Q as $n => $q) { if (!isset($A[$n])) { if ($key !== null) $add('Error', $q['line'], "question $n has no answer in the key"); continue; }
+    if ($q['opts'] && preg_match('/^\(?([a-eA-E])\)?(?:[.):\s]|$)/u', $A[$n]['text'], $m) && !isset($q['opts'][strtolower($m[1])])) $add('Error', $A[$n]['line'], "answer $n is \"" . strtoupper($m[1]) . "\" but question $n only offers " . strtoupper(implode(', ', array_keys($q['opts']))));
+    if ($A[$n]['text'] === '') $add('Warning', $A[$n]['line'], "answer $n is empty"); }
+foreach ($A as $n => $a) if (!isset($Q[$n])) $add('Error', $a['line'], "the key has an answer $n but the worksheet has no question $n");
+$ks = array_keys($Q); sort($ks); if ($ks) for ($i = 1, $mx = max($ks); $i <= $mx; $i++) if (!isset($Q[$i])) $add('Warning', $Q[$ks[0]]['line'], "the question numbers skip $i");
+if ($ks && $ks[0] !== 1) $add('Warning', $Q[$ks[0]]['line'], 'the questions do not start at 1');
+$prev = 0; foreach ($Q as $n => $q) { if ($n < $prev) $add('Warning', $q['line'], "question $n comes after question $prev (out of order)"); $prev = $n; }
+$o .= "\nThe tool checks the numbering and the letters of multiple-choice answers against their options. It cannot tell whether an answer is correct.\n";
+finish($out, $o, $msgs, $nerr, $nwarn);

@@ -1,0 +1,22 @@
+{
+  "id": "personal-finance",
+  "name": "Personal finance and taxes",
+  "icon": "savings",
+  "description": "A household budget, recurring payments, tax paperwork and loan sums, checked.",
+  "detect": [],
+  "note": "This is a personal-finance project: budgets, bank exports, tax paperwork and loan or savings sums. It is the user's real money: never guess, round away or invent an amount, a date, a rate, a category or a tax rule, and say which line and why when you change anything. Keep the original exports untouched and write new files under new names. Amounts may be 1,234.56 or 1.234,56 and negatives (12.50) or 12.50-; dates may be day-first or month-first: say which you assumed. Interest rates, tax rates and thresholds come only from the user or an official document they give you. You do arithmetic on the user's data: you are not a financial, investment, legal or tax adviser, and you say so when a question needs one. Run the Personal finance tool after every change and report what it lists. Do not suggest specific products or investments.",
+  "verify": "budget variance",
+  "group": "Data & numbers",
+  "details": "Household money from plain files. The Personal finance tool compares a monthly budget with the actual spending of a bank export (variance by category, what was overspent, spending nobody budgeted, the savings rate); finds recurring payments (same payee, similar amount, regular interval) and what they cost a year; checks a tax-documents folder against your own list by file name; and works out a loan payoff schedule (with an extra monthly payment) or a savings projection with compound interest. It is arithmetic on your data, not financial or tax advice. Both 1,234.56 and 1.234,56 are read. Bookkeeping handles ledgers and VAT-style totals; Data analysis answers free-form SQL questions on the same files.",
+  "examples": [
+    "Compare March's spending with my budget and list what I overspent",
+    "Which subscriptions and regular payments leave my account, and what do they cost a year",
+    "Which of my tax documents are still missing from this folder",
+    "How fast does an extra 100 a month pay off this loan"
+  ],
+  "tools": [
+    {"tool": "budget", "why": "budget against actual, recurring payments, tax-document checklist, loan and savings projections"},
+    {"tool": "books", "why": "check, summarise and reconcile a ledger or bank export"},
+    {"tool": "data", "why": "ask the same files free-form questions in SQL, charts"}
+  ]
+}

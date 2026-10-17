@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<style>
+  :root { --bg: #121212; --txt: #fff; --acc: #fbc02d; --blu: #1e88e5; --red: #d32f2f; --btn: #333; --sel-bg: transparent; }
+  .light-mode { --bg: #f5f5f5; --txt: #121212; --acc: #f57f17; --btn: #ddd; }
+  body { background: var(--bg); color: var(--txt); text-align: center; font-family: sans-serif; margin: 0; padding: 20px; }
+  
+  /* Language buttons: high-contrast highlight for Protanopia */
+  .lang-bar button { background: var(--btn); color: var(--txt); border: 1px solid var(--acc); min-width: 90px; opacity: 0.7; }
+  .lang-bar button.sel { 
+    background-color: var(--blu) !important; 
+    color: #fff !important; 
+    opacity: 1 !important; 
+    border: 3px solid var(--acc) !important; 
+    box-shadow: 0 0 15px var(--acc) !important; 
+  }
+  
+  .clk { position: absolute; top: 20px; right: 20px; background: rgba(30,30,30,0.9); border: 2px solid var(--acc); border-radius: 10px; padding: 10px; color: var(--acc); min-width: 250px; text-align: center; }
+  .modal { display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); background:#222; padding:20px; border:3px solid var(--acc); border-radius:10px; z-index:1000; color:#fff; width:340px; text-align:left; box-shadow: 0 0 25px #000; }
+  button { padding: 12px 20px; margin: 5px; border: none; border-radius: 5px; cursor: pointer; color: #fff; font-weight: bold; }
+  select, input { width: 100%; margin: 8px 0; padding: 10px; background: #333; color: #fff; border: 1px solid var(--acc); border-radius: 4px; box-sizing: border-box; }
+</style>
+<script>
+  const KEY = "rig_final_v18";
+  let isSetupOpen = false;
+  const dict = {
+    en: { t: "Rig Dashboard", r: "Register", u: "Unregister", o: "Shutdown", s: "⚙ Setup", th: "◑ Theme", l: "Active Requesters", sv: "Save", c: "Cancel", w: "W", p: "Password" },
+    es: { t: "Panel del Rig", r: "Registrar", u: "Anular", o: "Apagar", s: "⚙ Ajustes", th: "◑ Tema", l: "Solicitantes", sv: "Guardar", c: "Cancelar", w: "S", p: "Contraseña" },
+    he: { t: "לוח בקרה", r: "הרשמה", u: "ביטול", o: "כיבוי", s: "⚙ הגדרות", th: "◑ ערכת נושא", l: "מכשירים", sv: "שמור", c: "ביטול", w: "ש", p: "סיסמה" }
+  };
+
+  function getS() {
+    let d = localStorage.getItem(KEY);
+    return d ? JSON.parse(d) : {l:"en", gl:"en", f:"24", s:true, wd:true, wn:true, sep:"/"};
+  }
+
+  function updateUI() {
+    const s = getS(); const g = dict[s.gl] || dict.en;
+    document.getElementById("t-main").innerText = g.t;
+    document.getElementById("b-reg").innerText = g.r;
+    document.getElementById("b-unreg").innerText = g.u;
+    document.getElementById("b-off").innerText = g.o;
+    document.getElementById("btn-setup").innerText = g.s;
+    document.getElementById("b-thm").innerText = g.th;
+    document.getElementById("t-reqs").innerText = g.l;
+    document.getElementById("b-save").innerText = g.sv;
+    document.getElementById("b-can").innerText = g.c;
+    document.getElementById("t-pass-label").innerText = g.p;
+    
+    // Highlight Force
+    document.querySelectorAll(".lang-bar button").forEach(b => b.classList.remove("sel"));
+    const active = document.getElementById("lang-" + s.gl);
+    if(active) active.classList.add("sel");
+  }
+
+  function updateClock() {
+    const s = getS(); const n = new Date();
+    const loc = s.l==="he"?"he-IL":s.l==="es"?"es-AR":"en-GB";
+    const g = dict[s.l] || dict.en;
+    let t = n.toLocaleTimeString(loc, { hour:"2-digit", minute:"2-digit", second: s.s?"2-digit":undefined, hour12: s.f==="12" });
+    let dt = String(n.getDate()).padStart(2,'0')+(s.sep||"/")+String(n.getMonth()+1).padStart(2,'0')+(s.sep||"/")+n.getFullYear();
+    document.getElementById("ct").innerText = t;
+    const getWN = (d) => { d=new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate())); d.setUTCDate(d.getUTCDate()+4-(d.getUTCDay()||7)); return Math.ceil((((d-new Date(Date.UTC(d.getUTCFullYear(),0,1)))/86400000)+1)/7); };
+    document.getElementById("ci").innerText = (s.wd?n.toLocaleDateString(s.l,{weekday:"long"})+", ":"")+dt+(s.wn?" | "+g.w+":"+getWN(n):"");
+  }
+
+  async function updateList() {
+    if (isSetupOpen) return;
+    try {
+      const res = await fetch('/list_data');
+      const html = await res.text();
+      if(html) document.getElementById("req-list").innerHTML = html;
+    } catch(e) {}
+  }
+
+  function openSetup() {
+    const s = getS();
+    document.getElementById("il").value = s.l;
+    document.getElementById("if").value = s.f;
+    document.getElementById("isep").value = s.sep;
+    document.getElementById("is").checked = s.s;
+    document.getElementById("id").checked = s.wd;
+    document.getElementById("in").checked = s.wn;
+    document.getElementById('setup-modal').style.display='block';
+    isSetupOpen=true;
+  }
+
+  function setGUI(lang) { const s = getS(); s.gl = lang; localStorage.setItem(KEY, JSON.stringify(s)); updateUI(); }
+
+  if(localStorage.getItem("th") === "light") document.documentElement.classList.add("light-mode");
+  setInterval(updateClock, 1000);
+  setInterval(updateList, 10000);
+
+  window.onload = async () => {
+    updateUI(); updateClock(); await updateList();
+  };
+</script>
+</head><body>
+  <div class="lang-bar">
+    <button id="lang-en" onclick="setGUI('en')">English</button>
+    <button id="lang-es" onclick="setGUI('es')">Español</button>
+    <button id="lang-he" onclick="setGUI('he')">עברית</button>
+  </div>
+  <div class="clk"><div id="ct" style="font-size:32px; font-weight:bold; border-bottom:1px solid #444;"></div><div id="ci" style="font-size:13px; color:#aaa;"></div></div>
+  <h2 id="t-main" style="color:var(--acc); margin-top:40px;"></h2>
+  <div>
+    <button id="b-reg" onclick="fetch('/add').then(()=>updateList())" style="background:var(--blu);"></button>
+    <button id="b-unreg" onclick="fetch('/rem').then(()=>updateList())" style="background:var(--btn); border:1px solid var(--acc);"></button>
+    <button id="b-off" onclick="document.getElementById('off-modal').style.display='block';isSetupOpen=true;" style="background:var(--red);"></button>
+  </div>
+  <button id="btn-setup" onclick="openSetup()" style="background:var(--btn); border:1px solid var(--acc);"></button>
+  <button id="b-thm" onclick="document.documentElement.classList.toggle('light-mode');localStorage.setItem('th',document.documentElement.classList.contains('light-mode')?'light':'dark')" style="background:var(--btn); border:1px solid var(--acc);"></button>
+
+  <div id="setup-modal" class="modal">
+    <h3 style="color:var(--acc)">Settings</h3>
+    Locale: <select id="il"><option value="en">English</option><option value="es">Spanish</option><option value="he">Hebrew</option></select>
+    Format: <select id="if"><option value="24">24h</option><option value="12">12h</option></select>
+    Sep: <select id="isep"><option value="/">/</option><option value="-">-</option><option value=".">.</option></select>
+    <label><input type="checkbox" id="is"> Seconds</label><br>
+    <label><input type="checkbox" id="id"> Weekday</label><br>
+    <label><input type="checkbox" id="in"> Week Number</label><br>
+    <button id="b-save" onclick="const s=getS();s.l=document.getElementById('il').value;s.f=document.getElementById('if').value;s.s=document.getElementById('is').checked;s.wd=document.getElementById('id').checked;s.wn=document.getElementById('in').checked;s.sep=document.getElementById('isep').value;localStorage.setItem(KEY,JSON.stringify(s));location.reload();" style="background:var(--blu); width:100%; margin-top:10px;"></button>
+    <button id="b-can" onclick="document.getElementById('setup-modal').style.display='none';isSetupOpen=false;" style="background:transparent; color:#aaa; width:100%;"></button>
+  </div>
+
+  <div id="off-modal" class="modal">
+    <h3 id="t-pass-label" style="color:var(--red)"></h3>
+    <input type="password" id="pass-i" placeholder="***">
+    <button onclick="fetch('/off?p='+encodeURIComponent(document.getElementById('pass-i').value)).then(()=>alert('Sent'))" style="background:var(--red); width:100%; margin-top:10px;">Confirm</button>
+    <button onclick="document.getElementById('off-modal').style.display='none';isSetupOpen=false;" style="background:transparent; color:#aaa; width:100%;">Cancel</button>
+  </div>
+  <hr style="border:0; border-top:1px solid #333; width:80%; margin:30px auto;">
+  <h3 id="t-reqs" style="color:var(--acc);"></h3>
+  <ul id="req-list" style="list-style:none; padding:0; line-height:2.5; font-size:18px;"></ul>
+</body></html>

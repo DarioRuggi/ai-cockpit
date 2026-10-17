@@ -1,0 +1,78 @@
+{
+    "id": "recipe",
+    "name": "Recipes",
+    "description": "Work on recipes kept as markdown or plain text (a title, a \"Serves 4\" line, an ingredient list, steps). Scale changes the servings (fractions and ranges, tsp to tbsp to cup); Convert changes units (cups, spoons, oz, lb, ml, g) using common ingredient densities and shows oven temperatures in both scales; Shopping list merges the ingredients of one recipe or a whole folder into one list grouped by aisle; Check finds missing servings, quantities, units and steps and flags allergen words in six languages. Densities and allergen words are approximations: read the labels. The original is never changed. Word documents: pandoc (Markdown to DOCX).",
+    "binary": "php",
+    "version_args": "--version",
+    "website": "https://www.php.net",
+    "packages": {
+        "apt": "php-cli php-mbstring",
+        "dnf": "php-cli php-mbstring",
+        "pacman": "php",
+        "zypper": "php8 php8-mbstring",
+        "brew": "php"
+    },
+    "presets": [
+        {
+            "id": "scale",
+            "label": "Scale to N servings",
+            "description": "Rewrites the recipe for the number of servings you type in the extra arguments, for example servings=6 (add from=4 if the recipe does not say how many it serves). Fractions, ranges and the servings line follow; salt, spices and cooking time need tasting, and the output says so.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_scaled",
+            "command": "php {WEBROOT}/recipe_tool scale {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "convert",
+            "label": "Convert units",
+            "description": "Changes cups, spoons, ounces and pounds to millilitres and grams (extra argument to=metric, to=grams, to=us or to=cups), using common densities for flour, sugar, butter, milk and about thirty more. Volume to weight is an ESTIMATE and is marked as one. Oven temperatures get the other scale in brackets.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_converted",
+            "command": "php {WEBROOT}/recipe_tool convert {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "shopping",
+            "label": "Shopping list (one recipe or a folder)",
+            "description": "Merges the ingredients of this recipe, or of every .md and .txt recipe in the folder, into one checklist grouped by aisle (fruit and vegetables, meat and fish, dairy and eggs, bakery, pantry, spices). Same ingredients are added when their units agree. Extra argument skip=salt,water leaves items out.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document",
+                "folder"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_shopping",
+            "command": "php {WEBROOT}/recipe_tool shopping {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "check",
+            "label": "Check the recipe",
+            "description": "Finds a missing servings line, ingredient lines without a quantity or unit, a missing method, duplicate ingredients, ingredients never used in the method, oven temperatures with no C or F, and allergen words (gluten, milk, eggs, nuts, fish, shellfish, soy, sesame, mustard, celery ...) in English, French, German, Italian, Portuguese and Spanish, compared with an Allergens: line if the recipe has one.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_check",
+            "command": "php {WEBROOT}/recipe_tool check {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        }
+    ]
+}

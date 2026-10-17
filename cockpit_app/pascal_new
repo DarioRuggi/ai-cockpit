@@ -1,0 +1,234 @@
+#!/bin/bash
+# =============================================================================
+# pascal_new — scaffolds for the Pascal / Lazarus tool presets (tools_builtins/lazarus.json).
+#
+# Usage: pascal_new <kind> <project-folder> <output.txt> [name]
+#   kind  console   NAME.lpr + NAME.lpi  a console program (Lazarus project, builds with lazbuild or fpc)
+#         unit      NAME.pas             a unit with a class skeleton
+#         gui       NAME.lpi, NAME.lpr, unit1.pas, unit1.lfm   a Lazarus (LCL) form application
+#
+# Writes into the folder, never over an existing file (if any file it would write exists, it writes nothing and says which),
+# and lists what it created in <output.txt>. The name is a Pascal identifier (letters, digits, underscore; 40 at most).
+# =============================================================================
+set -u
+KIND="${1:-}"; DIR="${2:-}"; OUT="${3:-/dev/stdout}"; NAME="${4:-}"
+say() { printf '%s\n' "$*" >> "$OUT"; }
+: > "$OUT" 2>/dev/null || OUT=/dev/stdout
+fail() { say "pascal_new: $*"; exit 1; }
+[ -d "$DIR" ] || fail "no such folder: $DIR"
+case "$KIND" in console) : "${NAME:=project1}" ;; unit) : "${NAME:=unit1}" ;; gui) : "${NAME:=project1}" ;; *) fail "unknown kind '$KIND' (console, unit, gui)" ;; esac
+printf '%s' "$NAME" | grep -Eq '^[A-Za-z][A-Za-z0-9_]{0,39}$' || fail "the name must start with a letter and use letters, digits and _ only (max 40): '$NAME'"
+LC=$(printf '%s' "$NAME" | tr 'A-Z' 'a-z')
+
+declare -a FILES=()
+case "$KIND" in
+  console) FILES=("$NAME.lpr" "$NAME.lpi") ;;
+  unit)    FILES=("$NAME.pas") ;;
+  gui)     FILES=("$NAME.lpr" "$NAME.lpi" "unit1.pas" "unit1.lfm") ;;
+esac
+clash=""; for f in "${FILES[@]}"; do [ -e "$DIR/$f" ] && clash="$clash $f"; done
+[ -z "$clash" ] || fail "nothing written: already there:$clash"
+
+lpi_head() {   # $1 = title, $2 = lpr file, $3 = extra units XML, $4 = required packages XML, $5 = gui true/false
+cat <<LPI
+<?xml version="1.0" encoding="UTF-8"?>
+<CONFIG>
+  <ProjectOptions>
+    <Version Value="12"/>
+    <General>
+      <Flags>
+        <MainUnitHasCreateFormStatements Value="$5"/>
+        <MainUnitHasTitleStatement Value="False"/>
+        <MainUnitHasScaledStatement Value="False"/>
+      </Flags>
+      <SessionStorage Value="InProjectDir"/>
+      <Title Value="$1"/>
+      <UseAppBundle Value="False"/>
+      <ResourceType Value="res"/>
+    </General>
+    <BuildModes>
+      <Item Name="Default" Default="True"/>
+    </BuildModes>
+    <PublishOptions>
+      <Version Value="2"/>
+    </PublishOptions>
+    <RunParams>
+      <FormatVersion Value="2"/>
+    </RunParams>
+$4    <Units>
+      <Unit>
+        <Filename Value="$2"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
+$3    </Units>
+  </ProjectOptions>
+  <CompilerOptions>
+    <Version Value="11"/>
+    <Target>
+      <Filename Value="$1"/>
+    </Target>
+    <SearchPaths>
+      <UnitOutputDirectory Value="lib/\$(TargetCPU)-\$(TargetOS)"/>
+    </SearchPaths>
+  </CompilerOptions>
+</CONFIG>
+LPI
+}
+
+case "$KIND" in
+console)
+cat > "$DIR/$NAME.lpr" <<PAS
+program $NAME;
+
+{\$mode objfpc}{\$H+}
+
+uses
+  SysUtils;
+
+begin
+  WriteLn('Hello from $NAME');
+end.
+PAS
+  lpi_head "$NAME" "$NAME.lpr" "" "" False > "$DIR/$NAME.lpi" ;;
+unit)
+cat > "$DIR/$NAME.pas" <<PAS
+unit $NAME;
+
+{\$mode objfpc}{\$H+}
+
+interface
+
+uses
+  Classes, SysUtils;
+
+type
+  T${NAME} = class
+  private
+    FName: string;
+  public
+    constructor Create(const AName: string);
+    property Name: string read FName write FName;
+  end;
+
+implementation
+
+constructor T${NAME}.Create(const AName: string);
+begin
+  inherited Create;
+  FName := AName;
+end;
+
+end.
+PAS
+  ;;
+gui)
+cat > "$DIR/$NAME.lpr" <<PAS
+program $NAME;
+
+{\$mode objfpc}{\$H+}
+
+uses
+  {\$IFDEF UNIX}
+  cthreads,
+  {\$ENDIF}
+  Interfaces, // this includes the LCL widgetset
+  Forms, Unit1;
+
+begin
+  RequireDerivedFormResource := True;
+  Application.Scaled := True;
+  Application.Initialize;
+  Application.CreateForm(TForm1, Form1);
+  Application.Run;
+end.
+PAS
+cat > "$DIR/unit1.pas" <<'PAS'
+unit Unit1;
+
+{$mode objfpc}{$H+}
+
+interface
+
+uses
+  Classes, SysUtils, Forms, Controls, Graphics, Dialogs, StdCtrls;
+
+type
+
+  { TForm1 }
+
+  TForm1 = class(TForm)
+    Button1: TButton;
+    Label1: TLabel;
+    procedure Button1Click(Sender: TObject);
+  private
+
+  public
+
+  end;
+
+var
+  Form1: TForm1;
+
+implementation
+
+{$R *.lfm}
+
+{ TForm1 }
+
+procedure TForm1.Button1Click(Sender: TObject);
+begin
+  Label1.Caption := 'Hello';
+end;
+
+end.
+PAS
+cat > "$DIR/unit1.lfm" <<'LFM'
+object Form1: TForm1
+  Left = 300
+  Height = 200
+  Top = 200
+  Width = 320
+  Caption = 'Form1'
+  ClientHeight = 200
+  ClientWidth = 320
+  LCLVersion = '4.0.0.4'
+  object Label1: TLabel
+    Left = 24
+    Height = 15
+    Top = 24
+    Width = 40
+    Caption = 'Label1'
+  end
+  object Button1: TButton
+    Left = 24
+    Height = 28
+    Top = 56
+    Width = 96
+    Caption = 'Button1'
+    TabOrder = 0
+    OnClick = Button1Click
+  end
+end
+LFM
+  lpi_head "$NAME" "$NAME.lpr" "      <Unit>
+        <Filename Value=\"unit1.pas\"/>
+        <IsPartOfProject Value=\"True\"/>
+        <ComponentName Value=\"Form1\"/>
+        <HasResources Value=\"True\"/>
+        <ResourceBaseClass Value=\"Form\"/>
+      </Unit>
+" "    <RequiredPackages>
+      <Item>
+        <PackageName Value=\"LCL\"/>
+      </Item>
+    </RequiredPackages>
+" True > "$DIR/$NAME.lpi" ;;
+esac
+
+say "Created in $DIR:"
+for f in "${FILES[@]}"; do say "  $f"; done
+case "$KIND" in
+  console|gui) say "Build it with the Lazarus build tool on $NAME.lpi, or open it in Lazarus." ;;
+  unit)        say "Add it to a program's uses clause; check it with the Free Pascal compile tool." ;;
+esac
+exit 0

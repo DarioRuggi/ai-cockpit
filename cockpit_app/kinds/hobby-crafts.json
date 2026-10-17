@@ -1,0 +1,26 @@
+{
+  "id": "hobby-crafts",
+  "name": "Hobby crafts",
+  "icon": "content_cut",
+  "description": "Knitting, crochet, sewing, woodworking or model-making: cut lists, yarn and fabric estimates, pattern checks, materials costs.",
+  "detect": [],
+  "note": "This is a hobby-crafts project: knitting, crochet, sewing, woodworking, model-making. Patterns, parts lists and measurements are the user's: never invent a measurement, a stitch count, a gauge or a price, and say which numbers you assumed (units, whether sizes include seam allowance, whether a length is finished or cut). Yarn, fabric and timber figures from the tools are ESTIMATES from the user's own swatch, sizes and prices: say so, and suggest buying a margin and one dye lot. Keep patterns in markdown with one line per row (\"Row 1: k2, p2 (24 sts)\") and run the Pattern check after every edit. Keep the user's originals untouched and write changed copies under new names. Safety: tools, blades, heat and finishes can injure; give no guarantee that a design is safe or structurally sound, and tell the user to follow the tool maker's instructions and wear protection. This is arithmetic on the user's numbers, not a substitute for a test swatch or a trial fit.",
+  "verify": "craft rows",
+  "group": "Home & life",
+  "details": "Planning a make from plain files. The Craft helper tool packs a list of parts into stock lengths (boards, dowel, fabric strips) with first-fit decreasing and the saw kerf, showing offcuts and waste; estimates yarn from the area of the pieces and a swatch you measured (metres or grams, skeins to buy, with a margin); estimates fabric length from the area of the pieces as a lower bound; checks a markdown knitting or crochet pattern for missing or doubled rows, repeats of rows that do not exist, and stitch counts that do not match what you wrote; and totals a materials list with cost, what you already have and what is left to buy. Fractions such as 36 1/2 are read. Everything is an estimate from your numbers; nothing is looked up.",
+  "examples": [
+    "How many 2400 mm boards for this bookcase, with a 3 mm saw cut?",
+    "How much yarn for a cardigan from my 10 cm swatch?",
+    "Check my scarf pattern: do the stitch counts add up?",
+    "Total cost of the materials and what I still have to buy"
+  ],
+  "tools": [
+    {"tool": "craft", "why": "cut lists, yarn and fabric estimates, pattern row check, materials totals"},
+    {"tool": "scad", "why": "model a part in 3D before cutting it"}
+  ],
+  "starter": [
+    {"path": "parts.csv", "content": "name,length,qty,material\n"},
+    {"path": "materials.csv", "content": "item,qty,unit,unit cost,supplier,have\n"},
+    {"path": "pattern.md", "content": "# Pattern name\n\nGauge: \nCast on: \n\nRow 1: \nRow 2: \n"}
+  ]
+}

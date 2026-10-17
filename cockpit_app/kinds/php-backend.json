@@ -1,0 +1,21 @@
+{
+  "id": "php-backend",
+  "name": "PHP project",
+  "icon": "code",
+  "description": "A PHP application or web backend: linted, scanned, outlined.",
+  "detect": ["composer.json", "*.php"],
+  "note": "This is a PHP project (Cockpit itself is one). Read the existing code and match its style before adding to it. Never trust request data: validate and cast every $_GET, $_POST, $_COOKIE and uploaded file, use prepared statements for SQL, escape output with htmlspecialchars, and never pass request data to include, eval, unserialize or a shell command. Every script that answers a web request must start by checking the login (the project's auth include), and a command-line-only script must refuse to run over the web (PHP_SAPI check). Keep the code compatible with the oldest PHP version the project supports: run the minimum-version check after adding language features. After every change, run the PHP syntax check and the security scan and fix what they list; run the guard check when you add an endpoint.",
+  "verify": "phpdev lint",
+  "group": "Software & games",
+  "details": "A PHP application. The PHP tool checks the syntax of every file with this machine's PHP, scans for risky patterns (command and code execution with request data, SQL built from request data, unescaped output, include of request data, unserialize, removed functions, disabled TLS checks, weak hashes, hard-coded secrets), lists the scripts that read a request but do not include the auth file (the endpoints that answer with no login check), outlines the classes and functions with their line, and finds the oldest PHP version the code needs. The scan works by patterns: it lists candidates, with false alarms, for you to check.",
+  "examples": [
+    "Find every endpoint that answers without a login check",
+    "Syntax-check a project before deploying it",
+    "Which PHP version does this code need",
+    "Review a new feature for injection and unescaped output"
+  ],
+  "tools": [
+    {"tool": "phpdev", "why": "syntax check, security scan, guard check, outline, minimum PHP version"},
+    {"tool": "data", "why": "query the SQLite or CSV data the app uses"}
+  ]
+}

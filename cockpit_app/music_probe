@@ -1,0 +1,176 @@
+#!/bin/bash
+# =============================================================================
+# music_probe — what can be said about an audio file WITHOUT a model.
+# Called by tools.php (tool "music"). Usage: music_probe <input> <output.txt> <mode>
+#
+# Modes: report (everything below) · bpm · loudness · silence
+#
+# Every number here is measured, not guessed. That is the point: an LLM asked
+# "what BPM is this" will happily invent one, and a 4 GB GPU cannot run an audio
+# model that would know. ffprobe/ffmpeg are always present; aubio and sox are
+# optional and each section degrades to a plain "not installed" line rather than
+# failing the whole report.
+#
+# Deliberately NOT here: musical key. aubio has no key detection, and guessing it
+# from a pitch histogram is wrong often enough to be worse than silence.
+# =============================================================================
+set -u
+INPUT="${1:-}"; OUTPUT="${2:-/dev/stdout}"; MODE="${3:-report}"
+[ -f "$INPUT" ] || { echo "music_probe: no such file: $INPUT" | tee "$OUTPUT" >&2; exit 1; }
+
+have(){ command -v "$1" >/dev/null 2>&1; }
+out(){ printf '%s\n' "$*" >> "$OUTPUT"; }
+
+: > "$OUTPUT"
+
+# A file with no audio stream must be REFUSED, not "analysed": the sections below degrade to
+# plain lines ("no steady beat found", "0 silences") that read like measurements of a file that
+# was never audio. (Found 2026-10-02: a text file got a full-looking report.)
+if have ffprobe; then
+    _a=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_type -of csv=p=0 "$INPUT" 2>/dev/null | head -1)
+    if [ "$_a" != "audio" ]; then
+        _m="music_probe: $(basename "$INPUT") is not an audio file (no audio stream found) — nothing was measured."
+        out "$_m"; echo "$_m" >&2      # stderr too: the runner shows a failed run's log, not the output file
+        exit 1
+    fi
+fi
+
+# ── Container facts (ffprobe) ────────────────────────────────────────────────
+basics() {
+    have ffprobe || { out "format: ffprobe not installed"; return; }
+    local j; j=$(ffprobe -v quiet -print_format json -show_format -show_streams "$INPUT" 2>/dev/null)
+    [ -n "$j" ] || { out "format: unreadable"; return; }
+    local dur rate ch codec br
+    dur=$(printf '%s' "$j"  | grep -o '"duration": *"[0-9.]*"' | head -1 | grep -o '[0-9.]\+')
+    rate=$(printf '%s' "$j" | grep -o '"sample_rate": *"[0-9]*"' | head -1 | grep -o '[0-9]\+')
+    ch=$(printf '%s' "$j"   | grep -o '"channels": *[0-9]*' | head -1 | grep -o '[0-9]\+')
+    codec=$(printf '%s' "$j"| grep -o '"codec_name": *"[^"]*"' | head -1 | cut -d'"' -f4)
+    br=$(printf '%s' "$j"   | grep -o '"bit_rate": *"[0-9]*"' | head -1 | grep -o '[0-9]\+')
+    [ -n "${dur:-}" ] && out "duration:    $(printf '%.1f' "$dur")s"
+    [ -n "${codec:-}" ] && out "codec:       $codec"
+    [ -n "${rate:-}" ] && out "sample rate: ${rate} Hz${ch:+, ${ch} ch}"
+    [ -n "${br:-}" ] && out "bit rate:    $((br/1000)) kbps"
+}
+
+# ── Loudness + true peak (EBU R128, the broadcast standard) ──────────────────
+loudness() {
+    have ffmpeg || { out "loudness: ffmpeg not installed"; return; }
+    local r; r=$(ffmpeg -nostats -i "$INPUT" -af ebur128=peak=true -f null - 2>&1 | tail -20)
+    local i lra peak
+    i=$(printf '%s' "$r"    | grep -o 'I: *-\?[0-9.]* LUFS' | tail -1 | grep -o '\-\?[0-9.]\+')
+    lra=$(printf '%s' "$r"  | grep -o 'LRA: *[0-9.]* LU'    | tail -1 | grep -o '[0-9.]\+')
+    peak=$(printf '%s' "$r" | grep -o 'Peak: *-\?[0-9.]* dBFS' | tail -1 | grep -o '\-\?[0-9.]\+')
+    [ -n "${i:-}" ]    && out "loudness:    ${i} LUFS (streaming targets sit near -14)"
+    [ -n "${lra:-}" ]  && out "range:       ${lra} LU"
+    if [ -n "${peak:-}" ]; then
+        out "true peak:   ${peak} dBFS"
+        awk -v p="$peak" 'BEGIN{ if (p > -0.1) print "             ^ at or above 0 dBFS — this is clipping" }' >> "$OUTPUT"
+    fi
+}
+
+# ── Tempo (aubio) ────────────────────────────────────────────────────────────
+# NOT `aubio tempo`: on a clean 120 BPM click track it answers 94.49. The beat
+# and onset timestamps are reliable, so the tempo is derived from the MEDIAN
+# interval between them — median because one missed beat would otherwise halve
+# or double the answer. Both are computed and compared: agreement (including the
+# half/double relationship that subdivisions produce) is reported plainly, and
+# disagreement is reported as disagreement rather than averaged into a number
+# nobody can trust.
+# Returns "<bpm> <consistency>" — consistency being the share of intervals within
+# 10% of the median. A real beat is REGULAR; onset detectors fire on anything, so
+# without this a pure sine reported 109 BPM and pink noise 170. Below 0.6 there
+# is no beat, only events.
+_beat_stats() {   # $1... = command printing timestamps
+    "$@" 2>/dev/null | awk 'NR>1{d=$1-p; if(d>0.05&&d<2) print d} {p=$1}' | sort -n | awk '
+        {a[NR]=$1}
+        END{
+            if (NR < 4) exit;
+            m = a[int(NR/2)];
+            if (m <= 0) exit;
+            for (i = 1; i <= NR; i++) if (a[i] > m*0.9 && a[i] < m*1.1) ok++;
+            printf "%.1f %.2f", 60/m, ok/NR;
+        }'
+}
+tempo() {
+    have aubiotrack || have aubioonset || { out "tempo:       aubio not installed"; return; }
+    # A beat needs transients. Crest factor (peak / RMS) is about 1.41 for a
+    # continuous sine and rises sharply for anything percussive — without this
+    # check a steady 440 Hz tone reported a confident 109 BPM, because its
+    # detector artefacts are perfectly regular.
+    if have sox; then
+        local st rms pk
+        st=$(sox "$INPUT" -n stat 2>&1)
+        rms=$(printf '%s' "$st" | grep -i 'RMS *amplitude' | grep -o '[0-9.]\+' | head -1)
+        pk=$(printf '%s' "$st"  | grep -i 'Maximum amplitude' | grep -o '[0-9.]\+' | head -1)
+        if [ -n "${rms:-}" ] && [ -n "${pk:-}" ]; then
+            if awk -v r="$rms" -v p="$pk" 'BEGIN{exit !(r > 0 && p/r < 2.0)}'; then
+                out "tempo:       no beat — the signal is a continuous tone"
+                return
+            fi
+        fi
+    fi
+    local bs os beat onset bconf oconf
+    have aubiotrack && bs=$(_beat_stats aubiotrack "$INPUT")
+    have aubioonset && os=$(_beat_stats aubioonset "$INPUT")
+    beat=${bs%% *};  bconf=${bs##* }
+    onset=${os%% *}; oconf=${os##* }
+    # Irregular = not a beat. Drop the reading rather than dress it up.
+    awk -v c="${bconf:-0}" 'BEGIN{exit !(c+0 >= 0.6)}' || beat=""
+    awk -v c="${oconf:-0}" 'BEGIN{exit !(c+0 >= 0.6)}' || onset=""
+    if [ -n "${beat:-}" ] && [ -n "${onset:-}" ]; then
+        # 'near', not 'close': close() is an awk builtin and redefining it is a
+        # hard error. Anything outside 40-220 BPM is not a tempo — speech gave
+        # 531 from onsets, which is syllables, not a beat.
+        awk -v b="$beat" -v o="$onset" '
+            function near(x,y){ return (y>0) && (x/y > 0.95) && (x/y < 1.05) }
+            function sane(x){ return (x >= 40) && (x <= 220) }
+            BEGIN{
+                if (!sane(b) && !sane(o)) { print "tempo:       no steady beat found"; exit }
+                if (!sane(b)) { printf "tempo:       ~%.0f BPM (from onsets)\n", o; exit }
+                if (!sane(o)) { printf "tempo:       %.0f BPM\n", b; exit }
+                if (near(o,b))          printf "tempo:       %.0f BPM\n", b;
+                else if (near(o,2*b))   printf "tempo:       %.0f BPM (onsets at %.0f — subdivisions)\n", b, o;
+                else if (near(2*o,b))   printf "tempo:       %.0f BPM (or %.0f — half/double is ambiguous here)\n", b, o;
+                else                    printf "tempo:       unclear — beats suggest %.0f BPM, onsets %.0f\n", b, o;
+            }' >> "$OUTPUT"
+    elif [ -n "${beat:-}" ] || [ -n "${onset:-}" ]; then
+        awk -v b="${beat:-0}" -v o="${onset:-0}" '
+            function sane(x){ return (x >= 40) && (x <= 220) }
+            BEGIN{ if (sane(b)) printf "tempo:       %.0f BPM\n", b;
+                   else if (sane(o)) printf "tempo:       ~%.0f BPM (from onsets)\n", o;
+                   else print "tempo:       no steady beat found" }' >> "$OUTPUT"
+    else
+        out "tempo:       no steady beat found"
+    fi
+}
+
+# ── Level statistics (sox) ───────────────────────────────────────────────────
+levels() {
+    have sox || { out "levels:      sox not installed"; return; }
+    local s; s=$(sox "$INPUT" -n stat 2>&1)
+    local rms pk
+    rms=$(printf '%s' "$s" | grep -i 'RMS *amplitude' | grep -o '[0-9.]\+' | head -1)
+    pk=$(printf '%s' "$s"  | grep -i 'Maximum amplitude' | grep -o '\-\?[0-9.]\+' | head -1)
+    [ -n "${rms:-}" ] && out "RMS level:   ${rms}"
+    [ -n "${pk:-}" ]  && out "peak sample: ${pk}"
+}
+
+# ── Silence (useful for "where does it actually start") ──────────────────────
+silence() {
+    have ffmpeg || { out "silence: ffmpeg not installed"; return; }
+    local n; n=$(ffmpeg -nostats -i "$INPUT" -af silencedetect=noise=-45dB:d=0.8 -f null - 2>&1 \
+                 | grep -c 'silence_start' || true)
+    out "silences:    ${n} stretch(es) quieter than -45 dB for over 0.8s"
+}
+
+case "$MODE" in
+    bpm)      tempo ;;
+    loudness) loudness ;;
+    silence)  silence ;;
+    *)        out "— $(basename "$INPUT") —"; basics; loudness; levels; tempo; silence
+              out ""
+              out "Measured with ffprobe/ffmpeg/aubio/sox — no model involved, so these are"
+              out "facts rather than impressions. Musical key is not reported: these tools"
+              out "cannot detect it reliably, and a wrong key is worse than none." ;;
+esac
+exit 0

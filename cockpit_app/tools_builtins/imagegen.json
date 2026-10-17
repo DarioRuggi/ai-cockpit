@@ -1,0 +1,108 @@
+{
+    "id": "imagegen",
+    "name": "Image generation",
+    "binary": "php",
+    "version_args": "--version",
+    "website": "https://github.com/leejet/stable-diffusion.cpp",
+    "packages": {
+        "apt": "php-cli php-mbstring",
+        "dnf": "php-cli php-mbstring",
+        "pacman": "php",
+        "zypper": "php8 php8-mbstring",
+        "brew": "php"
+    },
+    "description": "Make pictures with the local stable-diffusion.cpp (the same one as the Generate window), from a prompt you keep in a text file so it can be edited and versioned. Every image gets a .prompt.json next to it (prompt, preset, steps, SEED, size, model): the record that lets you make the same picture again or change one thing. Sizes are capped at 512 per side (a 4 GB GPU runs out of memory above that) and Ollama's models are released from the GPU first. Extra arguments: steps=20 seed=N size=512x512 negative=\"blurry, text\". Make an image, a logo, an icon or a favicon; Variants makes 2 to 6 seeds of the same prompt as one contact sheet (count=4); Check says whether everything is installed. The prompt is read as text and the program is started without a shell, so nothing in a prompt can run. Pictures that need judging (does it match the prompt?) go to the Vision tool: Describe.",
+    "presets": [
+        {
+            "id": "gen",
+            "label": "Make an image from the prompt file",
+            "description": "The input is a text file holding the prompt. Extra: steps=, seed=, size=, negative=.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "image",
+            "output_ext": "png",
+            "output_stem": "{NAME}_image",
+            "command": "php {WEBROOT}/image_tool gen {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "logo",
+            "label": "Logo (flat, centered, dark background)",
+            "description": "Adds a flat vector logo style to your prompt.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "image",
+            "output_ext": "png",
+            "output_stem": "{NAME}_logo",
+            "command": "php {WEBROOT}/image_tool gen {INPUT} {OUTPUT} preset=logo {ARGS}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "icon",
+            "label": "App icon (flat, simple)",
+            "description": "Adds an app-icon style to your prompt.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "image",
+            "output_ext": "png",
+            "output_stem": "{NAME}_icon",
+            "command": "php {WEBROOT}/image_tool gen {INPUT} {OUTPUT} preset=icon {ARGS}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "favicon",
+            "label": "Favicon (tiny, simple)",
+            "description": "A tiny single-subject icon; scale it down with the Image tools.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "image",
+            "output_ext": "png",
+            "output_stem": "{NAME}_favicon",
+            "command": "php {WEBROOT}/image_tool gen {INPUT} {OUTPUT} preset=favicon {ARGS}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "variants",
+            "label": "Variants: 2 to 6 seeds as one sheet",
+            "description": "count=4 by default; each image keeps its own seed in the record.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "image",
+            "output_ext": "png",
+            "output_stem": "{NAME}_variants",
+            "command": "php {WEBROOT}/image_tool variants {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 1800
+        },
+        {
+            "id": "check",
+            "label": "Check: is it installed, which model, how much room",
+            "description": "Reads nothing from the input; just reports.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "imagegen_check",
+            "command": "php {WEBROOT}/image_tool check {INPUT} {OUTPUT}",
+            "timeout_seconds": 60,
+            "optional_input": "/"
+        }
+    ]
+}

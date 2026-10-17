@@ -1,0 +1,61 @@
+{
+    "id": "family",
+    "name": "Family history",
+    "description": "Check and explore a family tree kept as a people CSV (id, name, sex, born, died, father, mother, spouse, married, source) or as a simple GEDCOM text file. Check finds impossible or doubtful dates (death before birth, a child born before a parent or after a mother's death, a parent too young or too old, a marriage before a birth or after a death), unknown parent ids, loops and facts with no source; Duplicates finds people who may be the same; Tree prints descendants or ancestors of a person as an indented tree; Report gives ages at death and the anniversaries in calendar order. Partial and approximate dates are never made precise. Nothing is invented: a missing relative, date or source is reported as missing. The original is never changed.",
+    "binary": "php",
+    "version_args": "--version",
+    "website": "https://www.php.net",
+    "packages": {
+        "apt": "php-cli php-mbstring",
+        "dnf": "php-cli php-mbstring",
+        "pacman": "php",
+        "zypper": "php8 php8-mbstring",
+        "brew": "php"
+    },
+    "presets": [
+        {
+            "id": "check",
+            "label": "Check dates and links",
+            "description": "Impossible dates, parents too young or old (limits adjustable: mother_min=15 mother_max=50 father_min=15 father_max=75 in the extra arguments), unknown ids, loops, missing sources, as file(line) findings.",
+            "input_kinds": ["text", "file", "document"],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_check",
+            "command": "php {WEBROOT}/family_tool check {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "duplicates",
+            "label": "Find possible duplicate people",
+            "description": "People with the same name (any word order, accents ignored) and overlapping birth dates, shared parents or spouse. Candidates only.",
+            "input_kinds": ["text", "file", "document"],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_duplicates",
+            "command": "php {WEBROOT}/family_tool duplicates {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "tree",
+            "label": "Descendants or ancestors tree",
+            "description": "Type person=ID (or a name) in the extra arguments, and dir=ancestors for ancestors (default descendants); depth=N limits the generations. An indented tree with years, spouses and sources.",
+            "input_kinds": ["text", "file", "document"],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_tree",
+            "command": "php {WEBROOT}/family_tool tree {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "report",
+            "label": "Ages and anniversaries",
+            "description": "Ages at death and the birthdays, death days and wedding days in calendar order. Type asof=2025-06-30 in the extra arguments to count to another date (default: today).",
+            "input_kinds": ["text", "file", "document"],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_report",
+            "command": "php {WEBROOT}/family_tool report {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        }
+    ]
+}

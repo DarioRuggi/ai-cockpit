@@ -1,0 +1,135 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// sub_tool — the Subtitling tools' work, for the tool presets (tools_builtins/subs.json). A command-line program, never reachable over the web.
+//
+//   php sub_tool check   FILE OUTPUT          lint an .srt / .vtt / .ass: timing, overlaps, line length, reading speed, empty cues, encoding.
+//                                             The problems are file(line) Error: / Warning: lines (the summary box reads them), then [exit code N]
+//   php sub_tool convert FILE OUTPUT          to the format of OUTPUT's extension (.srt .vtt .ass), through ffmpeg
+//   php sub_tool shift   FILE OUTPUT AMOUNT   move every cue; AMOUNT is milliseconds (+1500, -800), seconds (2.5s), or a stretch factor
+//                                             (*1.04271 or *25/23.976, for a frame-rate mismatch). Writes the format of OUTPUT's extension (.srt / .vtt)
+//
+// The original is never changed. Cue text is carried through untouched (tags, Hebrew, right-to-left marks), only the times move.
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "sub_tool: $m\n"); exit($rc); }
+[$sub, $in, $out, $arg] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? '', $argv[4] ?? ''];
+if (!in_array($sub, ['check', 'convert', 'shift'], true) || $in === '' || $out === '') fail('usage: sub_tool check|convert|shift FILE OUTPUT [AMOUNT]', 2);
+if (!is_file($in)) fail("no such file: $in");
+$ext = strtolower(pathinfo($in, PATHINFO_EXTENSION));
+if (!in_array($ext, ['srt', 'vtt', 'ass', 'ssa'], true)) fail("not a subtitle file (.srt .vtt .ass .ssa): $in");
+$oext = strtolower(pathinfo($out, PATHINFO_EXTENSION));
+
+/** ffmpeg: any subtitle format to any other */
+function ffconvert(string $from, string $to): ?string {
+    if (!trim((string)shell_exec('command -v ffmpeg 2>/dev/null'))) return 'ffmpeg is not installed (sudo apt install ffmpeg)';
+    $o = []; $rc = 0;
+    exec('ffmpeg -nostdin -y -loglevel error -i ' . escapeshellarg($from) . ' ' . escapeshellarg($to) . ' 2>&1', $o, $rc);
+    return ($rc === 0 && is_file($to) && filesize($to) > 0) ? null : 'ffmpeg could not convert it: ' . trim(implode(' ', array_slice($o, -3)));
+}
+
+if ($sub === 'convert') {
+    if (!in_array($oext, ['srt', 'vtt', 'ass'], true)) fail("the output must be .srt, .vtt or .ass, not .$oext");
+    if ($ext === $oext) { copy($in, $out); echo "Already $oext: copied.\n"; exit(0); }
+    $e = ffconvert($in, $out); if ($e) fail($e);
+    echo "Wrote $out (" . strtoupper($oext) . ", from " . strtoupper($ext) . ")\n"; exit(0);
+}
+
+// ---- reading: a UTF-8 text with the BOM and CRLF dealt with; .ass/.ssa become .srt first (the lint is about the text and times) ------------------------
+$work = $in; $tmpd = null;
+if ($ext === 'ass' || $ext === 'ssa') {
+    $tmpd = sys_get_temp_dir() . '/sub_tool_' . getmypid(); @mkdir($tmpd, 0700, true); $work = "$tmpd/x.srt";
+    $e = ffconvert($in, $work); if ($e) fail($e);
+    $ext = 'srt';
+}
+$raw = (string)file_get_contents($work);
+$bom = strncmp($raw, "\xEF\xBB\xBF", 3) === 0; if ($bom) $raw = substr($raw, 3);
+$utf8 = mb_check_encoding($raw, 'UTF-8');
+$raw = str_replace(["\r\n", "\r"], "\n", $raw);
+$lines = explode("\n", $raw);
+
+/** time text to milliseconds, or null */
+function t2ms(string $t): ?int {
+    if (!preg_match('/^\s*(?:(\d+):)?(\d{1,2}):(\d{1,2})[.,](\d{1,3})\s*$/', $t, $m)) return null;
+    return ((int)$m[1] * 3600 + (int)$m[2] * 60 + (int)$m[3]) * 1000 + (int)str_pad($m[4], 3, '0');
+}
+function ms2t(int $ms, string $fmt): string {
+    $ms = max(0, $ms); $h = intdiv($ms, 3600000); $m = intdiv($ms % 3600000, 60000); $s = intdiv($ms % 60000, 1000);
+    return sprintf('%02d:%02d:%02d%s%03d', $h, $m, $s, $fmt === 'vtt' ? '.' : ',', $ms % 1000);
+}
+/** cues: [line (1-based line of the timing row), start, end, text lines, settings (vtt), id, badtime] */
+$cues = []; $i = 0; $n = count($lines);
+while ($i < $n) {
+    if (preg_match('/^\s*(\S+)\s*-->\s*(\S+)(.*)$/', $lines[$i], $m)) {
+        $c = ['line' => $i + 1, 'start' => t2ms($m[1]), 'end' => t2ms($m[2]), 'settings' => trim($m[3]), 'id' => ($i > 0 && trim($lines[$i - 1]) !== '' && !preg_match('/-->/', $lines[$i - 1])) ? trim($lines[$i - 1]) : '', 'text' => [], 'raw' => [$m[1], $m[2]]];
+        $i++; while ($i < $n && trim($lines[$i]) !== '') { $c['text'][] = $lines[$i]; $i++; }
+        $cues[] = $c;
+    } else $i++;
+}
+
+if ($sub === 'shift') {
+    if (!in_array($oext, ['srt', 'vtt'], true)) fail("the output must be .srt or .vtt, not .$oext");
+    $a = trim($arg); $mul = 1.0; $add = 0;
+    if ($a === '') fail('give the amount in the extra arguments: +1500 or -800 (milliseconds), 2.5s (seconds), *1.04271 or *25/23.976 (stretch)');
+    if ($a[0] === '*') {
+        $f = substr($a, 1);
+        if (preg_match('/^([0-9.]+)\/([0-9.]+)$/', $f, $m) && (float)$m[2] > 0) $mul = (float)$m[1] / (float)$m[2];
+        elseif (preg_match('/^[0-9.]+$/', $f)) $mul = (float)$f; else fail("not a stretch factor: $a");
+        if ($mul < 0.5 || $mul > 2.0) fail("a stretch of $mul is not a frame-rate change (0.5 to 2): refused");
+    } elseif (preg_match('/^([+-]?\d+(?:\.\d+)?)s$/i', $a, $m)) $add = (int)round((float)$m[1] * 1000);
+    elseif (preg_match('/^[+-]?\d+$/', $a)) $add = (int)$a;
+    else fail("not an amount: $a (use +1500, -800, 2.5s, *1.04271 or *25/23.976)");
+    if (!$cues) fail('no cues found in the file');
+    $o = ($oext === 'vtt' ? "WEBVTT\n\n" : ''); $k = 0; $dropped = 0; $clamped = 0;
+    foreach ($cues as $c) {
+        if ($c['start'] === null || $c['end'] === null) { $dropped++; continue; }
+        $s = (int)round($c['start'] * $mul) + $add; $e = (int)round($c['end'] * $mul) + $add;
+        if ($e <= 0) { $dropped++; continue; }
+        if ($s < 0) { $s = 0; $clamped++; }
+        $k++; $o .= ($oext === 'srt' ? "$k\n" : ($c['id'] !== '' ? $c['id'] . "\n" : '')) . ms2t($s, $oext) . ' --> ' . ms2t($e, $oext) . ($oext === 'vtt' && $c['settings'] !== '' ? ' ' . $c['settings'] : '') . "\n" . implode("\n", $c['text']) . "\n\n";
+    }
+    file_put_contents($out, $o);
+    echo "Wrote $out: $k cue(s)" . ($mul != 1.0 ? sprintf(', stretched by %.5f', $mul) : '') . ($add ? ", moved by $add ms" : '') . ($clamped ? "; $clamped starting before 0 were set to 0" : '') . ($dropped ? "; $dropped dropped (ended before 0 or unreadable times)" : '') . ".\n";
+    exit(0);
+}
+
+// ---- check -------------------------------------------------------------------------------------------------------------------------------------
+$name = basename($in); $err = 0; $warn = 0; $msgs = [];
+$add = function (string $kind, int $line, string $m) use (&$msgs, &$err, &$warn, $name) { $msgs[] = "$name($line) $kind: $m"; if ($kind === 'Error') $err++; elseif ($kind === 'Warning') $warn++; };
+if (!$utf8) $add('Error', 1, 'the file is not valid UTF-8 (a Windows-1255 / 1252 file read as UTF-8 shows garbage): convert it to UTF-8 first');
+if (!$cues) $add('Error', 1, 'no cues found (a cue is a line like 00:00:01,000 --> 00:00:03,000)');
+if ($ext === 'vtt' && !preg_match('/^WEBVTT/', $raw)) $add('Error', 1, 'a WebVTT file must start with WEBVTT');
+$maxLine = 42; $maxLines = 2; $maxCps = 20.0; $minDur = 833; $maxDur = 7000;
+$prevEnd = null; $prevStart = null; $totalMs = 0; $chars = 0; $longest = 0; $worstCps = 0.0; $k = 0;
+foreach ($cues as $c) {
+    $k++; $L = $c['line'];
+    if ($c['start'] === null || $c['end'] === null) { $add('Error', $L, "cue $k: unreadable time '" . $c['raw'][0] . ' --> ' . $c['raw'][1] . "'"); continue; }
+    $dur = $c['end'] - $c['start'];
+    if ($dur <= 0) $add('Error', $L, "cue $k ends (" . ms2t($c['end'], 'srt') . ') before or at its start (' . ms2t($c['start'], 'srt') . ')');
+    if ($prevStart !== null && $c['start'] < $prevStart) $add('Error', $L, "cue $k starts before cue " . ($k - 1) . ': the cues are out of order');
+    elseif ($prevEnd !== null && $c['start'] < $prevEnd) $add('Error', $L, "cue $k overlaps cue " . ($k - 1) . ' by ' . ($prevEnd - $c['start']) . ' ms');
+    $text = trim(implode("\n", $c['text'])); $plain = trim(preg_replace('/<[^>]+>|\{\\\\[^}]*\}/', '', $text));
+    if ($plain === '') $add('Error', $L, "cue $k has no text");
+    $tl = array_map(fn($x) => trim(preg_replace('/<[^>]+>|\{\\\\[^}]*\}/', '', $x)), $c['text']);
+    if (count($tl) > $maxLines) $add('Warning', $L, "cue $k has " . count($tl) . " lines (more than $maxLines is hard to read)");
+    foreach ($tl as $x) { $w = mb_strlen(preg_replace('/[\x{200E}\x{200F}\x{202A}-\x{202E}]/u', '', $x)); $longest = max($longest, $w); if ($w > $maxLine) { $add('Warning', $L, "cue $k has a line of $w characters (more than $maxLine)"); break; } }
+    if ($dur > 0) {
+        $cc = mb_strlen(str_replace("\n", '', $plain)); $cps = $cc / ($dur / 1000); $worstCps = max($worstCps, $cps);
+        if ($cps > $maxCps) $add('Warning', $L, sprintf('cue %d is read at %.1f characters per second (more than %d is too fast)', $k, $cps, $maxCps));
+        if ($dur < $minDur && $plain !== '') $add('Warning', $L, "cue $k is on screen for only $dur ms");
+        if ($dur > $maxDur) $add('Warning', $L, "cue $k stays for " . round($dur / 1000, 1) . ' s (long: split it)');
+        $totalMs += $dur; $chars += $cc;
+    }
+    $prevStart = $c['start']; $prevEnd = max($prevEnd ?? 0, $c['end']);
+}
+$report = "# Subtitle check: $name\n\n";
+$report .= "- Format: " . strtoupper(pathinfo($in, PATHINFO_EXTENSION)) . ($bom ? ', with a BOM' : '') . ($utf8 ? ', UTF-8' : ', NOT UTF-8') . "\n";
+$report .= "- Cues: " . count($cues) . "; on screen: " . round($totalMs / 1000) . " s; the last cue ends at " . ($prevEnd !== null ? ms2t($prevEnd, 'srt') : '-') . "\n";
+$report .= "- Longest line: $longest characters; fastest cue: " . round($worstCps, 1) . " characters per second; average " . ($totalMs > 0 ? round($chars / ($totalMs / 1000), 1) : 0) . "\n";
+$report .= "- Limits used: $maxLine characters a line, $maxLines lines, $maxCps characters per second, " . ($minDur / 1000) . " to " . ($maxDur / 1000) . " s a cue\n\n";
+$report .= ($msgs ? "## Problems ($err errors, $warn warnings)\n\n" . implode("\n", $msgs) . "\n" : "No problems found.\n");
+$report .= "\n[exit code " . ($err > 0 ? 1 : 0) . "]\n";
+file_put_contents($out, $report);
+if ($tmpd) { @unlink("$tmpd/x.srt"); @rmdir($tmpd); }
+echo "Wrote $out ($err errors, $warn warnings)\n";
+exit(0);

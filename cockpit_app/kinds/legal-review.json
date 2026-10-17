@@ -1,0 +1,22 @@
+{
+  "id": "legal-review",
+  "name": "Legal review",
+  "icon": "gavel",
+  "description": "Contracts and legal documents: compared, checked, marked up.",
+  "detect": [],
+  "note": "This is a document-review project (contracts, terms, policies). You assist a human reviewer; you do not give legal advice and must say so when asked for a conclusion. Never change the wording of a clause silently: show every proposed change as a tracked comparison (old struck, new in bold) and keep the original file untouched, writing edits to a new file with a new name. Quote the document exactly and give the clause number for everything you cite; if you are unsure what a clause means, say so and list the readings. Pay most attention to figures and dates, shall/may/must, negations, 'and' versus 'or', and any/all, because one word changes the duty. Run the Legal review Check before and after every edit and fix what it lists; run Compare between versions and read the points to check first. Mark anything that depends on the law of a particular country as needing a local lawyer.",
+  "verify": "legal check",
+  "group": "Writing & documents",
+  "details": "Reading contracts the way a careful reviewer does. The Legal review tool compares two versions paragraph by paragraph and word by word and lists first the changes that matter (a figure or date, shall becoming may, a negation, and/or, any/all) with the clause number; checks a document for placeholders left in, references to clauses that do not exist, gaps in the numbering, defined terms never used and words that disagree with figures; outlines the clauses and their cross-references; and pulls out the money, durations, dates and the paragraphs on governing law, termination, payment, liability, confidentiality and assignment. It is a reading aid, not legal advice: it finds what to look at and a lawyer decides.",
+  "examples": [
+    "What changed between the draft and the version they sent back",
+    "Find every reference to a clause that was deleted",
+    "List the payment terms and deadlines in a contract",
+    "Check a template for blanks and undefined terms before sending"
+  ],
+  "tools": [
+    {"tool": "legal", "why": "compare versions, check the document, outline clauses, key terms, plain text"},
+    {"tool": "office", "why": "convert between Word and other formats; see the macros and tracked changes in a file"},
+    {"tool": "poppler", "why": "text of a PDF"}
+  ]
+}

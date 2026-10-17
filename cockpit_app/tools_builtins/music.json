@@ -1,0 +1,75 @@
+{
+  "id": "music",
+  "name": "Audio analysis",
+  "description": "Measured facts about an audio file — loudness, clipping, tempo, silence. No model involved, so nothing is invented.",
+  "binary": "ffprobe",
+  "version_args": "-version",
+  "website": "https://aubio.org",
+  "presets": [
+    {
+      "id": "report",
+      "label": "Analyse audio",
+      "description": "Duration, format, loudness (EBU R128), true peak and clipping, levels, tempo, silences",
+      "input_kinds": [
+        "audio",
+        "video"
+      ],
+      "output_kind": "text",
+      "output_ext": "txt",
+      "command": "bash {WEBROOT}/music_probe {INPUT} {OUTPUT} report",
+      "timeout_seconds": 120
+    },
+    {
+      "id": "bpm",
+      "label": "Tempo (BPM)",
+      "description": "Beat interval analysis. Says so plainly when there is no steady beat instead of inventing one.",
+      "input_kinds": [
+        "audio",
+        "video"
+      ],
+      "output_kind": "text",
+      "output_ext": "txt",
+      "command": "bash {WEBROOT}/music_probe {INPUT} {OUTPUT} bpm",
+      "timeout_seconds": 120
+    },
+    {
+      "id": "loudness",
+      "label": "Loudness & clipping",
+      "description": "Integrated loudness in LUFS, loudness range, true peak, and whether it clips",
+      "input_kinds": [
+        "audio",
+        "video"
+      ],
+      "output_kind": "text",
+      "output_ext": "txt",
+      "command": "bash {WEBROOT}/music_probe {INPUT} {OUTPUT} loudness",
+      "timeout_seconds": 90
+    },
+    {
+      "id": "silence",
+      "label": "Find silences",
+      "description": "Stretches quieter than -45 dB for over 0.8s — where a recording actually starts and ends",
+      "input_kinds": [
+        "audio",
+        "video"
+      ],
+      "output_kind": "text",
+      "output_ext": "txt",
+      "command": "bash {WEBROOT}/music_probe {INPUT} {OUTPUT} silence",
+      "timeout_seconds": 90
+    },
+    {
+      "id": "lyrics",
+      "label": "Transcribe lyrics (best effort)",
+      "description": "Runs whisper over the track. Singing with backing music transcribes poorly — treat the result as a draft, not a transcript.",
+      "input_kinds": [
+        "audio",
+        "video"
+      ],
+      "output_kind": "text",
+      "output_ext": "txt",
+      "command": "bash {WEBROOT}/whisper_run {INPUT} {OUTPUT} auto txt",
+      "timeout_seconds": 600
+    }
+  ]
+}

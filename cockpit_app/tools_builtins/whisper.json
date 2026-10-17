@@ -1,0 +1,70 @@
+{
+  "id": "whisper",
+  "name": "Whisper",
+  "description": "Transcribe speech locally with whisper.cpp. The presets used to call a binary named 'whisper' (OpenAI's Python CLI) which this project does not install — they now go through whisper_run, which finds the whisper.cpp build and the largest real model.",
+  "binary": "ffmpeg",
+  "website": "https://github.com/openai/whisper",
+  "presets": [
+    {
+      "id": "transcribe-auto",
+      "label": "Transcribe (auto-detect language)",
+      "description": "Auto-detect spoken language, output .txt",
+      "input_kinds": [
+        "audio",
+        "video"
+      ],
+      "output_kind": "text",
+      "output_ext": "txt",
+      "command": "bash {WEBROOT}/whisper_run {INPUT} {OUTPUT} auto txt"
+    },
+    {
+      "id": "transcribe-en",
+      "label": "Transcribe English",
+      "description": "Force English transcription with base model",
+      "input_kinds": [
+        "audio",
+        "video"
+      ],
+      "output_kind": "text",
+      "output_ext": "txt",
+      "command": "bash {WEBROOT}/whisper_run {INPUT} {OUTPUT} en txt"
+    },
+    {
+      "id": "transcribe-lang",
+      "label": "Transcribe in a language you choose",
+      "description": "Force one language: give its two-letter code in the extra arguments (for example fr, de, ar, ja). Leave it empty for auto-detect.",
+      "input_kinds": [
+        "audio",
+        "video"
+      ],
+      "output_kind": "text",
+      "output_ext": "txt",
+      "command": "bash {WEBROOT}/whisper_run {INPUT} {OUTPUT} {ARGS}"
+    },
+    {
+      "id": "transcribe-srt",
+      "label": "Generate subtitles (.srt)",
+      "description": "Auto-detect language, output timestamped SRT subtitle file",
+      "input_kinds": [
+        "audio",
+        "video"
+      ],
+      "output_kind": "text",
+      "output_ext": "srt",
+      "command": "bash {WEBROOT}/whisper_run {INPUT} {OUTPUT} auto srt"
+    },
+    {
+      "id": "transcribe-large",
+      "label": "Transcribe (large model, more accurate)",
+      "description": "Uses the largest model installed (the wrapper picks it automatically)",
+      "input_kinds": [
+        "audio",
+        "video"
+      ],
+      "output_kind": "text",
+      "output_ext": "txt",
+      "command": "bash {WEBROOT}/whisper_run {INPUT} {OUTPUT} auto txt"
+    }
+  ],
+  "install_note": "Installed by the Cockpit installer (media phase) into the shared venv ~/scripts/cockpit_data/venv. Re-run Installs/install_cockpit.sh and choose the media/transcription phase, or set the binary override in Tools settings to the venv's whisper."
+}

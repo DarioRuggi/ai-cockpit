@@ -1,0 +1,34 @@
+{
+  "id": "vision",
+  "name": "Vision",
+  "description": "Describe images using a local vision-capable model via Ollama.",
+  "binary": "bash",
+  "website": "https://ollama.com",
+  "presets": [
+    {
+      "id": "describe",
+      "label": "Describe image",
+      "description": "Generate a detailed text description of the image",
+      "input_kinds": [
+        "image"
+      ],
+      "output_kind": "text",
+      "output_ext": "txt",
+      "command": "bash {WEBROOT}/ollama_vision {INPUT} {OUTPUT} describe",
+      "timeout_seconds": 120
+    },
+    {
+      "id": "ocr",
+      "label": "Extract text (OCR)",
+      "description": "Read and extract all visible text from the image",
+      "input_kinds": [
+        "image"
+      ],
+      "output_kind": "text",
+      "output_ext": "txt",
+      "command": "bash {WEBROOT}/ollama_vision {INPUT} {OUTPUT} ocr",
+      "timeout_seconds": 120
+    }
+  ],
+  "install_note": "Needs Ollama with a vision model (e.g. llava) and the ollama_vision helper shipped with Cockpit; run the Cockpit installer or check Ollama is running."
+}

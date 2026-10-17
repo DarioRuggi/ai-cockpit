@@ -1,0 +1,49 @@
+{
+    "id": "nonprofit-events",
+    "name": "Non-profit and events",
+    "icon": "volunteer_activism",
+    "description": "Volunteer rosters, run-of-show timelines, budgets and grant drafts checked.",
+    "detect": [],
+    "note": "This is a non-profit and events project: volunteer rosters, run-of-show timelines, budgets and grant applications. Never invent a name, an amount, a date, a headcount or a funder's rule. Use the figures given, say what you assumed, and mark anything unknown as to be confirmed. The tools add up and cross-check; they are not financial, legal, tax or insurance advice, and a grant checklist is only what the person typed from the funder's guidance: tell them to check the funder's own rules. Volunteer lists hold personal data: keep them in this folder, share only what is needed. Safety and licensing at an event are the organiser's responsibility: raise them as questions, not assurances. After every change run the matching check and fix what it lists. Word or PDF versions are made with Markdown to DOCX or PDF.",
+    "verify": "eventplan roster",
+    "group": "Work & community",
+    "details": "For a charity, club or event. The Non-profit and events tool checks a volunteer roster CSV (double-booked people, shifts with nobody assigned or fewer than needed, hours per person, a day that is too long), a run-of-show timeline CSV (overlaps, gaps, total length), a budget against actual by line and category (variance, lines more than 10% over, totals) and a grant draft against a checklist you type, section by section with word limits (missing, empty or over-long sections, leftover TODOs). It is arithmetic on your own files, not financial or grant-writing advice, and it does not know any funder's rules. Pandoc makes the Word or PDF version, the Data tool answers questions about larger sheets.",
+    "examples": [
+        "Who is double-booked on the festival weekend",
+        "Does the run of show overlap anywhere, and how long is it",
+        "Budget against actual: which lines went over",
+        "Is the grant draft within every word limit"
+    ],
+    "tools": [
+        {
+            "tool": "eventplan",
+            "why": "check rosters, timelines, budgets and grant drafts"
+        },
+        {
+            "tool": "pandoc",
+            "why": "plans and applications to Word or PDF"
+        },
+        {
+            "tool": "data",
+            "why": "questions about a larger sheet in SQL"
+        }
+    ],
+    "starter": [
+        {
+            "path": "events/roster.csv",
+            "content": "person,date,start,end,role,needed\nAnna,2026-06-01,09:00,13:00,Entrance,2\n,2026-06-01,09:00,13:00,Entrance,2\n"
+        },
+        {
+            "path": "events/runsheet.csv",
+            "content": "start,end,item\n18:00,18:30,Doors\n18:30,19:00,Welcome\n"
+        },
+        {
+            "path": "events/budget.csv",
+            "content": "line,budget,actual,category\nVenue,500,480,Space\nPrinting,100,,Marketing\n"
+        },
+        {
+            "path": "grants/checklist.txt",
+            "content": "Summary | 150\nNeed | 300\nBudget | 200\n"
+        }
+    ]
+}

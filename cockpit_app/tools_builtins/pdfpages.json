@@ -1,0 +1,38 @@
+{
+  "id": "pdfpages",
+  "name": "PDF pages",
+  "description": "Render PDF pages to images so an agent can look at charts, diagrams and scans instead of reading text that was never extracted.",
+  "binary": "pdftoppm",
+  "version_args": "-v",
+  "website": "https://poppler.freedesktop.org",
+  "presets": [
+    {
+      "id": "pages",
+      "label": "Render pages as images",
+      "description": "First 6 pages at 120 dpi — enough to read a chart, small enough to send (pdftoppm names the files itself: <prefix>-01.png, -02.png …)",
+      "input_kinds": [
+        "document"
+      ],
+      "output_kind": "image-sequence",
+      "output_ext": "png",
+      "output_stem": "{NAME}_page",
+      "command": "pdftoppm -png -r 120 -f 1 -l 6 {INPUT} {OUTPUT}",
+      "timeout_seconds": 120,
+      "output_is_prefix": true
+    },
+    {
+      "id": "pages-hi",
+      "label": "Render pages as images (higher detail)",
+      "description": "First 3 pages at 200 dpi — for dense tables or small print (pdftoppm names the files itself: <prefix>-01.png, -02.png …)",
+      "input_kinds": [
+        "document"
+      ],
+      "output_kind": "image-sequence",
+      "output_ext": "png",
+      "output_stem": "{NAME}_page",
+      "command": "pdftoppm -png -r 200 -f 1 -l 3 {INPUT} {OUTPUT}",
+      "timeout_seconds": 180,
+      "output_is_prefix": true
+    }
+  ]
+}

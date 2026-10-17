@@ -1,0 +1,41 @@
+{
+    "id": "job-search",
+    "name": "Job search and CV",
+    "icon": "work",
+    "description": "A CV checked, matched honestly to an ad, applications tracked, interviews practised.",
+    "detect": [],
+    "note": "This is a job-search project: a CV, job ads, an application tracker and interview practice. The CV must stay true. Never add a skill, tool, qualification, employer, date, title or result that the person has not stated; the match check lists the ad's words the CV lacks only so the person can say honestly whether they have them, and a missing word is never a reason to add it. If a date or fact is unclear, ask. Improve wording only of what is already there: active verbs, concrete results the person gave. Say what you assumed and what you changed. Do not give legal, immigration or salary-negotiation advice. Keep one date format, and keep contact details exactly as given. Interview answers are the person's own true examples: write prompts, not invented stories. Word or PDF versions are made with Markdown to DOCX or PDF.",
+    "verify": "career cv",
+    "group": "Work & community",
+    "details": "A job hunt in one folder. The Job search tool checks a CV in markdown or text (date gaps over three months and overlaps in the experience list, mixed date formats, length, weak phrases such as \"responsible for\" and passive wording in several languages, missing e-mail or phone); compares the CV with a job ad as found and missing key words, with a standing rule that it never adds a skill the person lacks; reads an applications CSV and lists the follow-ups due, the status counts and the response rate; and builds an interview-practice question bank from the ad's requirements with empty fields for true examples. These are reading and counting aids, not career advice. Pandoc makes the Word or PDF CV.",
+    "examples": [
+        "Find the gap and the mixed date formats in my CV",
+        "Which words of this job ad are missing from my CV, honestly",
+        "Who should I follow up with this week",
+        "Practice questions from the requirements of this ad"
+    ],
+    "tools": [
+        {
+            "tool": "career",
+            "why": "check a CV, match it to an ad, track applications, build interview questions"
+        },
+        {
+            "tool": "pandoc",
+            "why": "CV and letters to Word or PDF"
+        },
+        {
+            "tool": "writing",
+            "why": "repeated words and sentence length in a letter"
+        }
+    ],
+    "starter": [
+        {
+            "path": "cv/cv.md",
+            "content": "# Name\n\nEmail: \nPhone: \n\n## Experience\n\n### Role, Employer\nMar 2020 - Present\n- What I did, and the result:\n\n## Education\n"
+        },
+        {
+            "path": "applications/tracker.csv",
+            "content": "company,role,applied,status,follow-up\nExample Ltd,Role,2026-01-15,applied,2026-01-29\n"
+        }
+    ]
+}

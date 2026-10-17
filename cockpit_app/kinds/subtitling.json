@@ -1,0 +1,36 @@
+{
+  "id": "subtitling",
+  "name": "Subtitling",
+  "icon": "subtitles",
+  "description": "Subtitles for a video: made, checked, re-timed, translated.",
+  "detect": [
+    "*.srt",
+    "*.vtt",
+    "*.ass",
+    "*.ssa"
+  ],
+  "note": "This is a subtitling project. Subtitles are .srt, .vtt or .ass files: a cue is a number, a time range (00:00:01,000 --> 00:00:03,000) and one or two short lines. When you translate or edit, NEVER change the timestamps or the number of cues unless asked, keep the tags (<i>, {\\an8}) and the right-to-left marks of Arabic, Hebrew and other right-to-left scripts, keep every line under about 42 characters and at most two lines, and keep the reading speed under about 20 characters a second. Subtitle files are UTF-8; do not rewrite them in another encoding. After every change, run the Subtitles check and fix what it lists.",
+  "verify": "subs check",
+  "group": "Media",
+  "details": "Subtitles for a video. The Subtitles tool checks a .srt, .vtt or .ass file the way a broadcaster would (overlaps, backwards or empty cues, lines too long, text read too fast or shown too briefly) with the line in the file for each problem, converts between the formats, and shifts or stretches the times (for example 25 against 23.976 frames a second). The Whisper tool makes the subtitles from the sound and the ffmpeg tool burns them into the picture. The agent translates and edits the text without touching the times.",
+  "examples": [
+    "Transcribe an interview, then clean up the cues",
+    "Translate English subtitles into German without moving a time",
+    "Fix a file that is out of sync by two seconds",
+    "Convert .srt to .vtt for a web player"
+  ],
+  "tools": [
+    {
+      "tool": "subs",
+      "why": "check, convert and re-time the subtitle file; each problem comes back with its line"
+    },
+    {
+      "tool": "whisper",
+      "why": "transcribe the sound to subtitles (Transcribe to SRT)"
+    },
+    {
+      "tool": "ffmpeg",
+      "why": "burn the subtitles into the video (Burn subtitles)"
+    }
+  ]
+}

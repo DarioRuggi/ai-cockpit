@@ -1,0 +1,145 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// diy_tool — the Home and DIY tool's work, for the tool presets (tools_builtins/diy.json). A command-line program, never reachable over the web.
+//
+//   php diy_tool calc     JOBS OUTPUT           material calculators: paint litres, flooring or tile count, concrete volume, lumber lengths (cutting plan)
+//   php diy_tool estimate ITEMS OUTPUT [contingency=10 tax=0]   a job estimate sheet: parts, labour and contingency totalled, with problem lines
+//   php diy_tool schedule TASKS OUTPUT [today=2026-03-01 within=30]   maintenance schedule: next due dates from last done + interval; overdue and coming up
+//
+// JOBS is a text file, one job per line (blank lines and # comments are skipped), written  kind: key=value key=value ...
+//   paint: room=4x3x2.5 doors=2 windows=1 coats=2 coverage=10 ceiling=yes     room = length x width x height in metres (or walls=24 for the wall area in m2); coverage = m2 per litre, default 10 (read it from the tin)
+//   floor: area=12 waste=10 piece=30x30 pack=11                               area in m2 (or room=4x3); piece size in cm (suffix mm, cm, m, in, ft allowed); pack = pieces per box; waste % default 10
+//   concrete: length=3 width=2 depth=10cm waste=5 bag=0.0125                  metres unless a suffix; bag = m3 of concrete one bag makes (from the bag: not assumed); waste % default 5
+//   lumber: need=2.4,1.8,1.8,0.6 stock=2.4,3.0 kerf=3                         lengths needed and the stock lengths you could buy, in metres (or with a suffix); kerf = saw cut in mm; a cutting plan per stock length
+// ITEMS is a CSV: item, type (part or labour, in several languages), quantity (or hours), unit price (or hourly rate). TASKS is a CSV: task, last done (date), interval (6 months, 1 year, 90 days, 2 weeks).
+// Quantities are estimates from the numbers you give; read the product's own coverage and yield and buy a margin. SAFETY: electrical, gas, structural, roof, chimney, asbestos and similar work belongs to
+// licensed professionals: this tool only does arithmetic and flags such words. The original is never changed.
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "diy_tool: $m\n"); exit($rc); }
+[$sub, $in, $out] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? ''];
+$args = array_slice($argv, 4);
+if (!in_array($sub, ['calc', 'estimate', 'schedule'], true) || $in === '' || $out === '') fail('usage: diy_tool calc|estimate|schedule INPUT OUTPUT [ARGS]', 2);
+$opt = []; foreach ($args as $a) foreach (preg_split('/\s+(?=\w+=)/', trim($a)) as $p) if (strpos($p, '=') !== false) { [$k, $v] = explode('=', $p, 2); $opt[strtolower(trim($k))] = trim($v); }
+function read_csv(string $f): array {
+    if (!is_file($f)) fail("no such file: $f");
+    $t = (string)file_get_contents($f); if (strncmp($t, "\xEF\xBB\xBF", 3) === 0) $t = substr($t, 3);
+    if (!mb_check_encoding($t, 'UTF-8')) { $c = preg_match('/[\xE0-\xFA]{3,}/', $t) ? 'CP1255' : 'CP1252'; $t = mb_convert_encoding($t, 'UTF-8', $c); }
+    $t = str_replace(["\r\n", "\r"], "\n", $t); $first = strtok($t, "\n"); $c = ["\t" => substr_count($first, "\t"), ';' => substr_count($first, ';'), ',' => substr_count($first, ',')]; arsort($c); $sep = array_key_first($c);
+    $rows = []; $h = fopen('php://memory', 'r+'); fwrite($h, $t); rewind($h); $ln = 0; $header = null;
+    while (($r = fgetcsv($h, 0, $sep, '"', '')) !== false) { $ln++; if ($r === [null] || (count($r) === 1 && trim((string)$r[0]) === '')) continue; if ($header === null) { $header = array_map(fn($x) => trim((string)$x), $r); continue; } $rows[] = ['line' => $ln, 'cells' => $r]; }
+    fclose($h); if ($header === null) fail('the file is empty'); return [$header, $rows];
+}
+function find_col(array $header, array $names): ?int { foreach ($header as $i => $h) { $x = mb_strtolower(trim(preg_replace('/[\s_\-.]+/u', ' ', $h))); $words = explode(' ', $x); foreach ($names as $n) if ($x === $n || (strpos($n, ' ') === false && in_array($n, $words, true)) || (mb_strlen($n) > 4 && mb_strpos($x, $n) !== false) || (strpos($n, ' ') !== false && mb_strpos($x, $n) !== false)) return $i; } return null; }
+function parse_num(?string $s): ?float {
+    $s = trim((string)$s); if ($s === '') return null; $neg = false;
+    if (preg_match('/^\((.+)\)$/', $s, $m)) { $neg = true; $s = $m[1]; } if (substr($s, -1) === '-') { $neg = true; $s = substr($s, 0, -1); } if (substr($s, 0, 1) === '-' || substr($s, 0, 1) === '−') { $neg = !$neg; $s = substr($s, 1); }
+    $s = preg_replace('/[^\d.,]/u', '', $s); if ($s === '' || !preg_match('/\d/', $s)) return null;
+    $lc = strrpos($s, ','); $ld = strrpos($s, '.');
+    if ($lc !== false && $ld !== false) { if ($lc > $ld) $s = str_replace('.', '', $s); else $s = str_replace(',', '', $s); $s = str_replace(',', '.', $s); }
+    elseif ($lc !== false) { if (strlen($s) - $lc - 1 <= 2 && substr_count($s, ',') === 1) $s = str_replace(',', '.', $s); else $s = str_replace(',', '', $s); }
+    elseif ($ld !== false && substr_count($s, '.') > 1) $s = str_replace('.', '', $s);
+    $v = (float)$s; return $neg ? -$v : $v;
+}
+/** a date in Y-m-d, or null; $dmy tells how to read ambiguous d/m/y */
+function parse_date(?string $s, bool $dmy = true): ?string {
+    $s = trim((string)$s); if ($s === '') return null;
+    if (preg_match('/^(\d{4})-(\d{1,2})-(\d{1,2})/', $s, $m)) return checkdate((int)$m[2], (int)$m[3], (int)$m[1]) ? sprintf('%04d-%02d-%02d', $m[1], $m[2], $m[3]) : null;
+    if (preg_match('/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})/', $s, $m)) { [$a, $b, $y] = [(int)$m[1], (int)$m[2], (int)$m[3]]; if ($y < 100) $y += 2000; [$d, $mo] = $dmy ? [$a, $b] : [$b, $a]; if (!checkdate($mo, $d, $y)) { [$d, $mo] = [$mo, $d]; if (!checkdate($mo, $d, $y)) return null; } return sprintf('%04d-%02d-%02d', $y, $mo, $d); }
+    $t = strtotime($s); return $t === false ? null : date('Y-m-d', $t);
+}
+function dmy_guess(array $rows, ?int $c): bool { if ($c === null) return true; $a1 = 0; $a2 = 0; foreach ($rows as $r) if (preg_match('/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-]\d{2,4}/', trim($r['cells'][$c] ?? ''), $m)) { if ((int)$m[1] > 12) $a1++; if ((int)$m[2] > 12) $a2++; } return !($a2 > 0 && $a1 === 0); }
+function money(float $v): string { return number_format($v, 2, '.', ','); }
+
+const SAFE = "Electrical, gas, structural, roof, chimney, asbestos and similar work belongs to licensed professionals and to your local rules: this tool does arithmetic only.";
+const RISKY = 'electric|wiring|rewir|socket|fuse|gas\b|boiler|furnace|load.?bearing|structur|chimney|roof|asbestos|plumbing|sewer|elektr|câblage|cablage|électri|electri|cableado|cavi|impianto|gaz\b|chaudière|caldaia|caldera|heizung|dach|toit|tetto|tejado|telhado|amiante|amianto|asbest|structure|tragend|portante|portador';
+function text_file(string $f): string { if (!is_file($f)) fail("no such file: $f"); $t = (string)file_get_contents($f); if (strncmp($t, "\xEF\xBB\xBF", 3) === 0) $t = substr($t, 3); if (!mb_check_encoding($t, 'UTF-8')) fail('the file is not UTF-8 text: ' . basename($f)); if (trim($t) === '') fail('the file is empty: ' . basename($f)); return $t; }
+function num(string $s): ?float { $s = trim($s); if (!preg_match('/^[-+]?\d+(?:[.,]\d+)?$/', $s)) return null; return (float)str_replace(',', '.', $s); }
+/** a length in metres from "2.4", "240cm", "8ft", "3 in"; $def = the unit when none is written */
+function len(string $s, string $def = 'm'): ?float { if (!preg_match('/^\s*([-+]?\d+(?:[.,]\d+)?)\s*(mm|cm|m|in|inch|inches|"|ft|feet|\')?\s*$/i', $s, $m)) return null; $u = strtolower($m[2] ?? '') ?: $def; $v = (float)str_replace(',', '.', $m[1]); return $v * ['mm' => 0.001, 'cm' => 0.01, 'm' => 1, 'in' => 0.0254, 'inch' => 0.0254, 'inches' => 0.0254, '"' => 0.0254, 'ft' => 0.3048, 'feet' => 0.3048, "'" => 0.3048][$u]; }
+function dims(string $s, string $def): ?array { $s = trim($s); $sfx = ''; if (preg_match('/(mm|cm|m|in|ft)$/i', $s, $m)) { $sfx = strtolower($m[1]); $s = substr($s, 0, -strlen($m[1])); } $p = preg_split('/\s*[x×*]\s*/u', $s); $u = $sfx ?: $def; $o = []; foreach ($p as $x) { $v = len($x . $u, $u); if ($v === null || $v <= 0) return null; $o[] = $v; } return $o; }
+function fmt(float $v, int $d = 2): string { return number_format($v, $d, '.', ','); }
+function kv(string $s): array { $o = []; preg_match_all('/([A-Za-z_]+)\s*=\s*("[^"]*"|\S+)/u', $s, $m, PREG_SET_ORDER); foreach ($m as $x) $o[strtolower($x[1])] = trim($x[2], '"'); return $o; }
+$name = basename($in); $msgs = [];
+
+if ($sub === 'calc') {
+    $o = "# Material calculations: $name\n\n"; $errs = 0; $n = 0; $ln = 0;
+    foreach (preg_split('/\n/', str_replace("\r", '', text_file($in))) as $line) { $ln++; $line = trim($line); if ($line === '' || $line[0] === '#') continue; $n++;
+        if (!preg_match('/^([A-Za-z]+)\s*:\s*(.*)$/u', $line, $m)) { $msgs[] = "$name($ln) Error: expected \"kind: key=value ...\" (kind is paint, floor, concrete or lumber)"; $errs++; continue; }
+        $kind = strtolower($m[1]); $k = kv($m[2]); $e = null; $sec = ''; $bad = function (string $t) use (&$e) { $e = $t; };
+        if (preg_match('/' . RISKY . '/iu', $line)) $msgs[] = "$name($ln) Note: this line mentions work that needs a licensed professional (see the safety note).";
+        if ($kind === 'paint') {
+            $coats = isset($k['coats']) ? num($k['coats']) : 2.0; $cov = isset($k['coverage']) ? num($k['coverage']) : 10.0; $doors = isset($k['doors']) ? num($k['doors']) : 0.0; $wins = isset($k['windows']) ? num($k['windows']) : 0.0; $da = isset($k['doorarea']) ? num($k['doorarea']) : 1.6; $wa = isset($k['windowarea']) ? num($k['windowarea']) : 1.2;
+            if ($coats === null || $coats < 1 || $cov === null || $cov <= 0 || $doors === null || $wins === null || $da === null || $wa === null) $bad('coats, coverage, doors, windows, doorarea and windowarea must be numbers (coverage above zero)');
+            elseif (isset($k['walls'])) { $area = num($k['walls']); if ($area === null || $area <= 0) $bad('walls= must be the wall area in m2, above zero'); else $desc = 'wall area ' . fmt($area) . ' m2 as given'; }
+            elseif (isset($k['room'])) { $d = dims($k['room'], 'm'); if (!$d || count($d) !== 3) $bad('room= must be length x width x height, e.g. room=4x3x2.5 (metres)'); else { $area = 2 * ($d[0] + $d[1]) * $d[2]; $desc = 'walls of a ' . fmt($d[0]) . ' x ' . fmt($d[1]) . ' x ' . fmt($d[2]) . ' m room = ' . fmt($area) . ' m2'; $ceil = in_array(strtolower($k['ceiling'] ?? ''), ['yes', 'y', 'true', '1'], true) ? $d[0] * $d[1] : 0; } }
+            else $bad('give room=LxWxH (metres) or walls=AREA (m2)');
+            if ($e === null) { $ceil = $ceil ?? 0; $open = $doors * $da + $wins * $wa; $net = $area - $open; if ($net <= 0) $bad('the doors and windows (' . fmt($open) . ' m2) take up all the wall area'); else { $tot = $net + $ceil; $lit = $tot * $coats / $cov;
+                $sec = "- Wall area: $desc\n- Minus $doors door(s) at " . fmt($da) . " m2 and $wins window(s) at " . fmt($wa) . " m2: " . fmt($net) . " m2 to paint\n" . ($ceil > 0 ? '- Plus the ceiling: ' . fmt($ceil) . " m2\n" : '') . "- $coats coat(s) at " . fmt($cov) . " m2 per litre (your coverage figure; the tin says the real one, and rough or dark surfaces take more)\n- **Paint needed: " . fmt($lit) . " litres**; buy at least " . fmt(ceil($lit * 2) / 2, 1) . " litres (rounded up to the next half litre), more for a first coat on bare plaster\n"; } }
+        } elseif ($kind === 'floor' || $kind === 'tile') {
+            $waste = isset($k['waste']) ? num($k['waste']) : 10.0; if ($waste === null || $waste < 0 || $waste > 100) $bad('waste= must be a percentage between 0 and 100');
+            elseif (isset($k['area'])) { $area = num($k['area']); if ($area === null || $area <= 0) $bad('area= must be a number of m2, above zero'); }
+            elseif (isset($k['room'])) { $d = dims($k['room'], 'm'); if (!$d || count($d) !== 2) $bad('room= must be length x width, e.g. room=4x3 (metres)'); else $area = $d[0] * $d[1]; } else $bad('give area=M2 or room=LxW');
+            if ($e === null) { $need = $area * (1 + $waste / 100); $sec = "- Floor area: " . fmt($area) . " m2; with $waste% waste: " . fmt($need) . " m2 to buy (" . ($waste == 10 && !isset($k['waste']) ? 'the default 10%: cuts, breakage and a spare; diagonal laying or patterns need more' : 'your figure') . ")\n";
+                if (isset($k['piece'])) { $d = dims($k['piece'], 'cm'); if (!$d || count($d) !== 2) $bad('piece= must be width x length, e.g. piece=30x30 (cm by default)'); else { $pa = $d[0] * $d[1]; $cnt = (int)ceil($need / $pa - 1e-9); $sec .= '- One piece is ' . fmt($d[0] * 100, 1) . ' x ' . fmt($d[1] * 100, 1) . ' cm = ' . fmt($pa, 4) . " m2, so **$cnt pieces**\n"; if (isset($k['pack'])) { $pk = num($k['pack']); if ($pk === null || $pk < 1) $bad('pack= must be the number of pieces in a box'); else $sec .= '- Boxes of ' . (int)$pk . ': **' . (int)ceil($cnt / $pk) . " boxes** (" . ((int)ceil($cnt / $pk) * (int)$pk) . " pieces)\n"; } } } else $sec .= "- Add piece=WxL (cm) to get a piece count; boxes cover a fixed area, read it on the box.\n"; }
+        } elseif ($kind === 'concrete') {
+            $l = isset($k['length']) ? len($k['length']) : null; $w = isset($k['width']) ? len($k['width']) : null; $dp = isset($k['depth']) ? len($k['depth']) : null; $waste = isset($k['waste']) ? num($k['waste']) : 5.0;
+            if (!$l || !$w || !$dp || $l <= 0 || $w <= 0 || $dp <= 0) $bad('give length=, width= and depth= above zero (metres, or with a suffix such as depth=10cm)'); elseif ($waste === null || $waste < 0 || $waste > 100) $bad('waste= must be a percentage between 0 and 100');
+            else { $v = $l * $w * $dp; $vw = $v * (1 + $waste / 100); $sec = '- Volume: ' . fmt($l) . ' x ' . fmt($w) . ' x ' . fmt($dp, 3) . ' m = ' . fmt($v, 3) . " m3\n- With $waste% waste and spillage: **" . fmt($vw, 3) . " m3** (" . fmt($vw * 1000, 0) . " litres)\n"; if (isset($k['bag'])) { $b = num($k['bag']); if ($b === null || $b <= 0) $bad('bag= must be the m3 one bag makes'); else $sec .= '- At ' . fmt($b, 4) . " m3 per bag (your figure, from the bag): **" . (int)ceil($vw / $b - 1e-9) . " bags**\n"; } else $sec .= "- Add bag=M3 (the yield printed on the bag) to count bags; a yield is not assumed here. Ready-mix is sold by the m3.\n"; }
+        } elseif ($kind === 'lumber' || $kind === 'wood') {
+            $need = []; foreach (array_filter(array_map('trim', explode(',', $k['need'] ?? ''))) as $x) { $v = len($x); if ($v === null || $v <= 0) { $bad("the length \"$x\" in need= cannot be read"); break; } $need[] = $v; }
+            $stocks = []; if ($e === null) foreach (array_filter(array_map('trim', explode(',', $k['stock'] ?? ''))) as $x) { $v = len($x); if ($v === null || $v <= 0) { $bad("the length \"$x\" in stock= cannot be read"); break; } $stocks[] = $v; }
+            $kerf = isset($k['kerf']) ? num($k['kerf']) : 3.0; if ($e === null && (!$need || !$stocks)) $bad('give need=2.4,1.8,... and stock=2.4,3.0 (lengths in metres, or with a suffix)'); if ($e === null && ($kerf === null || $kerf < 0)) $bad('kerf= must be the saw cut in mm');
+            if ($e === null) { rsort($need); $sec = '- Needed: ' . count($need) . ' pieces, ' . fmt(array_sum($need)) . " m in all; saw cut $kerf mm (first-fit decreasing: a good plan, not always the very best possible)\n"; $kf = $kerf / 1000; $best = null;
+                foreach (array_unique($stocks) as $st) { if ($need[0] > $st + 1e-9) { $sec .= '- Stock ' . fmt($st) . " m: cannot be used, the longest piece needed is " . fmt($need[0]) . " m\n"; continue; } $bins = []; foreach ($need as $p) { $placed = false; foreach ($bins as &$b) if ($b['left'] + 1e-9 >= $p + ($b['cuts'] ? $kf : 0)) { $b['left'] -= $p + ($b['cuts'] ? $kf : 0); $b['cuts'][] = $p; $placed = true; break; } unset($b); if (!$placed) $bins[] = ['left' => $st - $p, 'cuts' => [$p]]; }
+                    $waste = 0; foreach ($bins as $b) $waste += $b['left']; $sec .= '- Stock ' . fmt($st) . ' m: **' . count($bins) . ' lengths** (' . fmt(count($bins) * $st) . ' m bought, ' . fmt($waste) . " m left over)\n"; foreach ($bins as $i => $b) $sec .= '  - ' . ($i + 1) . ': ' . implode(' + ', array_map(fn($x) => fmt($x), $b['cuts'])) . ' (left ' . fmt($b['left']) . ")\n"; if ($best === null || count($bins) * $st < $best[1]) $best = [$st, count($bins) * $st]; }
+                if ($best) $sec .= '- Least wood bought: stock ' . fmt($best[0]) . " m\n"; else $bad('no stock length is long enough for the longest piece'); }
+        } else $bad("unknown kind \"$kind\" (paint, floor, tile, concrete or lumber)");
+        if ($e !== null) { $msgs[] = "$name($ln) Error: $e"; $errs++; continue; } $o .= "## Line $ln: $kind\n\n$sec\n";
+    }
+    if (!$n) fail('the file has no jobs'); $o .= "Quantities are estimates from your numbers: read the product's own coverage and yield, and buy a margin. " . SAFE . "\n";
+    if ($msgs) $o .= "\n## Problems\n\n" . implode("\n", $msgs) . "\n"; file_put_contents($out, $o . "\n[exit code " . ($errs ? 1 : 0) . "]\n"); echo "Wrote $out ($n job(s), $errs error(s))\n"; exit(0);
+}
+
+if ($sub === 'estimate') {
+    [$H, $R] = read_csv($in); if (!$R) fail('the sheet has no rows under the header');
+    $ci = find_col($H, ['item', 'description', 'task', 'name', 'article', 'artículo', 'articolo', 'bezeichnung']); $ct = find_col($H, ['type', 'kind', 'category', 'typ', 'tipo']); $cq = find_col($H, ['quantity', 'qty', 'hours', 'cantidad', 'quantité', 'menge', 'quantità', 'quantidade', 'amount']); $cp = find_col($H, ['unit price', 'price', 'rate', 'cost', 'precio', 'prix', 'preis', 'prezzo', 'preço', 'unit cost', 'hourly rate']);
+    if ($cp === null || $cq === null) fail('the sheet needs a quantity (or hours) column and a unit price (or hourly rate) column'); $cont = isset($opt['contingency']) ? parse_num($opt['contingency']) : 10.0; $tax = isset($opt['tax']) ? parse_num($opt['tax']) : 0.0;
+    if ($cont === null || $cont < 0 || $cont > 100) fail('contingency= must be a percentage between 0 and 100'); if ($tax === null || $tax < 0 || $tax > 100) fail('tax= must be a percentage between 0 and 100');
+    $parts = 0; $lab = 0; $unk = 0; $rows = []; $errs = 0; $warn = 0;
+    foreach ($R as $r) { $c = $r['cells']; $l = $r['line']; $it = trim($c[$ci ?? 0] ?? ''); $ty = $ct !== null ? mb_strtolower(trim($c[$ct] ?? '')) : ''; $q = parse_num($c[$cq] ?? ''); $p = parse_num($c[$cp] ?? '');
+        if ($q === null) { $msgs[] = "$name($l) Error: the quantity \"" . ($c[$cq] ?? '') . '" cannot be read'; $errs++; continue; } if ($p === null) { $msgs[] = "$name($l) Error: the price \"" . ($c[$cp] ?? '') . '" cannot be read'; $errs++; continue; }
+        if ($q < 0 || $p < 0) { $msgs[] = "$name($l) Warning: a negative quantity or price (credit or return?)"; $warn++; } if ($q == 0) { $msgs[] = "$name($l) Warning: the quantity is zero"; $warn++; }
+        if (preg_match('/' . RISKY . '/iu', $it . ' ' . $ty)) $msgs[] = "$name($l) Note: \"$it\" is work for a licensed professional (see the safety note).";
+        $kind = preg_match('/labou?r|hour|work|service|install|fitting|arbeit|stunde|main.?d|travail|heure|mano|obra|lavoro|ore\b|trabalho|hora|horas|mão/iu', $ty . ' ' . ($H[$cq] ?? '')) ? 'labour' : (preg_match('/part|material|suppl|goods|pièce|piece|matériel|materiel|teil|ware|pieza|materiale|pezzo|peça|material/iu', $ty) ? 'part' : null);
+        if ($kind === null) { $kind = 'part'; $unk++; $msgs[] = "$name($l) Note: the type \"$ty\" is not part or labour: counted as a part"; }
+        $tot = $q * $p; if ($kind === 'labour') $lab += $tot; else $parts += $tot; $rows[] = [$l, $it, $kind, $q, $p, $tot]; }
+    if (!$rows) fail('no row has a readable quantity and price'); $sub1 = $parts + $lab; $cv = $sub1 * $cont / 100; $pre = $sub1 + $cv; $tv = $pre * $tax / 100;
+    $o = "# Job estimate: $name\n\n| Line | Item | Type | Quantity | Unit price | Total |\n|---|---|---|---|---|---|\n"; foreach ($rows as [$l, $it, $k, $q, $p, $t]) $o .= "| $l | " . str_replace('|', '/', $it) . " | $k | " . rtrim(rtrim(number_format($q, 3, '.', ','), '0'), '.') . ' | ' . fmt($p) . ' | ' . fmt($t) . " |\n";
+    $o .= "\n- Parts and materials: " . fmt($parts) . "\n- Labour: " . fmt($lab) . "\n- Subtotal: " . fmt($sub1) . "\n- Contingency at $cont% (for what turns out to be needed; change it with contingency=): " . fmt($cv) . "\n- Total before tax: " . fmt($pre) . "\n" . ($tax > 0 ? "- Tax at $tax% (your rate): " . fmt($tv) . "\n" : '') . '- **Total: ' . fmt($pre + $tv) . "**\n";
+    $o .= "\nPrices are the ones in your sheet; shops, quotes and your own time change them. " . SAFE . "\n"; if ($msgs) $o .= "\n## Problems ($errs errors, $warn warnings)\n\n" . implode("\n", $msgs) . "\n"; file_put_contents($out, $o . "\n[exit code " . ($errs ? 1 : 0) . "]\n"); echo "Wrote $out ($errs errors, $warn warnings)\n"; exit(0);
+}
+
+// ---- schedule ----------------------------------------------------------------------------------------------------------------------------------
+[$H, $R] = read_csv($in); if (!$R) fail('the schedule has no rows under the header');
+$ct = find_col($H, ['task', 'item', 'description', 'name', 'job', 'tâche', 'tarea', 'compito', 'aufgabe', 'tarefa']); $cl = find_col($H, ['last done', 'last', 'done', 'last service', 'date', 'última', 'dernier', 'zuletzt', 'ultimo', 'último', 'last date']); $cv = find_col($H, ['interval', 'every', 'frequency', 'cycle', 'intervalo', 'intervalle', 'intervall', 'intervallo', 'periodicity']);
+if ($cl === null || $cv === null) fail('the schedule needs a last-done date column and an interval column (6 months, 1 year, 90 days, 2 weeks)');
+$today = $opt['today'] ?? date('Y-m-d'); if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $today) || !checkdate((int)substr($today, 5, 2), (int)substr($today, 8, 2), (int)substr($today, 0, 4))) fail('today= must be a date like 2026-03-01'); $within = isset($opt['within']) && ctype_digit($opt['within']) ? (int)$opt['within'] : 30;
+$dmy = true; $a1 = 0; $a2 = 0; foreach ($R as $r) if (preg_match('/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-]\d{2,4}/', trim($r['cells'][$cl] ?? ''), $m)) { if ((int)$m[1] > 12) $a1++; if ((int)$m[2] > 12) $a2++; } if ($a2 > 0 && $a1 === 0) $dmy = false;
+$rows = []; $errs = 0; $warn = 0; $over = []; $soon = []; $never = [];
+foreach ($R as $r) { $c = $r['cells']; $l = $r['line']; $task = trim($c[$ct ?? 0] ?? ''); $rd = trim($c[$cl] ?? ''); $ri = trim($c[$cv] ?? '');
+    if (preg_match('/' . RISKY . '/iu', $task)) $msgs[] = "$name($l) Note: \"$task\" is work for a licensed professional (see the safety note).";
+    if (!preg_match('/^(\d+(?:[.,]\d+)?)\s*(d|day|days|w|week|weeks|m|mo|month|months|y|yr|year|years|jour|jours|semaine|semaines|mois|an|ans|tag|tage|woche|wochen|monat|monate|jahr|jahre|giorni|giorno|settimana|settimane|mese|mesi|anno|anni|dia|dias|semana|semanas|mes|meses|año|años|ano|anos)\b/iu', $ri, $im)) { $msgs[] = "$name($l) Error: the interval \"$ri\" cannot be read (use 6 months, 1 year, 90 days, 2 weeks)"; $errs++; continue; }
+    $nq = (float)str_replace(',', '.', $im[1]); $u = mb_strtolower($im[2]); $unit = preg_match('/^(d|day|jour|tag|giorn|dia)/u', $u) ? 'day' : (preg_match('/^(w|sem|woch|settim)/u', $u) ? 'week' : (preg_match('/^(y|an|jahr|ann|año|ano)/u', $u) ? 'year' : 'month'));
+    if ($nq <= 0) { $msgs[] = "$name($l) Error: the interval must be above zero"; $errs++; continue; }
+    if ($rd === '' || preg_match('/^(never|jamais|nie|mai|nunca|-|n\/a)$/iu', $rd)) { $never[] = [$l, $task]; $msgs[] = "$name($l) Warning: \"$task\" has never been done (no last-done date)"; $warn++; $rows[] = [$l, $task, '-', $ri, '-', 'never done']; continue; }
+    $ld = parse_date($rd, $dmy); if ($ld === null) { $msgs[] = "$name($l) Error: the date \"$rd\" cannot be read"; $errs++; continue; } if ($ld > $today) { $msgs[] = "$name($l) Warning: the last-done date $ld is after today ($today)"; $warn++; }
+    $dt = new DateTime($ld); $whole = (int)floor($nq); $dt->modify('+' . ($unit === 'week' ? $whole * 7 : $whole) . ' ' . ($unit === 'week' ? 'days' : $unit . 's')); if ($nq != $whole) { if ($unit === 'year') $dt->modify('+' . (int)round(($nq - $whole) * 12) . ' months'); elseif ($unit === 'month') $dt->modify('+' . (int)round(($nq - $whole) * 30) . ' days'); elseif ($unit === 'week') $dt->modify('+' . (int)round(($nq - $whole) * 7) . ' days'); }
+    $due = $dt->format('Y-m-d'); $diff = (int)round((strtotime($due) - strtotime($today)) / 86400);
+    if ($diff < 0) { $over[] = [$l, $task, $due, -$diff]; $msgs[] = "$name($l) Warning: \"$task\" was due $due: " . (-$diff) . ' day(s) overdue'; $warn++; $st = (-$diff) . ' days overdue'; } elseif ($diff <= $within) { $soon[] = [$l, $task, $due, $diff]; $msgs[] = "$name($l) Note: \"$task\" is due $due (in $diff day(s))"; $st = "due in $diff days"; } else $st = "in $diff days";
+    $rows[] = [$l, $task, $ld, $ri, $due, $st]; }
+if (!$rows) fail('no row could be read'); usort($rows, fn($a, $b) => strcmp($a[4] === '-' ? '0000' : $a[4], $b[4] === '-' ? '0000' : $b[4]));
+$o = "# Maintenance schedule: $name\n\n- Today: $today (change it with today=); \"coming up\" means due within $within days (within=)\n- Overdue: " . count($over) . '; coming up: ' . count($soon) . '; never done: ' . count($never) . "\n- The next date is the last-done date plus the interval (months and years by the calendar); it is a reminder, not the maker's requirement: read the manual.\n\n| Line | Task | Last done | Every | Next due | Status |\n|---|---|---|---|---|---|\n";
+foreach ($rows as [$l, $t, $ld, $ri, $due, $st]) $o .= "| $l | " . str_replace('|', '/', $t) . " | $ld | $ri | $due | $st |\n"; $o .= "\n" . SAFE . "\n"; if ($msgs) $o .= "\n## Problems ($errs errors, $warn warnings)\n\n" . implode("\n", $msgs) . "\n";
+file_put_contents($out, $o . "\n[exit code " . ($errs ? 1 : 0) . "]\n"); echo "Wrote $out (" . count($over) . " overdue, " . count($soon) . " coming up)\n";

@@ -1,0 +1,87 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// sys_tool — the System administration tools' work, for the tool presets (tools_builtins/sysadmin.json). A command-line program, never reachable over the web.
+// READ ONLY: every command it runs only looks (df, free, ps, ss, systemctl status/is-active/--failed, journalctl, du); nothing is changed, installed, started, stopped or deleted,
+// and nothing needs sudo. It sees what the account running it can see.
+//
+//   php sys_tool report                OUTPUT   system, load, memory, disks and inodes, busiest processes, failed services, listening ports, time sync, reboot needed:
+//                                               a summary with warnings at the top  ("system(1) Warning: ...")
+//   php sys_tool disk     PATH         OUTPUT   free space, and the biggest folders and files under PATH (stays on one filesystem; 60 s at most)
+//   php sys_tool services [units=a,b]  OUTPUT   failed units; the state of the units you name (active, enabled)
+//   php sys_tool ports                 OUTPUT   what listens for connections, on which address, with the program when it is yours; open-to-everyone ports that usually should not be
+//   php sys_tool logs     LOGFILE      OUTPUT   a log file read for you: counts by severity, the repeated messages (numbers masked), known trouble (out of memory, I/O error, disk full ...)
+//   php sys_tool journal               OUTPUT   this boot's errors from the systemd journal, grouped by program (needs a member of group adm or systemd-journal)
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "sys_tool: $m\n"); exit($rc); }
+$sub = $argv[1] ?? ''; $arg = $argv[2] ?? ''; $out = $argv[3] ?? '';
+if (in_array($sub, ['report', 'ports', 'journal', 'services'], true) && ($argv[3] ?? '') === '') { if ($sub !== 'services' || strpos($arg, '=') === false) { $out = $arg; $arg = ''; } }
+if (!in_array($sub, ['report', 'disk', 'services', 'ports', 'logs', 'journal'], true) || $out === '') fail('usage: sys_tool report|disk|services|ports|logs|journal [ARG] OUTPUT', 2);
+function sh(string $cmd, int $secs = 20): string { $o = []; exec('timeout ' . $secs . ' ' . $cmd . ' 2>&1', $o, $rc); return implode("\n", $o); }
+function have(string $b): bool { return trim((string)shell_exec('command -v ' . escapeshellarg($b) . ' 2>/dev/null')) !== ''; }
+function hsize(float $kb): string { foreach (['KB', 'MB', 'GB', 'TB'] as $u) { if ($kb < 1024) return round($kb, $kb < 10 ? 1 : 0) . " $u"; $kb /= 1024; } return round($kb) . ' PB'; }
+$warn = []; $note = []; $W = function (string $m) use (&$warn) { $l = "system(1) Warning: $m"; if (!in_array($l, $warn, true)) $warn[] = $l; }; $N = function (string $m) use (&$note) { $l = "system(1) Note: $m"; if (!in_array($l, $note, true)) $note[] = $l; };
+$finish = function (string $body) use (&$warn, &$note, $out) { $o = $body . "\n## Findings (" . count($warn) . " warnings, " . count($note) . " notes)\n\n" . (($warn || $note) ? implode("\n", array_merge($warn, $note)) . "\n" : "Nothing needs attention.\n") . "\n[exit code 0]\n"; file_put_contents($out, $o); echo "Wrote $out (" . count($warn) . " warnings)\n"; exit(0); };
+$osr = @parse_ini_string((string)@file_get_contents('/etc/os-release')) ?: [];
+
+function disks(): array { $rows = []; foreach (explode("\n", sh('df -PkT -x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs')) as $i => $l) { if ($i === 0 || trim($l) === '') continue; $c = preg_split('/\s+/', trim($l), 7); if (count($c) < 7) continue; $rows[] = ['dev' => $c[0], 'type' => $c[1], 'size' => (float)$c[2], 'used' => (float)$c[3], 'avail' => (float)$c[4], 'pct' => (int)$c[5], 'mount' => $c[6]]; } return $rows; }
+function inodes(): array { $r = []; foreach (explode("\n", sh('df -Pi -x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs')) as $i => $l) { if ($i === 0 || trim($l) === '') continue; $c = preg_split('/\s+/', trim($l), 6); if (count($c) < 6 || !preg_match('/^(\d+)%$/', $c[4], $m)) continue; $r[$c[5]] = (int)$m[1]; } return $r; }
+function listeners(): array { $res = []; foreach (explode("\n", sh('ss -H -ltnp')) as $l) { if (trim($l) === '') continue; $c = preg_split('/\s+/', trim($l), 6); if (count($c) < 5) continue; $local = $c[3]; if (!preg_match('/^(.*):(\d+)$/', $local, $m)) continue; $addr = trim($m[1], '[]'); $proc = ''; if (preg_match('/users:\(\("([^"]+)",pid=(\d+)/', $l, $x)) $proc = $x[1] . ' (' . $x[2] . ')'; $res[] = ['addr' => $addr, 'port' => (int)$m[2], 'proc' => $proc]; } usort($res, fn($a, $b) => $a['port'] <=> $b['port']); return $res; }
+$RISKY = [21 => 'FTP', 23 => 'Telnet', 111 => 'rpcbind', 135 => 'RPC', 139 => 'NetBIOS', 445 => 'SMB', 2049 => 'NFS', 2375 => 'Docker API (no TLS)', 3306 => 'MySQL', 5432 => 'PostgreSQL', 5900 => 'VNC', 6379 => 'Redis', 9200 => 'Elasticsearch', 11211 => 'memcached', 27017 => 'MongoDB', 11434 => 'Ollama API'];
+
+if ($sub === 'ports') {
+    $L = listeners(); $o = "# Listening ports\n\n- Seen by: " . trim(sh('id -un')) . " (the program name shows only for this user's own programs)\n\n| Address | Port | Program | Open to the network? |\n|---|---|---|---|\n";
+    foreach ($L as $x) { $open = !in_array($x['addr'], ['127.0.0.1', '::1', 'localhost'], true) && strpos($x['addr'], '127.') !== 0; $o .= '| ' . $x['addr'] . ' | ' . $x['port'] . ' | ' . ($x['proc'] ?: '-') . ' | ' . ($open ? 'yes' : 'no (this machine only)') . " |\n"; if ($open && isset($RISKY[$x['port']])) $W("port {$x['port']} ({$RISKY[$x['port']]}) listens on {$x['addr']}, open to the network: it usually should be 127.0.0.1 only or behind a firewall"); }
+    $finish($o . "\nOpen to the network = the address is not 127.0.0.1 / ::1. A firewall may still block it: this only reads what listens.\n");
+}
+if ($sub === 'services') {
+    if (!have('systemctl')) fail('systemctl is not available (not a systemd machine)');
+    $failed = array_filter(explode("\n", sh('systemctl --failed --no-legend --plain --no-pager'))); $o = "# Services\n\n## Failed units (" . count($failed) . ")\n\n"; foreach ($failed as $l) { $o .= "- " . trim(preg_replace('/\s+/', ' ', $l)) . "\n"; $W('failed unit: ' . trim(preg_split('/\s+/', trim($l))[0])); } if (!$failed) $o .= "None.\n";
+    $units = []; if (preg_match('/units=([^\s]+)/', $arg . ' ' . implode(' ', array_slice($argv, 2)), $m)) foreach (explode(',', $m[1]) as $u) { $u = trim($u); if (preg_match('/^[A-Za-z0-9@._\-:\\\\]{1,100}$/', $u)) $units[] = $u; else fail("not a unit name: $u"); }
+    if ($units) { $o .= "\n## The units you named\n\n| Unit | Active | Enabled at boot |\n|---|---|---|\n"; foreach ($units as $u) { $a = trim(sh('systemctl is-active ' . escapeshellarg($u))); $e = trim(sh('systemctl is-enabled ' . escapeshellarg($u))); $o .= "| $u | $a | $e |\n"; if ($a !== 'active' && $e === 'enabled') $W("$u is enabled but not running ($a)"); } }
+    $o .= "\nRunning units: " . count(array_filter(explode("\n", sh('systemctl list-units --type=service --state=running --no-legend --plain --no-pager')))) . "\n"; $finish($o);
+}
+if ($sub === 'disk') {
+    $p = $arg === '' ? '/' : $arg; if (!is_dir($p)) fail("not a folder: $p"); $p = realpath($p); $o = "# Disk use under $p\n\n```\n" . trim(sh('df -hT ' . escapeshellarg($p))) . "\n```\n\n## Biggest folders (one level down, this filesystem only)\n\n";
+    $rows = []; foreach (explode("\n", sh('du -xk --max-depth=1 ' . escapeshellarg($p) . ' 2>/dev/null', 60)) as $l) if (preg_match('/^(\d+)\s+(.+)$/', $l, $m) && $m[2] !== $p) $rows[$m[2]] = (int)$m[1]; arsort($rows); $o .= "| Size | Folder |\n|---|---|\n"; foreach (array_slice($rows, 0, 15, true) as $d => $kb) $o .= '| ' . hsize($kb) . ' | ' . $d . " |\n"; if (!$rows) $o .= "| (nothing readable, or it took over 60 s) | |\n";
+    $o .= "\n## Biggest files (over 50 MB, up to 15)\n\n"; $big = []; foreach (explode("\n", sh('find ' . escapeshellarg($p) . ' -xdev -type f -size +50M -printf "%s %p\n" 2>/dev/null | sort -rn | head -15', 60)) as $l) if (preg_match('/^(\d+) (.+)$/', $l, $m)) $big[] = [(int)$m[1] / 1024, $m[2]]; foreach ($big as [$kb, $f]) $o .= '- ' . hsize($kb) . "  $f\n"; if (!$big) $o .= "None over 50 MB.\n";
+    foreach (disks() as $d) if (strpos($p . '/', $d['mount'] === '/' ? '/' : $d['mount'] . '/') === 0 && $d['pct'] >= 90) $W("{$d['mount']} is {$d['pct']}% full ({$d['avail']} KB free)"); $finish($o);
+}
+if ($sub === 'logs') {
+    if ($arg === '' || !is_file($arg) || !is_readable($arg)) fail('give a readable log file' . ($arg !== '' ? ": cannot read $arg" : '')); $size = filesize($arg); $fh = fopen($arg, 'r'); if ($size > 20 * 1048576) fseek($fh, -20 * 1048576, SEEK_END); $txt = (string)stream_get_contents($fh); fclose($fh); if (!mb_check_encoding($txt, 'UTF-8')) $txt = mb_convert_encoding($txt, 'UTF-8', 'UTF-8'); $lines = explode("\n", $txt); if (count($lines) > 200000) $lines = array_slice($lines, -200000);
+    $sev = ['critical' => 0, 'error' => 0, 'warning' => 0]; $groups = []; $trouble = []; $first = null; $last = null;
+    $T = ['out of memory / OOM killer' => '/out of memory|oom-kill|killed process/i', 'disk full' => '/no space left on device|disk full/i', 'disk or I/O error' => '/I\/O error|blk_update_request|ata\d.*(error|failed)|EXT4-fs error|buffer I\/O/i', 'a program crashed' => '/segfault|core dumped|general protection|traps:/i', 'permission denied' => '/permission denied/i', 'authentication failures' => '/authentication failure|failed password|invalid user|failed login/i', 'connection refused or timed out' => '/connection refused|connection timed out|timeout/i', 'hardware or kernel trouble' => '/kernel panic|call trace|hardware error|mce:|thermal|throttl/i'];
+    foreach ($lines as $l) { if (trim($l) === '') continue; if (preg_match('/^(\w{3}\s+\d+\s[\d:]+|\d{4}-\d\d-\d\d[T ][\d:]+)/', $l, $m)) { $first = $first ?? $m[1]; $last = $m[1]; }
+        $isC = preg_match('/\b(critical|crit|fatal|panic|emerg|alert)\b/i', $l); $isE = preg_match('/\b(error|err|fail(ed|ure)?|exception|denied|refused|cannot|unable)\b/i', $l); $isW = preg_match('/\b(warn(ing)?)\b/i', $l);
+        if ($isC) $sev['critical']++; elseif ($isE) $sev['error']++; elseif ($isW) $sev['warning']++;
+        foreach ($T as $k => $re) if (preg_match($re, $l)) $trouble[$k] = ($trouble[$k] ?? 0) + 1;
+        if ($isC || $isE) { $k = preg_replace('/^(\w{3}\s+\d+\s[\d:]+|\d{4}-\d\d-\d\d[T ][\d:.,+Z\-]+)\s+\S+\s+/', '', $l); $k = preg_replace(['/\b0x[0-9a-f]+\b/i', '/\b\d{1,3}(\.\d{1,3}){3}\b/', '/\b[0-9a-f]{8,}\b/i', '/\d+/'], ['0x?', 'IP', 'HEX', 'N'], mb_substr($k, 0, 200)); $groups[$k] = ($groups[$k] ?? 0) + 1; } }
+    arsort($groups); arsort($trouble); $o = "# Log: " . basename($arg) . "\n\n- Size " . hsize($size / 1024) . "; lines read: " . count(array_filter($lines, fn($x) => trim($x) !== "")) . ($size > 20 * 1048576 ? ' (the last 20 MB)' : '') . "\n- From " . ($first ?? '?') . ' to ' . ($last ?? '?') . "\n- Critical: {$sev['critical']}; errors: {$sev['error']}; warnings: {$sev['warning']}\n\n## Known trouble\n\n";
+    foreach ($trouble as $k => $c) { $o .= "- $k: $c line(s)\n"; if (in_array($k, ['out of memory / OOM killer', 'disk full', 'disk or I/O error', 'a program crashed', 'hardware or kernel trouble'], true)) $W("$k: $c line(s) in " . basename($arg)); elseif ($k === 'authentication failures' && $c > 20) $W("$c authentication failures in " . basename($arg) . ' (someone guessing passwords?)'); } if (!$trouble) $o .= "None of the known patterns.\n";
+    $o .= "\n## Most repeated errors and critical lines (numbers masked)\n\n"; foreach (array_slice($groups, 0, 20, true) as $k => $c) $o .= "- $c x  " . mb_substr($k, 0, 180) . "\n"; if (!$groups) $o .= "No error lines.\n"; if ($sev['critical'] > 0) $W("{$sev['critical']} critical line(s) in " . basename($arg)); $finish($o);
+}
+if ($sub === 'journal') {
+    if (!have('journalctl')) fail('journalctl is not available'); $t = sh('journalctl -p err -b --no-pager -o short-unix -n 3000 -q', 30);
+    if (preg_match('/not seeing messages|permission|No journal files|Hint: You are currently not seeing/i', $t) && substr_count($t, "\n") < 3) fail("this account cannot read the journal: it must be in the group 'adm' or 'systemd-journal' (" . trim(sh('id -nG')) . ')');
+    $by = []; $n = 0; foreach (explode("\n", $t) as $l) { if (!preg_match('/^\d+\.\d+\s+\S+\s+([^\[:\s]+)(?:\[\d+\])?:\s*(.*)$/', $l, $m)) continue; $n++; $k = preg_replace(['/\b0x[0-9a-f]+\b/i', '/\d+/'], ['0x?', 'N'], mb_substr($m[2], 0, 160)); $by[$m[1]][$k] = ($by[$m[1]][$k] ?? 0) + 1; }
+    $o = "# Errors since boot (systemd journal)\n\n- Error-priority lines read: $n (the last 3000 at most)\n\n"; $tot = array_map('array_sum', $by); arsort($tot); foreach (array_slice($tot, 0, 12, true) as $prog => $c) { $o .= "## $prog ($c)\n\n"; arsort($by[$prog]); foreach (array_slice($by[$prog], 0, 4, true) as $k => $cc) $o .= "- $cc x  $k\n"; $o .= "\n"; if ($c >= 50) $W("$prog logged $c error lines since boot"); }
+    if (!$by) $o .= "No error-priority messages since boot.\n"; $finish($o);
+}
+
+// ---- report ------------------------------------------------------------------------------------------------------------------------------------
+$cores = max(1, (int)trim(sh('nproc'))); $load = array_map('floatval', explode(' ', trim((string)@file_get_contents('/proc/loadavg'))))[0] ?? 0; $la = explode(' ', trim((string)@file_get_contents('/proc/loadavg')));
+$mi = []; foreach (explode("\n", (string)@file_get_contents('/proc/meminfo')) as $l) if (preg_match('/^(\w+):\s+(\d+)/', $l, $m)) $mi[$m[1]] = (int)$m[2]; $memT = $mi['MemTotal'] ?? 0; $memA = $mi['MemAvailable'] ?? 0; $swT = $mi['SwapTotal'] ?? 0; $swU = $swT - ($mi['SwapFree'] ?? 0);
+$up = (float)explode(' ', trim((string)@file_get_contents('/proc/uptime')))[0]; $days = floor($up / 86400); $hrs = floor(fmod($up, 86400) / 3600);
+$o = "# System report\n\n- Machine: " . trim(sh('hostname')) . "; " . ($osr['PRETTY_NAME'] ?? 'unknown OS') . "; kernel " . trim(sh('uname -r')) . "; " . trim(sh('uname -m')) . "\n- Up: {$days} day(s) {$hrs} h; load " . implode(' ', array_slice($la, 0, 3)) . " on $cores core(s)\n- Run as: " . trim(sh('id -un')) . " (it sees what this account can see)\n\n";
+if ((float)$la[0] > $cores * 1.5) $W("the load ({$la[0]}) is above 1.5 x the $cores cores"); elseif ((float)($la[2] ?? 0) > $cores) $N("the 15-minute load ({$la[2]}) is above the $cores cores");
+$o .= "## Memory\n\n- RAM: " . hsize($memT) . ', available ' . hsize($memA) . ($memT ? ' (' . round(100 * $memA / $memT) . '%)' : '') . "\n- Swap: " . hsize($swT) . ', used ' . hsize($swU) . "\n"; if ($memT && $memA / $memT < 0.1) $W('less than 10% of the RAM is available (' . hsize($memA) . ')'); if ($swT && $swU / $swT > 0.5) $W('more than half the swap is in use (' . hsize($swU) . ')');
+$o .= "\n## Disks\n\n| Mount | Type | Size | Used | Free | Use% |\n|---|---|---|---|---|---|\n"; $ino = inodes();
+foreach (disks() as $d) { $o .= '| ' . $d['mount'] . ' | ' . $d['type'] . ' | ' . hsize($d['size']) . ' | ' . hsize($d['used']) . ' | ' . hsize($d['avail']) . ' | ' . $d['pct'] . "% |\n"; if ($d['pct'] >= 90) $W("{$d['mount']} is {$d['pct']}% full ({$d['avail']} KB free)"); elseif ($d['pct'] >= 80) $N("{$d['mount']} is {$d['pct']}% full"); if (($ino[$d['mount']] ?? 0) >= 90) $W("{$d['mount']} has used {$ino[$d['mount']]}% of its inodes (many small files)"); }
+$ps = function (string $sort) { return array_slice(explode("\n", trim(sh("ps -eo pid,user:12,%cpu,%mem,rss,comm --sort=-$sort --no-headers"))), 0, 5); };
+$o .= "\n## Busiest processes\n\nBy memory:\n\n```\n" . implode("\n", $ps('rss')) . "\n```\n\nBy CPU:\n\n```\n" . implode("\n", $ps('%cpu')) . "\n```\n";
+if (have('systemctl')) { $failed = array_filter(explode("\n", sh('systemctl --failed --no-legend --plain --no-pager'))); $o .= "\n## Failed services (" . count($failed) . ")\n\n"; foreach ($failed as $l) { $u = preg_split('/\s+/', trim($l))[0]; $o .= "- $u\n"; $W("failed service: $u"); } if (!$failed) $o .= "None.\n";
+    $ts = sh('timedatectl show -p NTPSynchronized --value'); if (trim($ts) === 'no') $N('the clock is not synchronised (NTP)'); }
+$L = listeners(); $open = array_filter($L, fn($x) => !in_array($x['addr'], ['127.0.0.1', '::1'], true) && strpos($x['addr'], '127.') !== 0); $o .= "\n## Listening ports\n\n" . count($L) . ' in all; open to the network: ' . count($open) . ($open ? ' (' . implode(', ', array_map(fn($x) => $x['port'], array_slice($open, 0, 15))) . ')' : '') . ". Run Ports for the detail.\n"; foreach ($open as $x) if (isset($RISKY[$x['port']])) $W("port {$x['port']} ({$RISKY[$x['port']]}) is open to the network");
+if (is_file('/var/run/reboot-required')) { $pk = trim(str_replace("\n", ' ', (string)@file_get_contents('/var/run/reboot-required.pkgs'))); $N('a reboot is needed' . ($pk !== '' ? " (after updating: $pk)" : '')); }
+$finish($o);

@@ -1,0 +1,66 @@
+<?php
+// Test for cockpit_app/vb_encoding.php on SYNTHETIC files (no real VB6 library needed).
+// Run: php tests/vb_encoding_test.php      exit 0 = all pass
+$tool = __DIR__ . '/../cockpit_app/vb_encoding.php';
+$t = sys_get_temp_dir() . '/vbenc_' . getmypid(); @mkdir("$t/src/p1", 0775, true); @mkdir("$t/src/p2", 0775, true);
+$w = fn($p, $b) => file_put_contents("$t/src/$p", $b);
+$cp = fn($s, $e) => iconv('UTF-8', $e, $s);
+$es = "Attribute VB_Name = \"Util\"\r\n' Función que calcula el año y la época: ¿Cómo estás? ¡Hola, ñandú!\r\nPublic Function Año() As Integer\r\nMsgBox \"Contraseña incorrecta\"\r\nEnd Function\r\n";
+$he = "Attribute VB_Name = \"Main\"\r\n' שלום עולם, זו בדיקה של תוכנה בעברית\r\nPublic Sub Hello()\r\nMsgBox \"ברוכים הבאים למערכת\"\r\nEnd Sub\r\n";
+$ru = "' Привет мир, это проверка программы на русском языке\r\nSub Main()\r\nMsgBox \"Добро пожаловать в систему\"\r\nEnd Sub\r\n";
+$w('p1/ascii.bas', "Sub A()\r\nEnd Sub\r\n");
+$w('p1/spanish.bas', $cp($es, 'WINDOWS-1252'));
+$w('p1/hebrew.bas', $cp($he, 'WINDOWS-1255'));
+$w('p1/russian.bas', $cp($ru, 'WINDOWS-1251'));
+$w('p1/utf8bom.cls', "\xEF\xBB\xBF" . $es);
+$w('p1/utf8.bas', $es);
+$w('p1/utf16.bas', "\xFF\xFE" . mb_convert_encoding($es, 'UTF-16LE', 'UTF-8'));
+$w('p1/binary.bas', "abc\0\0def\xE0\xE1");
+$w('p1/mixed.bas', "' Función en utf8: Año\r\n' Funci\xF3n en 1252: A\xF1o y cami\xF3n\r\n");
+$w('p1/tiny_hebrew.bas', "' " . $cp("שלום", 'WINDOWS-1255') . "\r\n");
+$w('p1/greek.bas', "' " . $cp("Καλημέρα κόσμε, δοκιμή προγράμματος", 'WINDOWS-1253') . "\r\n");
+$w('p1/arabic.bas', "' " . $cp("هذا اختبار للبرنامج باللغة العربية مرحبا بكم في النظام", 'WINDOWS-1256') . "\r\n");
+$w('p1/Form1.frx', "\x00\x01\x02binary");
+$w('p1/notes.xyz', "ignored");
+// project p2: a Hebrew form (Charset 177) makes a short code module read as Hebrew, not Spanish-ish
+$w('p2/Form1.frm', "VERSION 5.00\r\nBegin VB.Form Form1\r\n   Caption = \"" . $cp("חלון ראשי", 'WINDOWS-1255') . "\"\r\n   BeginProperty Font\r\n      Name = \"Arial\"\r\n      Charset = 177\r\n   EndProperty\r\nEnd\r\n");
+$w('p2/mod.bas', "' " . $cp("בדיקה קצרה", 'WINDOWS-1255') . "\r\n");
+$orig = []; foreach (glob("$t/src/*/*") as $f) $orig[$f] = md5_file($f);
+exec(escapeshellarg(PHP_BINARY) . " $tool convert $t/src $t/out --csv $t/r.csv 2>$t/err.txt", $o, $rc);
+$rows = array_map('str_getcsv', file("$t/r.csv", FILE_IGNORE_NEW_LINES)); $hdr = array_shift($rows); $R = [];
+foreach ($rows as $r) $R[$r[0]] = array_combine($hdr, $r);
+$fail = 0; $n = 0;
+$chk = function (string $name, bool $ok, string $x = '') use (&$fail, &$n) { $n++; if (!$ok) { $fail++; echo "FAIL $name $x\n"; } };
+$enc = fn($f) => $R[$f]['encoding'] ?? '(missing)'; $conf = fn($f) => $R[$f]['confidence'] ?? '?'; $rev = fn($f) => ($R[$f]['review'] ?? '') === 'REVIEW';
+$chk('exit code 0', $rc === 0);
+$chk('ascii', $enc('p1/ascii.bas') === 'ascii' && !$rev('p1/ascii.bas'));
+$chk('spanish cp1252', $enc('p1/spanish.bas') === 'windows-1252' && $conf('p1/spanish.bas') !== 'low', $enc('p1/spanish.bas') . '/' . $conf('p1/spanish.bas'));
+$chk('hebrew cp1255', $enc('p1/hebrew.bas') === 'windows-1255' && $conf('p1/hebrew.bas') !== 'low', $enc('p1/hebrew.bas') . '/' . $conf('p1/hebrew.bas'));
+$chk('russian cp1251', $enc('p1/russian.bas') === 'windows-1251' && $conf('p1/russian.bas') !== 'low', $enc('p1/russian.bas') . '/' . $conf('p1/russian.bas'));
+$chk('utf-8 with BOM', $enc('p1/utf8bom.cls') === 'utf-8-bom');
+$chk('utf-8 without BOM', $enc('p1/utf8.bas') === 'utf-8');
+$chk('utf-16 le', $enc('p1/utf16.bas') === 'utf-16le');
+$chk('binary skipped', $enc('p1/binary.bas') === 'binary' && $R['p1/binary.bas']['output'] === 'skipped');
+$chk('mixed utf-8 + cp1252 is flagged for REVIEW', $rev('p1/mixed.bas') && $conf('p1/mixed.bas') === 'low', $R['p1/mixed.bas']['evidence'] ?? '');
+$chk('a 4-letter Hebrew word is not trusted blindly (review or not-high)', $rev('p1/tiny_hebrew.bas') || $conf('p1/tiny_hebrew.bas') !== 'high', $conf('p1/tiny_hebrew.bas'));
+$chk('greek cp1253 is told apart from cyrillic', $enc('p1/greek.bas') === 'windows-1253' && $conf('p1/greek.bas') !== 'low', $enc('p1/greek.bas') . '/' . $conf('p1/greek.bas'));
+$chk('arabic cp1256 is NOT mistaken for Hebrew: flagged for review', $rev('p1/arabic.bas') && $enc('p1/arabic.bas') !== 'windows-1255', $enc('p1/arabic.bas') . '/' . $conf('p1/arabic.bas') . ' ' . ($R['p1/arabic.bas']['evidence'] ?? ''));
+$chk('spanish is NOT mistaken for Greek/Hebrew (same byte values, isolated accents)', $enc('p1/spanish.bas') === 'windows-1252');
+$chk('.frx and unknown extensions are not listed or touched', !isset($R['p1/Form1.frx']) && !isset($R['p1/notes.xyz']));
+$chk('project prior: short code module beside a Charset=177 form reads as Hebrew', $enc('p2/mod.bas') === 'windows-1255', $enc('p2/mod.bas') . '/' . $conf('p2/mod.bas'));
+// converted OUTPUT is the exact text
+$same = fn($rel, $expect) => file_get_contents("$t/out/$rel") === $expect;
+$chk('spanish converts exactly', $same('p1/spanish.bas', $es));
+$chk('hebrew converts exactly', $same('p1/hebrew.bas', $he));
+$chk('russian converts exactly', $same('p1/russian.bas', $ru));
+$chk('bom is stripped, text kept', $same('p1/utf8bom.cls', $es));
+$chk('utf-16 becomes utf-8', $same('p1/utf16.bas', $es));
+$chk('CRLF line endings are preserved', strpos(file_get_contents("$t/out/p1/spanish.bas"), "\r\n") !== false);
+$chk('originals untouched (md5 of every source file unchanged)', array_filter(array_map(fn($f) => md5_file($f) !== $orig[$f], array_keys($orig))) === []);
+$chk('no output for the binary', !file_exists("$t/out/p1/binary.bas"));
+exec(escapeshellarg(PHP_BINARY) . " $tool scan $t/src 2>&1 >/dev/null", $so, $src_rc);
+$chk('scan writes nothing', !file_exists("$t/out2") && $src_rc === 0 && strpos(implode("\n", $so), 'scan only') !== false);
+exec(escapeshellarg(PHP_BINARY) . " $tool convert $t/src $t/src/inside 2>&1", $io, $irc);
+$chk('refuses an output folder inside the source', $irc === 2 && !is_dir("$t/src/inside"));
+exec('rm -rf ' . escapeshellarg($t));
+echo ($fail ? "FAILED $fail of $n" : "OK: all $n") . " checks\n"; exit($fail ? 1 : 0);

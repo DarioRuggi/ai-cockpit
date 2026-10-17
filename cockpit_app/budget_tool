@@ -1,0 +1,154 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// budget_tool — the Personal finance tool's work, for the tool presets (tools_builtins/budget.json). A command-line program, never reachable over the web.
+//
+//   php budget_tool variance  BUDGET OUTPUT with=ACTUAL [month=2026-03]   monthly budget against actual spending: variance by category, overspend list, savings rate
+//   php budget_tool recurring LEDGER OUTPUT [min=3]                       recurring payments in a bank export: same payee, similar amount, regular interval
+//   php budget_tool taxdocs   FOLDER OUTPUT with=LIST [year=2025]         which documents of YOUR list are present in a folder (by file name) and which are missing
+//   php budget_tool project   PARAMS OUTPUT [principal= rate= years= payment= extra= deposit= kind=loan|savings target=]   loan payoff schedule or savings growth with compound interest
+//
+// BUDGET is a CSV with a category column and an amount column (the monthly limit: budget, limit, amount, presupuesto, Budget ...). ACTUAL / LEDGER is a bank export or ledger CSV (comma, semicolon or tab;
+// UTF-8 or Windows-1252/1255): date, description or payee, amount (or debit and credit), category; amounts 1,234.56 and 1.234,56, (12.50) and 12.50- are all read; a negative amount is money out
+// (positive=expense in the extra arguments when the file counts the other way). LIST is a text file, one document per line; "W-2 | w2, wage statement" gives alternative words to look for in the
+// file names, otherwise the words of the line itself are used. PARAMS is a text file of key=value lines (the extra arguments win over it). All of it is arithmetic on YOUR numbers: not financial,
+// investment or tax advice; rates, fees, tax rules and your own situation decide the real result. The original is never changed.
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "budget_tool: $m\n"); exit($rc); }
+[$sub, $in, $out] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? ''];
+$args = array_slice($argv, 4);
+if (!in_array($sub, ['variance', 'recurring', 'taxdocs', 'project'], true) || $in === '' || $out === '') fail('usage: budget_tool variance|recurring|taxdocs|project INPUT OUTPUT [ARGS]', 2);
+$opt = []; foreach ($args as $a) foreach (preg_split('/\s+(?=\w+=)/', trim($a)) as $p) if (strpos($p, '=') !== false) { [$k, $v] = explode('=', $p, 2); $opt[strtolower(trim($k))] = trim($v); }
+$posExpense = ($opt['positive'] ?? '') === 'expense';
+function read_csv(string $f): array {
+    if (!is_file($f)) fail("no such file: $f");
+    $t = (string)file_get_contents($f); if (strncmp($t, "\xEF\xBB\xBF", 3) === 0) $t = substr($t, 3);
+    if (!mb_check_encoding($t, 'UTF-8')) { $c = preg_match('/[\xE0-\xFA]{3,}/', $t) ? 'CP1255' : 'CP1252'; $t = mb_convert_encoding($t, 'UTF-8', $c); }
+    $t = str_replace(["\r\n", "\r"], "\n", $t); $first = strtok($t, "\n"); $c = ["\t" => substr_count($first, "\t"), ';' => substr_count($first, ';'), ',' => substr_count($first, ',')]; arsort($c); $sep = array_key_first($c);
+    $rows = []; $h = fopen('php://memory', 'r+'); fwrite($h, $t); rewind($h); $ln = 0; $header = null;
+    while (($r = fgetcsv($h, 0, $sep, '"', '')) !== false) { $ln++; if ($r === [null] || (count($r) === 1 && trim((string)$r[0]) === '')) continue; if ($header === null) { $header = array_map(fn($x) => trim((string)$x), $r); continue; } $rows[] = ['line' => $ln, 'cells' => $r]; }
+    fclose($h); if ($header === null) fail('the file is empty'); return [$header, $rows];
+}
+function find_col(array $header, array $names): ?int { foreach ($header as $i => $h) { $x = mb_strtolower(trim(preg_replace('/[\s_\-.]+/u', ' ', $h))); $words = explode(' ', $x); foreach ($names as $n) if ($x === $n || (strpos($n, ' ') === false && in_array($n, $words, true)) || (mb_strlen($n) > 4 && mb_strpos($x, $n) !== false) || (strpos($n, ' ') !== false && mb_strpos($x, $n) !== false)) return $i; } return null; }
+function parse_num(?string $s): ?float {
+    $s = trim((string)$s); if ($s === '') return null; $neg = false;
+    if (preg_match('/^\((.+)\)$/', $s, $m)) { $neg = true; $s = $m[1]; } if (substr($s, -1) === '-') { $neg = true; $s = substr($s, 0, -1); } if (substr($s, 0, 1) === '-' || substr($s, 0, 1) === '−') { $neg = !$neg; $s = substr($s, 1); }
+    $s = preg_replace('/[^\d.,]/u', '', $s); if ($s === '' || !preg_match('/\d/', $s)) return null;
+    $lc = strrpos($s, ','); $ld = strrpos($s, '.');
+    if ($lc !== false && $ld !== false) { if ($lc > $ld) $s = str_replace('.', '', $s); else $s = str_replace(',', '', $s); $s = str_replace(',', '.', $s); }
+    elseif ($lc !== false) { if (strlen($s) - $lc - 1 <= 2 && substr_count($s, ',') === 1) $s = str_replace(',', '.', $s); else $s = str_replace(',', '', $s); }
+    elseif ($ld !== false && substr_count($s, '.') > 1) $s = str_replace('.', '', $s);
+    $v = (float)$s; return $neg ? -$v : $v;
+}
+/** a date in Y-m-d, or null; $dmy tells how to read ambiguous d/m/y */
+function parse_date(?string $s, bool $dmy = true): ?string {
+    $s = trim((string)$s); if ($s === '') return null;
+    if (preg_match('/^(\d{4})-(\d{1,2})-(\d{1,2})/', $s, $m)) return checkdate((int)$m[2], (int)$m[3], (int)$m[1]) ? sprintf('%04d-%02d-%02d', $m[1], $m[2], $m[3]) : null;
+    if (preg_match('/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})/', $s, $m)) { [$a, $b, $y] = [(int)$m[1], (int)$m[2], (int)$m[3]]; if ($y < 100) $y += 2000; [$d, $mo] = $dmy ? [$a, $b] : [$b, $a]; if (!checkdate($mo, $d, $y)) { [$d, $mo] = [$mo, $d]; if (!checkdate($mo, $d, $y)) return null; } return sprintf('%04d-%02d-%02d', $y, $mo, $d); }
+    $t = strtotime($s); return $t === false ? null : date('Y-m-d', $t);
+}
+function dmy_guess(array $rows, ?int $c): bool { if ($c === null) return true; $a1 = 0; $a2 = 0; foreach ($rows as $r) if (preg_match('/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-]\d{2,4}/', trim($r['cells'][$c] ?? ''), $m)) { if ((int)$m[1] > 12) $a1++; if ((int)$m[2] > 12) $a2++; } return !($a2 > 0 && $a1 === 0); }
+function money(float $v): string { return number_format($v, 2, '.', ','); }
+
+const DISCLAIM = "Arithmetic on the numbers in your files, not financial, investment or tax advice.";
+function load_ledger(string $f, bool $posExpense): array {
+    [$H, $R] = read_csv($f); if (!$R) fail('no rows under the header in ' . basename($f));
+    $cDate = find_col($H, ['date', 'fecha', 'תאריך', 'datum', 'booking date', 'data']); $cDesc = find_col($H, ['description', 'memo', 'payee', 'vendor', 'merchant', 'details', 'concepto', 'descripcion', 'descripción', 'תיאור', 'narrative', 'name', 'libellé', 'beschreibung', 'descrizione']);
+    $cAmt = find_col($H, ['amount', 'importe', 'monto', 'סכום', 'total', 'value', 'betrag', 'montant', 'importo']); $cDeb = find_col($H, ['debit', 'withdrawal', 'cargo', 'חובה', 'out']); $cCred = find_col($H, ['credit', 'deposit', 'abono', 'זכות', 'in']);
+    $cCat = find_col($H, ['category', 'categoría', 'categoria', 'קטגוריה', 'catégorie', 'kategorie']);
+    if ($cDate === null) fail('no date column found in ' . basename($f)); if ($cAmt === null && $cDeb === null && $cCred === null) fail('no amount column found in ' . basename($f) . ' (amount, or debit and credit)');
+    $dmy = dmy_guess($R, $cDate); $tx = [];
+    foreach ($R as $r) { $c = $r['cells']; $date = parse_date($c[$cDate] ?? '', $dmy); $amt = null;
+        if ($cAmt !== null) { $amt = parse_num($c[$cAmt] ?? ''); if ($posExpense && $amt !== null) $amt = -$amt; } else { $d = parse_num($c[$cDeb] ?? ''); $k = parse_num($c[$cCred] ?? ''); if ($d !== null || $k !== null) $amt = abs($k ?? 0) - abs($d ?? 0); }
+        $tx[] = ['line' => $r['line'], 'date' => $date, 'amt' => $amt, 'desc' => trim($c[$cDesc] ?? ''), 'cat' => trim($c[$cCat] ?? ''), 'rawdate' => $c[$cDate] ?? '', 'rawamt' => $cAmt !== null ? ($c[$cAmt] ?? '') : ''];
+    }
+    return [$tx, $H, $dmy];
+}
+$name = basename($in); $msgs = [];
+
+if ($sub === 'variance') {
+    $other = $opt['with'] ?? ''; if ($other === '') fail('give the ACTUAL file in the extra arguments: with=/path/to/actual.csv');
+    [$HB, $RB] = read_csv($in); if (!$RB) fail('the budget has no rows under the header');
+    $bc = find_col($HB, ['category', 'categoría', 'categoria', 'קטגוריה', 'catégorie', 'kategorie', 'name', 'item']); $ba = find_col($HB, ['budget', 'limit', 'amount', 'presupuesto', 'planned', 'plan', 'monthly', 'importe', 'budget amount', 'montant', 'betrag']);
+    if ($bc === null || $ba === null) fail('the budget needs a category column and an amount column (budget, limit or amount)');
+    $bud = []; foreach ($RB as $r) { $cat = trim($r['cells'][$bc] ?? ''); $v = parse_num($r['cells'][$ba] ?? ''); if ($cat === '') continue; if ($v === null) { $msgs[] = "$name({$r['line']}) Error: the budget amount \"" . ($r['cells'][$ba] ?? '') . '" cannot be read'; continue; } $bud[mb_strtolower($cat)] = ['name' => $cat, 'v' => ($bud[mb_strtolower($cat)]['v'] ?? 0) + abs($v)]; }
+    if (!$bud) fail('no budget row with a category and a readable amount');
+    [$tx] = load_ledger($other, $posExpense); $on = basename($other); $month = $opt['month'] ?? '';
+    if ($month !== '' && !preg_match('/^\d{4}-\d{2}$/', $month)) fail('month= must look like 2026-03');
+    $inc = 0; $exp = 0; $act = []; $months = []; $bad = 0;
+    foreach ($tx as $t) { if ($t['date'] === null || $t['amt'] === null) { $bad++; $msgs[] = "$on({$t['line']}) Error: " . ($t['date'] === null ? 'the date "' . $t['rawdate'] . '"' : 'the amount "' . $t['rawamt'] . '"') . ' cannot be read: left out'; continue; }
+        if ($month !== '' && substr($t['date'], 0, 7) !== $month) continue; $months[substr($t['date'], 0, 7)] = 1;
+        if ($t['amt'] >= 0) { $inc += $t['amt']; continue; } $exp += -$t['amt']; $k = mb_strtolower($t['cat']); if ($k === '') $k = '(no category)'; $act[$k] = ['name' => $t['cat'] !== '' ? $t['cat'] : '(no category)', 'v' => ($act[$k]['v'] ?? 0) - $t['amt']]; }
+    $nm = count($months); if (!$nm) fail($month !== '' ? "no readable transactions in $month" : 'no readable transactions in the actual file');
+    $o = "# Budget against actual: $name with $on\n\n- Period: " . ($month !== '' ? $month : implode(', ', array_keys($months))) . " ($nm month" . ($nm > 1 ? 's' : '') . "); the monthly budget is multiplied by the number of months in the actual file\n- Amounts below zero in the actual file are spending; above zero is income. Categories are matched by name, ignoring case.\n\n";
+    $over = []; $rows = []; $tb = 0; $ta = 0;
+    foreach ($bud as $k => $b) { $limit = $b['v'] * $nm; $a = $act[$k]['v'] ?? 0; $tb += $limit; $ta += $a; $rows[] = [$b['name'], $limit, $a, $limit - $a]; if ($a > $limit + 0.005) $over[] = [$b['name'], $a - $limit, $limit > 0 ? 100 * ($a - $limit) / $limit : 0]; }
+    $un = array_diff_key($act, $bud); $unT = array_sum(array_column($un, 'v'));
+    $o .= "## Variance by category (budget minus actual: negative means overspent)\n\n| Category | Budget | Actual | Variance |\n|---|---|---|---|\n"; foreach ($rows as [$n, $l, $a, $v]) $o .= "| $n | " . money($l) . ' | ' . money($a) . ' | ' . money($v) . " |\n";
+    foreach ($un as $u) $o .= "| {$u['name']} (not in the budget) | 0.00 | " . money($u['v']) . ' | ' . money(-$u['v']) . " |\n"; $o .= '| **Total** | ' . money($tb) . ' | ' . money($ta + $unT) . ' | ' . money($tb - $ta - $unT) . " |\n";
+    $o .= "\n## Overspent\n\n"; usort($over, fn($a, $b) => $b[1] <=> $a[1]); if ($over) { foreach ($over as [$n, $d, $p]) $o .= "- $n: over by " . money($d) . ' (' . round($p) . "% above its budget)\n"; } else $o .= "No budgeted category is over its limit.\n";
+    if ($un) { $o .= "\n## Spent with no budget line\n\n"; uasort($un, fn($a, $b) => $b['v'] <=> $a['v']); foreach ($un as $u) $o .= "- {$u['name']}: " . money($u['v']) . "\n"; }
+    $o .= "\n## Income, spending and savings\n\n- Income: " . money($inc) . "\n- Spending: " . money($exp) . "\n- Left over: " . money($inc - $exp) . "\n- Savings rate: " . ($inc > 0 ? round(100 * ($inc - $exp) / $inc, 1) . '% of income (left over divided by income; a negative number means more was spent than came in)' : 'not calculable: no income in the period') . "\n";
+    if ($msgs) $o .= "\n## Problems\n\n" . implode("\n", array_slice($msgs, 0, 100)) . "\n"; $errs = count($msgs);
+    file_put_contents($out, $o . "\n" . DISCLAIM . "\n\n[exit code " . ($errs ? 1 : 0) . "]\n"); echo "Wrote $out (" . count($over) . " overspent)\n"; exit(0);
+}
+
+if ($sub === 'recurring') {
+    [$tx] = load_ledger($in, $posExpense); $min = isset($opt['min']) && ctype_digit($opt['min']) && (int)$opt['min'] >= 2 ? (int)$opt['min'] : 3; $g = [];
+    foreach ($tx as $t) { if ($t['date'] === null || $t['amt'] === null || abs($t['amt']) < 0.005 || $t['desc'] === '') continue; $k = trim(preg_replace('/\s+/u', ' ', preg_replace('/[\d\p{P}\p{S}]+/u', ' ', mb_strtolower($t['desc'])))); $k = implode(' ', array_slice(explode(' ', $k), 0, 4)); if ($k === '') continue; $g[($t['amt'] < 0 ? 'out ' : 'in ') . $k][] = $t; }
+    $cad = [['weekly', 7, 1], ['every two weeks', 14, 2], ['monthly', 30.4, 4], ['every two months', 61, 5], ['quarterly', 91, 6], ['twice a year', 182, 9], ['yearly', 365, 10]]; $found = []; $varying = [];
+    foreach ($g as $k => $list) { if (count($list) < $min) continue; usort($list, fn($a, $b) => strcmp($a['date'], $b['date'])); $iv = []; for ($i = 1; $i < count($list); $i++) $iv[] = (strtotime($list[$i]['date']) - strtotime($list[$i - 1]['date'])) / 86400;
+        $amts = array_map(fn($t) => abs($t['amt']), $list); sort($amts); $n = count($amts); $med = $n % 2 ? $amts[intdiv($n, 2)] : ($amts[$n / 2 - 1] + $amts[$n / 2]) / 2; $best = null;
+        foreach ($cad as [$cn, $days, $tol]) { $okc = count(array_filter($iv, fn($d) => abs($d - $days) <= $tol)); if ($okc / count($iv) >= 0.7 && ($best === null || $okc > $best[3])) $best = [$cn, $days, $tol, $okc]; }
+        if ($best === null) continue; $same = count(array_filter($amts, fn($a) => abs($a - $med) <= max(1.0, 0.1 * $med))); $row = ['key' => substr($k, strpos($k, ' ') + 1), 'dir' => substr($k, 0, strpos($k, ' ')), 'n' => $n, 'med' => $med, 'cad' => $best[0], 'days' => $best[1], 'first' => $list[0]['date'], 'last' => end($list)['date'], 'min' => $amts[0], 'max' => $amts[$n - 1], 'lines' => array_column($list, 'line')];
+        if ($same / $n >= 0.8) $found[] = $row; else $varying[] = $row; }
+    $per = fn($r) => 365 / $r['days'] * $r['med']; usort($found, fn($a, $b) => $per($b) <=> $per($a));
+    $o = "# Recurring payments: $name\n\nA payee counts when it appears at least $min times, at a regular interval (weekly, every two weeks, about monthly, every two months, quarterly, twice a year or yearly, with a few days of slack) and for a similar amount (within 10%). Payees are matched by their words with numbers and punctuation removed, so \"STREAM CO 4471\" and \"Stream Co 5120\" are one payee.\n\n";
+    $o .= "## Regular payments (" . count($found) . ")\n\n"; if ($found) { $o .= "| Payee | Direction | Typical amount | Interval | Times | First | Last | Next expected | About per year |\n|---|---|---|---|---|---|---|---|---|\n";
+        foreach ($found as $r) { $nx = $r['cad'] === 'monthly' ? date('Y-m-d', strtotime($r['last'] . ' +1 month')) : date('Y-m-d', strtotime($r['last'] . ' +' . (int)round($r['days']) . ' days')); $o .= '| ' . str_replace('|', '/', $r['key']) . ' | ' . ($r['dir'] === 'out' ? 'paid' : 'received') . ' | ' . money($r['med']) . ' | ' . $r['cad'] . ' | ' . $r['n'] . " | {$r['first']} | {$r['last']} | $nx | " . money($per($r)) . " |\n"; }
+        $tp = array_sum(array_map($per, array_filter($found, fn($r) => $r['dir'] === 'out'))); $o .= "\nRegular payments out add up to about " . money($tp) . " a year (typical amount times payments per year; the real total moves with price changes).\n"; } else $o .= "None found.\n";
+    if ($varying) { $o .= "\n## Regular timing but a changing amount (" . count($varying) . ")\n\n| Payee | Interval | Times | Smallest | Largest |\n|---|---|---|---|---|\n"; foreach ($varying as $r) $o .= '| ' . str_replace('|', '/', $r['key']) . " | {$r['cad']} | {$r['n']} | " . money($r['min']) . ' | ' . money($r['max']) . " |\n"; $o .= "\nUtility bills and variable subscriptions look like this; a price rise on a subscription does too.\n"; }
+    file_put_contents($out, $o . "\n" . DISCLAIM . "\n\n[exit code 0]\n"); echo "Wrote $out (" . count($found) . " regular, " . count($varying) . " with a changing amount)\n"; exit(0);
+}
+
+if ($sub === 'taxdocs') {
+    if (!is_dir($in)) fail("the input must be a folder: $in"); $lf = $opt['with'] ?? ''; if ($lf === '') fail('give your list of documents in the extra arguments: with=/path/to/list.txt (one document per line)');
+    $lt = text_file($lf); $year = $opt['year'] ?? ''; if ($year !== '' && !preg_match('/^\d{4}$/', $year)) fail('year= must be four digits');
+    $norm = fn(string $s) => ' ' . trim(preg_replace('/[^\p{L}\p{N}]+/u', ' ', mb_strtolower(strtr($s, ['é' => 'e', 'è' => 'e', 'ê' => 'e', 'á' => 'a', 'à' => 'a', 'ä' => 'a', 'ó' => 'o', 'ö' => 'o', 'ü' => 'u', 'ú' => 'u', 'í' => 'i', 'ñ' => 'n', 'ç' => 'c'])))) . ' ';
+    $files = []; $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($in, FilesystemIterator::SKIP_DOTS)); foreach ($it as $f) if ($f->isFile()) { $files[] = ltrim(substr($f->getPathname(), strlen(rtrim($in, '/'))), '/'); if (count($files) >= 20000) break; } sort($files);
+    $items = []; foreach (preg_split('/\n/', $lt) as $ln) { $ln = trim($ln); if ($ln === '' || $ln[0] === '#') continue; $ln = preg_replace('/^\s*(?:[-*]\s*(?:\[[ xX]\]\s*)?|\d+[.)]\s+)/u', '', $ln); [$label, $kw] = array_pad(explode('|', $ln, 2), 2, ''); $label = trim($label); $alts = [];
+        foreach (array_filter(array_map('trim', explode(',', $kw))) as $a) $alts[] = $norm($a); if (!$alts) $alts[] = $norm($label); if ($label !== '') $items[] = [$label, $alts]; }
+    if (!$items) fail('the list has no documents in it'); $used = []; $o = "# Tax documents: $name against " . basename($lf) . "\n\nA document counts as present when a file name (with its folder names) contains ALL the words of one of its search phrases, ignoring case, accents and punctuation" . ($year !== '' ? "; with year=$year the file path must also contain $year" : '') . ". The file CONTENTS are not read: open each one to confirm it is the right, complete and signed document.\n\n- Files in the folder: " . count($files) . "\n- Documents on your list: " . count($items) . "\n\n";
+    $pres = []; $miss = [];
+    foreach ($items as [$label, $alts]) { $hit = []; foreach ($files as $i => $f) { $nf = $norm($f); if ($year !== '' && strpos($nf, $year) === false) continue; foreach ($alts as $a) { $ok = true; foreach (array_filter(explode(' ', trim($a))) as $w) if (strpos($nf, ' ' . $w) === false) { $ok = false; break; } $ca = str_replace(' ', '', $a); if (!$ok && strlen($ca) >= 2 && strpos(str_replace(' ', '', $nf), $ca) !== false) $ok = true; if ($ok) { $hit[] = $f; $used[$i] = 1; break; } } } if ($hit) $pres[] = [$label, $hit]; else $miss[] = $label; }
+    $o .= "## Missing (" . count($miss) . ")\n\n"; if ($miss) foreach ($miss as $m) $o .= "- [ ] $m\n"; else $o .= "Nothing missing.\n"; $o .= "\n## Present (" . count($pres) . ")\n\n"; foreach ($pres as [$l, $h]) $o .= "- [x] $l: " . implode('; ', array_slice($h, 0, 4)) . (count($h) > 4 ? ' (+' . (count($h) - 4) . ' more)' : '') . "\n"; if (!$pres) $o .= "None.\n";
+    $extra = []; foreach ($files as $i => $f) if (!isset($used[$i])) $extra[] = $f; if ($extra) { $o .= "\n## Files that match nothing on your list (" . count($extra) . ")\n\n"; foreach (array_slice($extra, 0, 60) as $f) $o .= "- $f\n"; if (count($extra) > 60) $o .= '- ... and ' . (count($extra) - 60) . " more\n"; }
+    $lines = []; foreach ($miss as $m) $lines[] = basename($lf) . "(1) Warning: missing: $m"; file_put_contents($out, $o . ($lines ? "\n" . implode("\n", array_slice($lines, 0, 100)) . "\n" : '') . "\nWhich documents you need depends on your own situation and local rules; this list is the one you supplied. " . DISCLAIM . "\n\n[exit code " . ($miss ? 1 : 0) . "]\n"); echo "Wrote $out (" . count($miss) . " missing, " . count($pres) . " present)\n"; exit(0);
+}
+
+// ---- project -----------------------------------------------------------------------------------------------------------------------------------
+function text_file(string $f): string { if (!is_file($f)) fail("no such file: $f"); $t = (string)file_get_contents($f); if (strncmp($t, "\xEF\xBB\xBF", 3) === 0) $t = substr($t, 3); if (!mb_check_encoding($t, 'UTF-8')) fail('the file is not UTF-8 text: ' . basename($f)); return $t; }
+$P = []; foreach (preg_split('/\n/', text_file($in)) as $ln) { $ln = trim($ln); if ($ln === '' || $ln[0] === '#') continue; if (preg_match('/^([A-Za-z_ ]{2,20})\s*[=:]\s*(.+)$/u', $ln, $m)) $P[strtolower(trim($m[1]))] = trim($m[2]); }
+$P = array_merge($P, $opt); $num = function (string $k, ?float $def = null) use ($P): ?float { if (!isset($P[$k]) || $P[$k] === '') return $def; $v = parse_num(rtrim($P[$k], '% ')); if ($v === null) fail("$k=\"{$P[$k]}\" is not a number"); return $v; };
+$kind = strtolower($P['kind'] ?? 'loan'); if (!in_array($kind, ['loan', 'savings'], true)) fail('kind= must be loan or savings');
+$rate = $num('rate', 0.0); if ($rate < 0 || $rate > 100) fail("rate=$rate is not a yearly percentage between 0 and 100"); $r = $rate / 1200; $years = $num('years'); if ($years !== null && ($years <= 0 || $years > 100)) fail('years= must be between 0 and 100');
+$start = $P['start'] ?? ''; if ($start !== '' && !preg_match('/^\d{4}-\d{2}$/', $start)) fail('start= must look like 2026-03');
+$mlabel = fn(int $i) => $start !== '' ? date('Y-m', strtotime($start . '-01 +' . ($i - 1) . ' months')) : "month $i";
+if ($kind === 'loan') {
+    $pr = $num('principal'); if ($pr === null || $pr <= 0) fail('loan: give principal= (the amount borrowed), above zero'); $extra = $num('extra', 0.0); if ($extra < 0) fail('extra= cannot be negative'); $pay = $num('payment');
+    if ($pay === null) { if ($years === null) fail('loan: give years= (the term) or payment= (the monthly payment)'); $n = (int)round($years * 12); $pay = $r > 0 ? $pr * $r / (1 - pow(1 + $r, -$n)) : $pr / $n; $pay = round($pay, 2); $how = "worked out from the term of $years year(s)"; } else $how = 'the payment you gave' . ($years !== null ? ' (years= is ignored)' : '');
+    $run = function (float $extra) use ($pr, $pay, $r) { $bal = $pr; $rows = []; $ti = 0; $tp = 0; for ($i = 1; $i <= 1200 && $bal > 0.004; $i++) { $int = round($bal * $r, 2); $p = min($pay + $extra, $bal + $int); $pp = $p - $int; if ($i === 1 && $pp <= 0) fail('the payment ' . money($pay + $extra) . ' does not cover the first month\'s interest (' . money($int) . '): the balance would never fall'); $bal = round($bal - $pp, 2); $ti += $int; $tp += $p; $rows[] = [$i, $p, $int, $pp, max(0, $bal)]; } if ($bal > 0.004) fail('the loan is not paid off within 100 years at this payment'); return [$rows, $ti, $tp]; };
+    [$rows, $ti, $tp] = $run($extra); $o = "# Loan payoff schedule: $name\n\n- Borrowed: " . money($pr) . " at $rate% a year (monthly interest = balance x rate / 12, rounded to the cent each month)\n- Monthly payment: " . money($pay) . " ($how)" . ($extra > 0 ? ' plus ' . money($extra) . ' extra each month' : '') . "\n- Months to pay off: " . count($rows) . ' (' . intdiv(count($rows), 12) . ' years ' . (count($rows) % 12) . " months)\n- Total paid: " . money($tp) . "\n- Total interest: " . money($ti) . "\n";
+    if ($extra > 0) { [$r0, $ti0] = $run(0.0); $o .= '- Without the extra payment: ' . count($r0) . ' months and ' . money($ti0) . ' interest, so the extra saves ' . (count($r0) - count($rows)) . ' months and ' . money($ti0 - $ti) . " of interest\n"; }
+    $o .= "\n## By year\n\n| Year | Paid | Interest | Principal | Balance at the end |\n|---|---|---|---|---|\n"; $yr = []; foreach ($rows as [$i, $p, $int, $pp, $b]) { $y = intdiv($i - 1, 12) + 1; $yr[$y] = [($yr[$y][0] ?? 0) + $p, ($yr[$y][1] ?? 0) + $int, ($yr[$y][2] ?? 0) + $pp, $b]; } foreach ($yr as $y => $v) $o .= "| $y | " . money($v[0]) . ' | ' . money($v[1]) . ' | ' . money($v[2]) . ' | ' . money($v[3]) . " |\n";
+    $o .= "\n## Month by month\n\n| Month | Payment | Interest | Principal | Balance |\n|---|---|---|---|---|\n"; foreach ($rows as [$i, $p, $int, $pp, $b]) $o .= '| ' . $mlabel($i) . ' | ' . money($p) . ' | ' . money($int) . ' | ' . money($pp) . ' | ' . money($b) . " |\n";
+    $o .= "\nFees, insurance, variable rates and the lender's own rounding are not included, so the lender's schedule can differ by a few cents or more. " . DISCLAIM . "\n\n[exit code 0]\n"; file_put_contents($out, $o); echo "Wrote $out\n"; exit(0);
+}
+$bal = $num('principal', 0.0); $dep = $num('deposit', 0.0); $target = $num('target'); if ($bal < 0 || $dep < 0) fail('principal= and deposit= cannot be negative'); if ($years === null && $target === null) fail('savings: give years= or target=');
+if ($bal == 0 && $dep == 0) fail('savings: give principal= (the starting balance) and/or deposit= (the monthly amount)'); $maxm = $years !== null ? (int)round($years * 12) : 1200; $rows = []; $cont = 0; $ti = 0; $reach = null; $b0 = $bal;
+for ($i = 1; $i <= $maxm; $i++) { $int = round($bal * $r, 2); $bal = round($bal + $int + $dep, 2); $ti += $int; $cont += $dep; $rows[] = [$i, $int, $bal]; if ($target !== null && $reach === null && $bal >= $target) { $reach = $i; if ($years === null) break; } }
+$o = "# Savings projection: $name\n\n- Start balance: " . money($b0) . "; deposit " . money($dep) . " at the end of each month; interest $rate% a year, added monthly (rate / 12), no fees, no tax, no inflation\n- " . ($years !== null ? "After $years year(s): **" . money($bal) . "** (deposits " . money($cont) . ', interest ' . money($ti) . ')' : 'Stopped when the target was met or after 100 years') . "\n";
+if ($target !== null) $o .= '- Target ' . money($target) . ': ' . ($reach !== null ? 'reached in month ' . $reach . ' (' . intdiv($reach, 12) . ' years ' . ($reach % 12) . ' months), balance then ' . money($rows[$reach - 1][2]) : 'not reached' . ($years !== null ? " within $years years" : ' within 100 years')) . "\n";
+$o .= "\n## By year\n\n| Year | Deposits so far | Interest so far | Balance at the end |\n|---|---|---|---|\n"; $ci = 0; foreach ($rows as [$i, $int, $b]) { $ci += $int; if ($i % 12 === 0 || $i === count($rows)) $o .= '| ' . (int)ceil($i / 12) . ' | ' . money($dep * $i) . ' | ' . money($ci) . ' | ' . money($b) . " |\n"; }
+$o .= "\nA projection from the numbers you gave, assuming a constant rate that no real account promises. " . DISCLAIM . "\n\n[exit code 0]\n"; file_put_contents($out, $o); echo "Wrote $out\n";

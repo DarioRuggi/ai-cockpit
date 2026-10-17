@@ -1,0 +1,77 @@
+{
+    "id": "shell",
+    "name": "Shell scripts (ShellCheck)",
+    "binary": "shellcheck",
+    "version_args": "--version",
+    "website": "https://www.shellcheck.net",
+    "install_note": "Fetch the official static binary (github.com/koalaman/shellcheck, shellcheck-vX.linux.x86_64.tar.xz, about 2.5 MB) into ~/.local/share/cockpit/tools/shellcheck/ and link it from ~/.local/bin (no root), or: sudo apt install shellcheck (an older version).",
+    "description": "Check shell scripts without running them. Check runs ShellCheck, the standard linter: each finding as file(line,col) with its SC code and a link to the explanation (unquoted variables, cd without a check, missing quoting, bashisms in sh scripts, useless use of cat and many more). Syntax asks the script's own shell (bash -n, sh -n, dash -n) whether it parses at all. Habits scan reads for dangerous habits: curl | sh, rm -rf of a variable, chmod 777, eval, curl -k, a fixed name in /tmp, no set -e, a hard-coded secret, sudo inside a script. Unit check runs systemd-analyze verify on a .service or .timer file. Give a script or a folder: every *.sh, *.bash and file with a shell #! line is checked, and nothing is ever executed.",
+    "packages": {
+        "apt": "shellcheck php-cli",
+        "dnf": "ShellCheck php-cli",
+        "pacman": "shellcheck php",
+        "zypper": "ShellCheck php8",
+        "brew": "shellcheck php"
+    },
+    "presets": [
+        {
+            "id": "check",
+            "label": "ShellCheck (the standard shell linter)",
+            "description": "Every shell script in the file or folder through ShellCheck: errors, warnings and style notes as file(line,col) with the SC code and the explanation link. By default each script is read as the shell its #! line names; type shell=sh (or bash, dash, ksh) in the extra arguments to force one, for example to check a script for POSIX portability. With Fix with agent.",
+            "input_kinds": [
+                "code",
+                "file",
+                "folder"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_shellcheck",
+            "command": "php {WEBROOT}/shell_tool check {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "syntax",
+            "label": "Syntax: does it parse (bash -n, sh -n, dash -n)",
+            "description": "Asks the script's own shell to parse it without running it. Catches a missing fi or done and an unclosed quote, as file(line).",
+            "input_kinds": [
+                "code",
+                "file",
+                "folder"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_syntax",
+            "command": "php {WEBROOT}/shell_tool syntax {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "scan",
+            "label": "Habits scan (dangerous patterns)",
+            "description": "Reads for curl | sh, rm -rf of a path built from a variable, rm -rf /, chmod 777, eval of a variable, curl -k, a fixed name in /tmp, no \"set -e\" (in longer scripts), a hard-coded password or token, sudo inside a script. By patterns: some false alarms; ShellCheck finds the quoting and portability faults this does not.",
+            "input_kinds": [
+                "code",
+                "file",
+                "folder"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_habits",
+            "command": "php {WEBROOT}/shell_tool scan {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "unit",
+            "label": "systemd unit check (.service, .timer ...)",
+            "description": "Runs systemd-analyze verify on a unit file: unknown keys, commands that do not exist, missing dependencies, as file(line). Read only: the unit is not loaded into systemd.",
+            "input_kinds": [
+                "file",
+                "text"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_unit",
+            "command": "php {WEBROOT}/shell_tool unit {INPUT} {OUTPUT}",
+            "timeout_seconds": 120
+        }
+    ]
+}

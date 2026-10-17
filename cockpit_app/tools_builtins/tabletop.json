@@ -1,0 +1,72 @@
+{
+    "id": "tabletop",
+    "name": "Tabletop helper",
+    "description": "Game-master and player aids for tabletop and role-playing games on plain text and CSV files, with no game system built in. Roll dice expressions (2d6+3, 4d6kh3, 2d20kl1, 3d8dl1+1d4-2, one per line) with a seed so rolls can be repeated; Odds gives the exact probability table for each expression; Initiative turns a combatants CSV into an initiative order and a round tracker; Character sheet check tests a \"Field: value\" sheet for required fields, ability ranges and the point-buy table and budget you give; Notes index lists NPCs and locations by where they are mentioned in your campaign notes. Dice are fair pseudo-random chance and nothing predicts them. The original is never changed.",
+    "binary": "php",
+    "version_args": "--version",
+    "website": "https://www.php.net",
+    "packages": {
+        "apt": "php-cli php-mbstring",
+        "dnf": "php-cli php-mbstring",
+        "pacman": "php",
+        "zypper": "php8 php8-mbstring",
+        "brew": "php"
+    },
+    "presets": [
+        {
+            "id": "roll",
+            "label": "Roll dice expressions",
+            "description": "A text file with one dice expression per line (2d6+3, 4d6kh3, d100 ...). Extra arguments: seed=42 repeats the same rolls, times=5 rolls each expression five times. The seed used is printed.",
+            "input_kinds": ["text", "file", "document"],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_rolls",
+            "command": "php {WEBROOT}/tabletop_tool roll {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "odds",
+            "label": "Probability table",
+            "description": "Exact chance of every total for each dice expression (keep/drop included), with the mean and the chance of at least each total. Type target=15 in the extra arguments for the chance of 15 or more. Very large cases are sampled and labelled.",
+            "input_kinds": ["text", "file", "document"],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_odds",
+            "command": "php {WEBROOT}/tabletop_tool odds {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "initiative",
+            "label": "Initiative order and tracker",
+            "description": "A CSV with name, bonus, hp, ac, team, count (count 3 makes Goblin 1-3, each rolled separately). Rolls d20 plus the bonus (die=12 for another die, seed=N to repeat) and writes the order and a round tracker.",
+            "input_kinds": ["text", "file", "document"],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_initiative",
+            "command": "php {WEBROOT}/tabletop_tool initiative {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "sheet",
+            "label": "Character sheet check",
+            "description": "A sheet of \"Field: value\" lines. Extra arguments you define: require=name,class,level abilities=str,dex,con,int,wis,cha min=3 max=18 and, for point-buy, budget=27 costs=8:0,9:1,10:2,... (score:cost). No game rules are assumed.",
+            "input_kinds": ["text", "file", "document"],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_sheetcheck",
+            "command": "php {WEBROOT}/tabletop_tool sheet {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "notes",
+            "label": "Campaign notes index (NPCs, locations)",
+            "description": "Notes in markdown (a file or a folder). Type with=ENTITIES.csv (name, type, aliases) in the extra arguments for a typed index; without it, terms in **bold** are used. Shows where and how often each is mentioned and who never appears.",
+            "input_kinds": ["text", "file", "document"],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_index",
+            "command": "php {WEBROOT}/tabletop_tool notes {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        }
+    ]
+}

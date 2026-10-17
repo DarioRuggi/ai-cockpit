@@ -1,0 +1,19 @@
+{
+    "id": "make-it-polite",
+    "name": "Make it polite",
+    "icon": "handshake",
+    "colour": "",
+    "description": "Rewrite so it is polite and friendly but still clear.",
+    "prompt": "Rewrite the text so it is polite and friendly but still clear and direct. Keep the meaning and the language of the text. Return only the rewritten text, nothing else.",
+    "skill": "",
+    "supplier": {
+        "type": "ollama",
+        "model": ""
+    },
+    "input": "clipboard",
+    "output": "clipboard",
+    "tools": "none",
+    "confirm": "first",
+    "allow_secrets": false,
+    "starter": true
+}

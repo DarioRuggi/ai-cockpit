@@ -1,0 +1,77 @@
+{
+    "id": "localai",
+    "display": "LocalAI (OpenAI-compatible, local)",
+    "kind": "model-api",
+    "transport": "http",
+    "url": "http://127.0.0.1:8080/v1/chat/completions",
+    "detect_url": "http://127.0.0.1:8080/v1/models",
+    "body": {
+        "model": "{model}",
+        "messages": "{messages}",
+        "stream": true,
+        "stream_options": {
+            "include_usage": true
+        }
+    },
+    "parser": "openai_sse",
+    "limits": {
+        "timeout_s": 300
+    },
+    "notes": "Same request Cockpit builds today (system + history + user as chat messages, SSE deltas, stop at [DONE]). Also serves LM Studio, vLLM and llama.cpp server unchanged: only the URL differs. Reasoning models (deepseek-r1 distills) put their thinking in the text stream; the consumer decides whether to hide it.",
+    "docs_checked": "2026-10-05",
+    "tests": [
+        {
+            "name": "REAL recorded LocalAI stream replays through the SSE parser",
+            "request": {
+                "prompt": "x"
+            },
+            "replay": "fixtures/localai_ok.jsonl",
+            "live": false,
+            "expect": {
+                "exit": 0,
+                "error_code": "none",
+                "events_include": [
+                    "text"
+                ],
+                "events_order": [
+                    "start",
+                    "text",
+                    "done"
+                ]
+            }
+        },
+        {
+            "name": "local OpenAI-style server streams text through SSE",
+            "request": {
+                "prompt": "Reply with the single word OK.",
+                "model": "deepseek-r1-distill-qwen-1.5b",
+                "timeout_s": 180
+            },
+            "live": true,
+            "expect": {
+                "exit": 0,
+                "error_code": "none",
+                "events_include": [
+                    "text"
+                ],
+                "events_order": [
+                    "start",
+                    "text",
+                    "done"
+                ]
+            }
+        },
+        {
+            "name": "an unknown model ends cleanly as error(http_error)",
+            "request": {
+                "prompt": "hi",
+                "model": "no-such-model-xyz",
+                "timeout_s": 30
+            },
+            "live": true,
+            "expect": {
+                "error_code": "http_error"
+            }
+        }
+    ]
+}

@@ -1,0 +1,139 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// photo_tool — the Photo editing tools' work, for the tool presets (tools_builtins/photo.json). A command-line program, never reachable over the web.
+//
+//   php photo_tool info    FILE|FOLDER OUTPUT          one photo: size, camera, date taken, GPS; a folder: a table of every photo with the same columns
+//   php photo_tool check   FILE|FOLDER OUTPUT          GPS location inside (privacy), huge files, CMYK, rotation not applied, tiny images, mixed formats
+//   php photo_tool strip   FILE OUTPUT                 the same picture with ALL metadata removed (GPS, camera, dates), rotation applied first
+//   php photo_tool web     FILE OUTPUT [max=1600 quality=82]   a web-ready copy: rotation applied, metadata removed, sRGB, shrunk to max pixels on the long side (never enlarged)
+//   php photo_tool enhance FILE OUTPUT                 rotation applied, levels stretched, a little sharpening (a conservative auto-fix)
+//   php photo_tool batch   FOLDER OUTPUT.zip [max= quality=]   every photo of the folder as a web-ready JPEG in one zip
+//   php photo_tool sheet   FOLDER OUTPUT.png           a contact sheet of the photos with their names
+//   php photo_tool dupes   FOLDER OUTPUT               exact copies (same bytes) and near-duplicates (the same picture resized or re-saved), grouped
+//   php photo_tool plan    FOLDER OUTPUT               a rename PLAN by date taken (2026-01-05_14-30-02.jpg): written as a list, nothing is renamed
+//   php photo_tool tags    FILE OUTPUT                 EVERY metadata tag (EXIF, XMP, IPTC, maker notes: lens, ISO, serial numbers ...), privacy-sensitive ones first (needs exiftool)
+//   php photo_tool set     FILE OUTPUT artist=.. copyright=.. title=.. description=.. keywords=a,b rating=0-5 datetimeoriginal="2026:01:05 14:30:02"   a COPY with those tags written (exiftool)
+//   php photo_tool shift   FILE OUTPUT +2h|-30m|+1d|+1d2h30m      a COPY with every date moved (a camera clock that was wrong), exiftool
+//
+// Reads JPEG, PNG, GIF, WebP, TIFF, BMP and HEIC. The type is taken from the file's CONTENT, not its name, and passed to ImageMagick as an explicit decoder, so a file named .jpg
+// cannot be handled as something else (SVG, MVG and other script-like formats are refused). The originals are never changed.
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "photo_tool: $m\n"); exit($rc); }
+[$sub, $in, $out] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? '']; $args = array_slice($argv, 4);
+if (!in_array($sub, ['info', 'check', 'strip', 'web', 'enhance', 'batch', 'sheet', 'dupes', 'plan', 'tags', 'set', 'shift'], true) || $in === '' || $out === '') fail('usage: photo_tool info|check|strip|web|enhance|batch|sheet|dupes|plan|tags|set|shift INPUT OUTPUT [ARGS]', 2);
+if (!file_exists($in)) fail("no such file or folder: $in");
+$opt = []; foreach ($args as $a) foreach (preg_split('/[\s;]+(?=\w+=)/', trim($a)) as $p) if (strpos($p, '=') !== false) { [$k, $v] = explode('=', $p, 2); $opt[strtolower(trim($k))] = trim($v); }
+function sh(string $cmd, ?int &$rc = null): string { $o = []; exec($cmd . ' 2>&1', $o, $rc); return implode("\n", $o); }
+function have(string $b): bool { return trim((string)shell_exec('command -v ' . escapeshellarg($b) . ' 2>/dev/null')) !== ''; }
+foreach (['convert', 'identify'] as $b) if (!have($b)) fail("$b (ImageMagick) is not installed (sudo apt install imagemagick)");
+// ---- exiftool: every tag, and writing tags into a COPY ---------------------------------------------------------------------------------------------
+if (in_array($sub, ['tags', 'set', 'shift'], true)) {
+    $home = ''; if (preg_match('/"home"\s*:\s*"([^"]*)"/', (string)@file_get_contents(__DIR__ . '/paths.json'), $pm)) $home = $pm[1]; $ET = trim((string)shell_exec('command -v exiftool 2>/dev/null')); if ($ET === '' && $home !== '' && is_executable("$home/.local/bin/exiftool")) $ET = "$home/.local/bin/exiftool";
+    if ($ET === '') fail('exiftool is not installed (sudo apt install libimage-exiftool-perl)'); if (!is_file($in)) fail('give a photo file'); if (coder($in) === null && !preg_match('/\.(cr2|cr3|nef|arw|dng|orf|raf|rw2|heic|heif|mp4|mov)$/i', $in)) fail('not a photo type I handle, judged by its content: ' . basename($in));
+    if ($sub === 'tags') { $j = json_decode(sh(escapeshellarg($ET) . ' -j -G1 -a -s -struct -api largefilesupport=1 ' . escapeshellarg($in), $rc), true); if (!is_array($j) || !isset($j[0])) fail('exiftool could not read the file'); $r = $j[0]; $priv = []; $rest = []; foreach ($r as $k => $v) { if ($k === 'SourceFile') continue; $val = is_array($v) ? json_encode($v, JSON_UNESCAPED_UNICODE) : (string)$v; if (mb_strlen($val) > 140) $val = mb_substr($val, 0, 140) . '…'; [$g, $t] = array_pad(explode(':', $k, 2), 2, ''); if ($t === '') { $t = $g; $g = ''; } $row = '| ' . $g . ' | ' . $t . ' | ' . str_replace(['|', "\n"], ['/', ' '], $val) . " |\n"; if (preg_match('/^(GPS|.*Serial|OwnerName|Artist|Copyright|Creator|CameraOwner|By-line|Software|HostComputer|.*UniqueID|CameraID|LensID|InternalSerial|UserComment|XPAuthor|Make|Model)/i', $t)) $priv[] = $row; else $rest[] = $row; }
+        $o = "# All metadata of " . basename($in) . "\n\n" . count($priv) + count($rest) . " tags (exiftool " . trim(sh(escapeshellarg($ET) . ' -ver')) . ")\n\n## Privacy-sensitive (location, who, which camera)\n\n| Group | Tag | Value |\n|---|---|---|\n" . (implode('', $priv) ?: "| | (none) | |\n") . "\n## Everything else\n\n| Group | Tag | Value |\n|---|---|---|\n" . implode('', array_slice($rest, 0, 400)) . (count($rest) > 400 ? "\n… " . (count($rest) - 400) . " more.\n" : '');
+        file_put_contents($out, $o . "\n[exit code 0]\n"); echo "Wrote $out (" . (count($priv) + count($rest)) . " tags)\n"; exit(0); }
+    $ie = strtolower(pathinfo($in, PATHINFO_EXTENSION)); if (strtolower(pathinfo($out, PATHINFO_EXTENSION)) !== $ie && !(in_array($ie, ['jpg', 'jpeg'], true) && in_array(strtolower(pathinfo($out, PATHINFO_EXTENSION)), ['jpg', 'jpeg'], true))) fail('the output must have the input\'s extension (.' . $ie . '): the tags are written into a copy of the same kind of file'); if (file_exists($out)) @unlink($out);
+    $cmd = escapeshellarg($ET) . ' -o ' . escapeshellarg($out) . ' ';
+    if ($sub === 'shift') { $sh = trim($args[0] ?? ''); if (!preg_match('/^([+-])((?:\d+[dhms])+)$/', $sh, $m)) fail('give the shift as +2h, -30m, +1d or +1d2h30m (d, h, m, s)'); $u = ['d' => 0, 'h' => 0, 'm' => 0, 's' => 0]; preg_match_all('/(\d+)([dhms])/', $m[2], $mm, PREG_SET_ORDER); foreach ($mm as $x) $u[$x[2]] += (int)$x[1]; $cmd .= escapeshellarg('-AllDates' . $m[1] . '=0:0:' . $u['d'] . ' ' . $u['h'] . ':' . $u['m'] . ':' . $u['s']) . ' '; }
+    else { $map = ['artist' => 'Artist', 'copyright' => 'Copyright', 'title' => 'Title', 'description' => 'ImageDescription', 'creator' => 'Creator', 'rating' => 'Rating', 'datetimeoriginal' => 'DateTimeOriginal', 'keywords' => 'Keywords']; $n = 0;
+        foreach ($opt as $k => $v) { if (!isset($map[$k])) fail("not a tag I set: '$k' (" . implode(', ', array_keys($map)) . ')'); if ($v === '' || mb_strlen($v) > 500 || preg_match('/[\x00-\x08\x0B-\x1F<]/', $v)) fail("the value of $k is empty, over 500 characters, or has a control character or '<'"); if ($k === 'rating' && !preg_match('/^[0-5]$/', $v)) fail('rating is 0 to 5'); if ($k === 'datetimeoriginal' && !preg_match('/^\d{4}:\d\d:\d\d \d\d:\d\d:\d\d$/', $v)) fail('datetimeoriginal looks like "2026:01:05 14:30:02"');
+            if ($k === 'keywords') foreach (preg_split('/\s*,\s*/', $v) as $kw) { if ($kw !== '') $cmd .= escapeshellarg('-Keywords+=' . $kw) . ' '; } else $cmd .= escapeshellarg('-' . $map[$k] . '=' . $v) . ' '; $n++; }
+        if ($n === 0) fail('give at least one tag in the extra arguments, for example artist="A. Name" copyright="© 2026 A. Name"'); }
+    $o = sh($cmd . escapeshellarg($in), $rc); if ($rc !== 0 || !is_file($out)) fail('exiftool failed: ' . trim(substr($o, 0, 300))); echo "Wrote $out (a copy: the original is untouched). " . trim(substr($o, 0, 120)) . "\n"; exit(0);
+}
+$LIMIT = '-limit memory 512MiB -limit map 1GiB -limit disk 2GiB -limit time 120 -limit width 30000 -limit height 30000';
+
+/** the ImageMagick decoder prefix for a file, from its CONTENT; null if it is not a photo type we handle */
+function coder(string $f): ?string {
+    $h = (string)@file_get_contents($f, false, null, 0, 32); if ($h === '') return null;
+    if (strncmp($h, "\xFF\xD8\xFF", 3) === 0) return 'jpeg'; if (strncmp($h, "\x89PNG\r\n\x1a\n", 8) === 0) return 'png'; if (strncmp($h, 'GIF8', 4) === 0) return 'gif';
+    if (strncmp($h, 'RIFF', 4) === 0 && substr($h, 8, 4) === 'WEBP') return 'webp'; if (strncmp($h, "II*\0", 4) === 0 || strncmp($h, "MM\0*", 4) === 0) return 'tiff'; if (strncmp($h, 'BM', 2) === 0) return 'bmp';
+    if (substr($h, 4, 4) === 'ftyp' && preg_match('/hei[cx]|mif1|msf1/', substr($h, 8, 16))) return 'heic'; return null;
+}
+function photos(string $in): array {
+    if (is_file($in)) return [$in]; $res = [];
+    foreach (new DirectoryIterator($in) as $f) { if ($f->isDot() || !$f->isFile() || $f->isLink()) continue; if (!preg_match('/\.(jpe?g|png|gif|webp|tiff?|bmp|heic)$/i', $f->getFilename())) continue; $res[] = $f->getPathname(); }
+    sort($res, SORT_NATURAL | SORT_FLAG_CASE); return $res;
+}
+function gps_dec(array $c, string $ref): ?float { if (count($c) < 3) return null; $f = function ($x) { if (is_string($x) && strpos($x, '/') !== false) { [$a, $b] = explode('/', $x); return $b ? $a / $b : 0; } return (float)$x; }; $v = $f($c[0]) + $f($c[1]) / 60 + $f($c[2]) / 3600; return in_array($ref, ['S', 'W'], true) ? -$v : $v; }
+/** metadata of one photo (EXIF through PHP's exif extension: JPEG and TIFF) */
+function meta(string $f): array {
+    $r = ['w' => 0, 'h' => 0, 'bytes' => filesize($f), 'taken' => null, 'camera' => '', 'gps' => null, 'orient' => 1, 'coder' => coder($f)];
+    $s = @getimagesize($f); if ($s) { $r['w'] = $s[0]; $r['h'] = $s[1]; $r['bits'] = $s['bits'] ?? null; $r['channels'] = $s['channels'] ?? null; }
+    if (in_array($r['coder'], ['jpeg', 'tiff'], true) && function_exists('exif_read_data')) { $e = @exif_read_data($f, 'ANY_TAG', false); if (is_array($e)) {
+        $r['taken'] = $e['DateTimeOriginal'] ?? ($e['DateTime'] ?? null); $r['camera'] = trim(($e['Make'] ?? '') . ' ' . ($e['Model'] ?? '')); $r['orient'] = (int)($e['Orientation'] ?? 1);
+        if (!empty($e['GPSLatitude']) && !empty($e['GPSLongitude'])) { $la = gps_dec($e['GPSLatitude'], $e['GPSLatitudeRef'] ?? 'N'); $lo = gps_dec($e['GPSLongitude'], $e['GPSLongitudeRef'] ?? 'E'); if ($la !== null && $lo !== null) $r['gps'] = [$la, $lo]; } } }
+    return $r;
+}
+$list = photos($in); if (!$list) fail('no photos found (jpg, png, gif, webp, tiff, bmp, heic)'); if (count($list) > 400) { $list = array_slice($list, 0, 400); }
+$isDir = is_dir($in); $rel = fn($f) => basename($f); $mb = fn($b) => round($b / 1048576, 2);
+function expect_photo(string $f): string { $c = coder($f); if ($c === null) fail('not a photo type I handle (jpeg, png, gif, webp, tiff, bmp, heic), judged by its content: ' . basename($f)); return $c; }
+
+if ($sub === 'info') {
+    if (!$isDir) { $m = meta($list[0]); $o = "# Photo: " . basename($list[0]) . "\n\n- Type: " . strtoupper($m['coder'] ?? '?') . "; " . $m['w'] . ' x ' . $m['h'] . ' pixels (' . round($m['w'] * $m['h'] / 1e6, 1) . " MP); " . $mb($m['bytes']) . " MB\n- Taken: " . ($m['taken'] ?? 'not recorded') . "\n- Camera: " . ($m['camera'] ?: 'not recorded') . "\n- Orientation tag: " . $m['orient'] . ($m['orient'] > 1 ? ' (the picture is stored turned; viewers rotate it, some tools do not)' : '') . "\n- GPS: " . ($m['gps'] ? sprintf('%.5f, %.5f  (the exact place this was taken)', $m['gps'][0], $m['gps'][1]) : 'none') . "\n"; file_put_contents($out, $o . "\n[exit code 0]\n"); echo "Wrote $out\n"; exit(0); }
+    $o = "# Photos in " . basename(rtrim($in, '/')) . "\n\n" . count($list) . " photo(s).\n\n| Photo | Pixels | MB | Taken | Camera | GPS |\n|---|---|---|---|---|---|\n"; $tot = 0; $gps = 0;
+    foreach ($list as $f) { $m = meta($f); $tot += $m['bytes']; if ($m['gps']) $gps++; $o .= '| ' . basename($f) . ' | ' . $m['w'] . 'x' . $m['h'] . ' | ' . $mb($m['bytes']) . ' | ' . ($m['taken'] ?? '-') . ' | ' . ($m['camera'] ?: '-') . ' | ' . ($m['gps'] ? 'yes' : '-') . " |\n"; }
+    $o .= "\nTotal " . $mb($tot) . " MB; with a GPS location: $gps.\n"; file_put_contents($out, $o . "\n[exit code 0]\n"); echo "Wrote $out\n"; exit(0);
+}
+
+if ($sub === 'check') {
+    $msgs = []; $err = 0; $warn = 0; $add = function (string $k, string $f, string $m) use (&$msgs, &$err, &$warn) { $msgs[] = "$f(1) $k: $m"; if ($k === 'Error') $err++; elseif ($k === 'Warning') $warn++; }; $types = [];
+    foreach ($list as $f) { $b = basename($f); $m = meta($f); if ($m['coder'] === null) { $add('Error', $b, 'not a photo type I can read (judged by its content): the extension says ' . pathinfo($f, PATHINFO_EXTENSION)); continue; } $types[$m['coder']] = 1;
+        if ($m['gps']) $add('Warning', $b, sprintf('contains the GPS location %.4f, %.4f: anyone you send it to can see where it was taken (run Strip metadata or Web-ready copy)', $m['gps'][0], $m['gps'][1]));
+        if ($m['bytes'] > 8 * 1048576) $add('Warning', $b, 'a ' . $mb($m['bytes']) . ' MB file: too big for email or a web page (run Web-ready copy)');
+        if (max($m['w'], $m['h']) > 6000) $add('Note', $b, $m['w'] . 'x' . $m['h'] . ' pixels: more than a screen or a print needs');
+        if ($m['w'] > 0 && max($m['w'], $m['h']) < 640) $add('Note', $b, 'only ' . $m['w'] . 'x' . $m['h'] . ' pixels: small for anything but a thumbnail');
+        if ($m['orient'] > 1) $add('Warning', $b, 'the orientation tag is ' . $m['orient'] . ': the picture is stored turned, and a tool that ignores the tag shows it sideways (run Web-ready copy or Enhance, which apply it)');
+        if (($m['channels'] ?? 3) === 4 && $m['coder'] === 'jpeg') $add('Warning', $b, 'a CMYK JPEG: browsers and phones show the colours wrong (convert to sRGB)');
+        if ($m['coder'] === 'jpeg' && $m['taken'] === null) $add('Note', $b, 'no date taken: it will sort by file date'); }
+    if (count($types) > 1) $add('Note', basename($in), 'several formats in one folder (' . implode(', ', array_keys($types)) . ')');
+    $rep = "# Photo check: " . basename(rtrim($in, '/')) . "\n\n- Photos checked: " . count($list) . "\n\n" . ($msgs ? "## Problems ($err errors, $warn warnings)\n\n" . implode("\n", $msgs) . "\n" : "No problems found.\n") . "\n[exit code " . ($err > 0 ? 1 : 0) . "]\n";
+    file_put_contents($out, $rep); echo "Wrote $out ($err errors, $warn warnings)\n"; exit(0);
+}
+
+if (in_array($sub, ['strip', 'web', 'enhance'], true)) {
+    if ($isDir) fail("$sub works on one photo: give a file (use Batch for a folder)"); $c = expect_photo($in); $oe = strtolower(pathinfo($out, PATHINFO_EXTENSION));
+    if (!in_array($oe, ['jpg', 'jpeg', 'png', 'webp'], true)) fail('the output must be .jpg, .png or .webp');
+    $max = max(100, min(8000, (int)($opt['max'] ?? 1600))); $q = max(30, min(100, (int)($opt['quality'] ?? 82)));
+    $ops = ['strip' => '-auto-orient -strip', 'web' => "-auto-orient -strip -colorspace sRGB -resize {$max}x{$max}\\> -quality $q -interlace Plane", 'enhance' => '-auto-orient -auto-level -unsharp 0x0.75+0.75+0.008 -quality 92'][$sub];
+    $o = sh("convert $LIMIT " . escapeshellarg($c . ':' . $in) . '[0] ' . $ops . ' ' . escapeshellarg($out), $rc);
+    if ($rc !== 0 || !is_file($out)) fail('ImageMagick failed: ' . trim(substr($o, 0, 300)));
+    $a = meta($in); $b = meta($out); echo "Wrote $out: " . $a['w'] . 'x' . $a['h'] . ', ' . $mb($a['bytes']) . ' MB -> ' . $b['w'] . 'x' . $b['h'] . ', ' . $mb($b['bytes']) . ' MB' . ($sub !== 'enhance' ? '; metadata removed' : '') . "\n"; exit(0);
+}
+
+if ($sub === 'batch') {
+    if (!$isDir) fail('batch needs a folder'); if (!class_exists('ZipArchive')) fail('php zip is not installed'); if (strtolower(pathinfo($out, PATHINFO_EXTENSION)) !== 'zip') fail('the output must be a .zip');
+    $max = max(100, min(8000, (int)($opt['max'] ?? 1600))); $q = max(30, min(100, (int)($opt['quality'] ?? 82)));
+    $tmp = sys_get_temp_dir() . '/photo_b_' . getmypid() . '_' . mt_rand(1000, 9999); mkdir($tmp, 0700, true); $z = new ZipArchive(); @unlink($out); $z->open($out, ZipArchive::CREATE); $n = 0; $skip = 0; $names = []; $before = 0; $after = 0;
+    foreach ($list as $f) { $c = coder($f); if ($c === null) { $skip++; continue; } $base = preg_replace('/[^A-Za-z0-9._-]/', '_', pathinfo($f, PATHINFO_FILENAME)); $nm = $base . '.jpg'; $k = 2; while (isset($names[$nm])) $nm = $base . '_' . $k++ . '.jpg'; $names[$nm] = 1; $t = "$tmp/" . $nm;
+        sh("convert $LIMIT " . escapeshellarg($c . ':' . $f) . "[0] -auto-orient -strip -colorspace sRGB -resize {$max}x{$max}\\> -background white -alpha remove -quality $q " . escapeshellarg($t), $rc); if ($rc === 0 && is_file($t)) { $z->addFile($t, $nm); $n++; $before += filesize($f); $after += filesize($t); } else $skip++; }
+    $z->close(); foreach (glob("$tmp/*") ?: [] as $x) { }       // the zip has read them by now
+    register_shutdown_function(function () use ($tmp) { if (strpos(basename($tmp), 'photo_b_') === 0) { foreach (glob("$tmp/*") ?: [] as $x) @unlink($x); @rmdir($tmp); } });
+    if ($n === 0) { @unlink($out); fail('no photo could be processed'); } echo "Wrote $out: $n photo(s), " . $mb($before) . ' MB -> ' . $mb($after) . " MB (long side at most $max px, JPEG quality $q, metadata removed)" . ($skip ? ", $skip skipped" : '') . "\n"; exit(0);
+}
+
+if ($sub === 'sheet') {
+    if (!$isDir) fail('sheet needs a folder'); if (!have('montage')) fail('montage (ImageMagick) is not installed'); $list = array_slice($list, 0, 60); $tmp = sys_get_temp_dir() . '/photo_s_' . getmypid() . '_' . mt_rand(1000, 9999); mkdir($tmp, 0700, true); $files = []; $i = 0;
+    foreach ($list as $f) { $c = coder($f); if ($c === null) continue; $t = sprintf('%s/%03d_%s.png', $tmp, ++$i, preg_replace('/[^A-Za-z0-9._-]/', '_', pathinfo($f, PATHINFO_FILENAME))); sh("convert $LIMIT " . escapeshellarg($c . ':' . $f) . '[0] -auto-orient -thumbnail 220x220 ' . escapeshellarg($t), $rc); if (is_file($t)) $files[] = $t; }
+    if (!$files) fail('no photo could be read'); $o = sh('montage ' . implode(' ', array_map('escapeshellarg', $files)) . ' -tile 6x -geometry 220x220+8+8 -label "%t" -pointsize 11 -background "#f4f4f4" ' . escapeshellarg($out), $rc);
+    foreach ($files as $t) @unlink($t); @rmdir($tmp); if (!is_file($out)) fail('montage failed: ' . trim(substr($o, 0, 200))); echo "Wrote $out (" . count($files) . " photos)\n"; exit(0);
+}
+
+if ($sub === 'dupes') {
+    if (!$isDir) fail('dupes needs a folder'); $md5 = []; $hash = []; $meta = []; $ratio = []; $mean = [];
+    foreach ($list as $f) { $md5[md5_file($f)][] = $f; $c = coder($f); if ($c === null) continue; $t = sh("convert $LIMIT " . escapeshellarg($c . ':' . $f) . '[0] -auto-orient -resize 9x8! -colorspace Gray -depth 8 txt:-', $rc); if ($rc !== 0) continue; $v = []; foreach (explode("\n", $t) as $l) if (preg_match('/^(\d+),(\d+):\s*\((\d+)/', $l, $m)) $v[(int)$m[2]][(int)$m[1]] = (int)$m[3]; if (count($v) === 8) { $sum = 0; $cnt = 0; foreach ($v as $row) foreach ($row as $px) { $sum += $px; $cnt++; } $mean[$f] = $cnt ? $sum / $cnt : 0; $bits = ''; foreach ($v as $row) for ($x = 0; $x < 8; $x++) $bits .= ($row[$x] ?? 0) > ($row[$x + 1] ?? 0) ? '1' : '0'; $hash[$f] = $bits; $m2 = @getimagesize($f); $meta[$f] = $m2 ? $m2[0] * $m2[1] : 0; $o2 = ($m2 && function_exists('exif_read_data') && coder($f) === 'jpeg') ? (int)((@exif_read_data($f)['Orientation'] ?? 1)) : 1; $ratio[$f] = $m2 ? ($o2 >= 5 ? $m2[1] / max(1, $m2[0]) : $m2[0] / max(1, $m2[1])) : 1; } }
+    $o = "# Duplicates in " . basename(rtrim($in, '/')) . "\n\n" . count($list) . " photo(s) read.\n\n## Exact copies (same bytes)\n\n"; $ne = 0; $used = [];
+    foreach ($md5 as $fs) if (count($fs) > 1) { $ne++; $o .= '- ' . implode(' = ', array_map('basename', $fs)) . "\n"; foreach ($fs as $x) $used[$x] = 1; } if (!$ne) $o .= "None.\n";
+    $o .= "\n## Near-duplicates (the same picture, resized, re-saved or lightly edited)\n\n"; $fs = array_keys($hash); $seen = []; $ng = 0;
+    foreach ($fs as $i => $a) { if (isset($seen[$a])) continue; $grp = [$a]; foreach (array_slice($fs, $i + 1) as $b) { if (isset($seen[$b])) continue; $d = 0; for ($k = 0; $k < 64; $k++) if ($hash[$a][$k] !== $hash[$b][$k]) $d++; if ($d <= 5 && abs(($mean[$a] ?? 0) - ($mean[$b] ?? 0)) < 20 && abs($ratio[$a] - $ratio[$b]) < 0.03 * $ratio[$a] && md5_file($a) !== md5_file($b)) $grp[] = $b; } if (count($grp) > 1) { $ng++; foreach ($grp as $x) $seen[$x] = 1; usort($grp, fn($x, $y) => $meta[$y] <=> $meta[$x]); $o .= '- ' . implode(' ~ ', array_map(fn($x) => basename($x) . ' (' . ($meta[$x] ? round($meta[$x] / 1e6, 1) . ' MP' : '?') . ')', $grp)) . "  (largest first)\n"; } } if (!$ng) $o .= "None.\n";
+    $o .= "\nNothing was deleted or moved. Near-duplicates are found by a picture fingerprint: look at them before removing any.\n";
+    file_put_contents($out, $o . "\n[exit code 0]\n"); echo "Wrote $out ($ne exact groups, $ng near-duplicate groups)\n"; exit(0);
+}
+
+// plan
+if (!$isDir) fail('plan needs a folder'); $o = "# Rename plan by date taken\n\nNothing was renamed. Each line is: current name -> proposed name. Photos with no recorded date keep their name.\n\n"; $used = []; $n = 0;
+foreach ($list as $f) { $m = meta($f); $ext = strtolower(pathinfo($f, PATHINFO_EXTENSION)); if ($ext === 'jpeg') $ext = 'jpg'; if (!$m['taken'] || !preg_match('/^(\d{4}):(\d\d):(\d\d) (\d\d):(\d\d):(\d\d)/', $m['taken'], $d)) { $o .= basename($f) . " -> (no date taken: unchanged)\n"; continue; } $nm = "{$d[1]}-{$d[2]}-{$d[3]}_{$d[4]}-{$d[5]}-{$d[6]}"; $k = 2; $cand = "$nm.$ext"; while (isset($used[$cand])) $cand = "{$nm}_" . $k++ . ".$ext"; $used[$cand] = 1; $o .= basename($f) . " -> $cand\n"; $n++; }
+file_put_contents($out, $o . "\n[exit code 0]\n"); echo "Wrote $out ($n proposed)\n";

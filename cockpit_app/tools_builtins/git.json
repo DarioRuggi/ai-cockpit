@@ -1,0 +1,81 @@
+{
+  "id": "git",
+  "name": "Git",
+  "binary": "/usr/bin/git",
+  "version_args": "--version",
+  "description": "Git operations on a project working directory. The {INPUT} placeholder is the repository/working directory path (pass the project folder). Read-oriented presets are safe; commit/add modify the tree. Cockpit runs these in the given directory via -C.",
+  "presets": [
+    {
+      "id": "status",
+      "name": "Status",
+      "args_template": "-C {INPUT} status --short --branch",
+      "output_ext": ".txt",
+      "output_kind": "text",
+      "description": "Short status with branch info"
+    },
+    {
+      "id": "log",
+      "name": "Log (last 20)",
+      "args_template": "-C {INPUT} log --oneline --decorate -20",
+      "output_ext": ".txt",
+      "output_kind": "text",
+      "description": "Last 20 commits, one line each"
+    },
+    {
+      "id": "diff",
+      "name": "Diff (unstaged)",
+      "args_template": "-C {INPUT} diff",
+      "output_ext": ".diff",
+      "output_kind": "text",
+      "description": "Unstaged changes in the working tree"
+    },
+    {
+      "id": "diff-staged",
+      "name": "Diff (staged)",
+      "args_template": "-C {INPUT} diff --cached",
+      "output_ext": ".diff",
+      "output_kind": "text",
+      "description": "Staged changes ready to commit"
+    },
+    {
+      "id": "branch",
+      "name": "Branches",
+      "args_template": "-C {INPUT} branch -a -v",
+      "output_ext": ".txt",
+      "output_kind": "text",
+      "description": "List local and remote branches"
+    },
+    {
+      "id": "add-all",
+      "name": "Stage all changes",
+      "args_template": "-C {INPUT} add -A",
+      "output_ext": ".txt",
+      "output_kind": "text",
+      "description": "Stage every change (git add -A). Modifies the index."
+    },
+    {
+      "id": "commit",
+      "name": "Commit (message in args)",
+      "args_template": "-C {INPUT} commit -m {ARGS}",
+      "output_ext": ".txt",
+      "output_kind": "text",
+      "description": "Commit staged changes. Put the commit message in the args field (it is shell-escaped)."
+    },
+    {
+      "id": "last-commit-files",
+      "name": "Files in last commit",
+      "args_template": "-C {INPUT} show --stat --oneline HEAD",
+      "output_ext": ".txt",
+      "output_kind": "text",
+      "description": "What changed in the most recent commit"
+    }
+  ],
+  "packages": {
+    "apt": "git",
+    "dnf": "git",
+    "pacman": "git",
+    "zypper": "git",
+    "apk": "git",
+    "brew": "git"
+  }
+}

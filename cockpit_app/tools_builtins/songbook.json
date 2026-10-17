@@ -1,0 +1,94 @@
+{
+    "id": "songbook",
+    "name": "Songbook and practice",
+    "description": "Practice logs, set lists, chord charts and songbooks, from plain files. Practice reads a log CSV (date, piece, minutes): minutes per week and per piece, streaks and progress against a weekly goal. Set list adds up the song lengths against a slot and warns about big key jumps and the same tempo three songs in a row. Transpose moves a plain-text chord chart or ChordPro file by semitones or to a key, with sharps or flats to suit, and suggests a capo. Lyrics checks lyric sheets for unlabelled sections and missing verses, and against a set list. Index builds a contents page, an alphabetical index and an index by key in Markdown for Pandoc. Counting and text work; it does not hear music. For notation use the Music scores tool. The original is never changed.",
+    "binary": "php",
+    "version_args": "--version",
+    "website": "https://pandoc.org",
+    "packages": {
+        "apt": "php-cli php-mbstring pandoc",
+        "dnf": "php-cli php-mbstring pandoc",
+        "pacman": "php pandoc",
+        "zypper": "php8 php8-mbstring pandoc",
+        "brew": "php pandoc"
+    },
+    "presets": [
+        {
+            "id": "practice",
+            "label": "Practice log summary (CSV)",
+            "description": "Columns date, piece, minutes. Minutes per week (Monday to Sunday) and per piece, longest and current streak, and progress against a weekly goal (goal=150 in the extra arguments; today=YYYY-MM-DD to check as of another day).",
+            "input_kinds": [
+                "csv",
+                "file",
+                "spreadsheet",
+                "text"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_practice",
+            "command": "php {WEBROOT}/songbook_tool practice {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "setlist",
+            "label": "Set list builder check (CSV)",
+            "description": "Columns title, minutes (m:ss or minutes), key, tempo. Running time and total against the slot (slot=60, gap=30 seconds between songs in the extra arguments), key jumps of 3 or more steps round the circle of fifths, the same tempo three in a row.",
+            "input_kinds": [
+                "csv",
+                "file",
+                "spreadsheet",
+                "text"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_setlist",
+            "command": "php {WEBROOT}/songbook_tool setlist {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "transpose",
+            "label": "Transpose a chord chart",
+            "description": "Plain-text chords above lyrics (\"C G Am F\") or ChordPro [C] markers. Type +2, -3 or to=G (with from=C if the first chord is not the key); add flats or sharps to choose the spelling. Slash chords and suffixes are kept; a capo suggestion follows the chart.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "txt",
+            "output_stem": "{NAME}_transposed",
+            "command": "php {WEBROOT}/songbook_tool transpose {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "lyrics",
+            "label": "Lyric sheet check",
+            "description": "Songs start with \"# Title\"; sections are labelled [Verse 1], Chorus:, ## Bridge or ChordPro. Unlabelled blocks, missing verse numbers, and, with the path of a set list CSV in the extra arguments, songs missing from either side.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_lyrics",
+            "command": "php {WEBROOT}/songbook_tool lyrics {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "index",
+            "label": "Songbook contents and index (Markdown)",
+            "description": "Songs start with \"# Title\" and an optional \"Key: G\" line. Writes the contents, an alphabetical index (leading articles ignored) and an index by key, ready for Pandoc (pandoc FILE.md --toc). Type title=\"My songbook\" for the title.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_index",
+            "command": "php {WEBROOT}/songbook_tool index {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        }
+    ]
+}

@@ -1,0 +1,37 @@
+{
+  "id": "meeting-notes",
+  "name": "Meeting notes",
+  "icon": "groups",
+  "description": "A recording or transcript turned into minutes, decisions and action items.",
+  "detect": [],
+  "note": "This is a meeting-notes project: recordings and transcripts become minutes. The transcript is the source of truth: quote it, never invent what someone said, decided or promised, and give the time or line of everything you attribute to a person. Decisions, action items, deadlines and open questions are found by the Meeting notes tools by wording only, so check each against the transcript before it goes into the minutes; an action item needs an owner and, if one was said, a due date, and where the owner is unclear say so instead of guessing. Keep attendees as the speaker labels give them. The minutes are short: decisions first, then actions, then the discussion in a few lines per topic. Word documents are made with Markdown to DOCX.",
+  "verify": "meeting actions",
+  "group": "Writing & documents",
+  "details": "From a recording or transcript to minutes. The Whisper tool makes the transcript (Transcribe to SRT). The Meeting notes tool cleans it into readable timestamped paragraphs, finds decisions, action items (with the owner when the line names one), deadlines and questions by their wording in English, Hebrew and Spanish (more can be added) with where each was said, gives the statistics (length, pace, who spoke how much), and writes a minutes skeleton to fill in. These are reading aids that find candidates; the agent and you decide what was really decided. Pandoc makes the Word version.",
+  "examples": [
+    "Minutes and an action table from a recorded meeting",
+    "Find every decision and deadline in a transcript",
+    "Who spoke how much in the planning session",
+    "Turn the minutes into a Word document to send round"
+  ],
+  "tools": [
+    {
+      "tool": "meeting",
+      "why": "clean the transcript, find decisions, actions, deadlines and questions, statistics, a minutes skeleton"
+    },
+    {
+      "tool": "whisper",
+      "why": "transcribe the recording (Transcribe to SRT)"
+    },
+    {
+      "tool": "pandoc",
+      "why": "minutes to Word (Markdown to DOCX)"
+    }
+  ],
+  "starter": [
+    {
+      "path": "meetings/TEMPLATE.md",
+      "content": "# Meeting: title\n\nDate: \nAttendees: \n\n## Decisions\n- \n\n## Action items\n| Who | What | Due |\n|---|---|---|\n\n## Open questions\n- \n\n## Discussion\n"
+    }
+  ]
+}

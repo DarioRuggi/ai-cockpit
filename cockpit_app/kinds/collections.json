@@ -1,0 +1,25 @@
+{
+  "id": "collections",
+  "name": "Collections",
+  "icon": "category",
+  "description": "A catalogue of books, coins, stamps, cards, records or anything else: checked, compared with a want-list, valued for insurance.",
+  "detect": [],
+  "note": "This is a collections project: a catalogue kept as a CSV with the user's own columns (books, coins, stamps, trading cards, records, anything). Never invent an item, a year, a catalogue number, a grade or a value; a value is only what the user wrote, and where a figure is missing say so instead of looking one up or estimating it. Keep the original catalogue untouched and write corrected copies under new names. When a year, condition or category is ambiguous, ask, and say what you assumed. Run the Collection catalogue Check after every change and fix what it lists; a flagged duplicate may be two real copies (use a quantity column). The valuation sheet totals the user's own figures; it is a listing, not an appraisal or insurance, tax or legal advice.",
+  "verify": "collect check",
+  "group": "Home & life",
+  "details": "Keeping a collection in a plain CSV file. The Collection catalogue tool finds columns by name in English, French, German, Italian, Portuguese and Spanish (more can be added) and keeps any other columns of yours. It checks the catalogue (missing title, year, category, condition or number, impossible years, values that are not numbers, a condition spelled two ways, duplicates by normalised title and year or by catalogue number) with the line of each problem; compares it with a want-list CSV (what you have, what you miss, what you hold twice); summarises it by category, condition and decade; and writes an insurance valuation sheet that totals the values you supplied by category and condition. Values are never looked up or estimated.",
+  "examples": [
+    "Find the duplicates and gaps in my stamp catalogue",
+    "Which books on my want-list do I still miss?",
+    "A valuation sheet by category and condition for the insurer",
+    "How many records do I have from each decade?"
+  ],
+  "tools": [
+    {"tool": "collect", "why": "check the catalogue, compare with a want-list, summarise, total the values you wrote"},
+    {"tool": "data", "why": "ask the same CSV free-form questions in SQL"}
+  ],
+  "starter": [
+    {"path": "catalogue.csv", "content": "title,year,catalogue_number,category,condition,value,quantity\n"},
+    {"path": "wantlist.csv", "content": "title,year,catalogue_number\n"}
+  ]
+}

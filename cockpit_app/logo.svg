@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="512" height="512" aria-label="AI Cockpit logo">
+    <!-- Outer ring -->
+    <circle cx="50" cy="50" r="44" fill="none" stroke="#5b8fd4" stroke-width="2.5"/>
+    <!-- 12 ticks marking compass positions -->
+    <g stroke="#8a93a3" stroke-width="1.5" stroke-linecap="round">
+        <line x1="50" y1="6"  x2="50" y2="14"/>
+        <line x1="50" y1="86" x2="50" y2="94"/>
+        <line x1="6"  y1="50" x2="14" y2="50"/>
+        <line x1="86" y1="50" x2="94" y2="50"/>
+        <line x1="20" y1="20" x2="26" y2="26"/>
+        <line x1="74" y1="74" x2="80" y2="80"/>
+        <line x1="80" y1="20" x2="74" y2="26"/>
+        <line x1="26" y1="74" x2="20" y2="80"/>
+        <line x1="50" y1="14" x2="50" y2="20" opacity="0.6"/>
+        <line x1="50" y1="80" x2="50" y2="86" opacity="0.6"/>
+        <line x1="14" y1="50" x2="20" y2="50" opacity="0.6"/>
+        <line x1="80" y1="50" x2="86" y2="50" opacity="0.6"/>
+    </g>
+    <!-- 3 spokes from hub to agent-colored dots -->
+    <g stroke-width="2" fill="none">
+        <line x1="50" y1="50" x2="38" y2="32" stroke="#e0b84e"/>
+        <line x1="50" y1="50" x2="62" y2="32" stroke="#5b8fd4"/>
+        <line x1="50" y1="50" x2="50" y2="68" stroke="#d4873a"/>
+    </g>
+    <circle cx="38" cy="32" r="3.5" fill="#e0b84e"/>
+    <circle cx="62" cy="32" r="3.5" fill="#5b8fd4"/>
+    <circle cx="50" cy="68" r="3.5" fill="#d4873a"/>
+    <!-- Hub -->
+    <circle cx="50" cy="50" r="3" fill="#d8dde6"/>
+</svg>

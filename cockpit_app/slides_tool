@@ -1,0 +1,151 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// slides_tool — the Presentation tools' work, for the tool presets (tools_builtins/slides.json). A command-line program, never reachable over the web.
+//
+//   php slides_tool outline FILE OUTPUT       a markdown outline of a .pptx / .odp: per slide the title, the text, the speaker notes, the pictures
+//   php slides_tool check   FILE OUTPUT       lint: slides with no title or no content, too many words, tiny text, pictures without a description,
+//                                             missing speaker notes, many fonts, duplicate titles. file(slide) Warning: lines, then [exit code N]
+//   php slides_tool topdf   FILE OUTPUT       the deck as a PDF (LibreOffice, in a throw-away profile)
+//   php slides_tool convert FILE OUTPUT       the deck in the format of OUTPUT's extension (.pptx .odp .ppt), through LibreOffice; macros are NOT carried over
+//   php slides_tool sheet   FILE OUTPUT       one PNG with every slide as a thumbnail (a contact sheet): the deck at a glance
+//
+// The original is never changed. .ppt / .pps / .pptm / .odp / .potx are read through LibreOffice (converted to .pptx first).
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+require_once __DIR__ . '/lo_lib.php';
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "slides_tool: $m\n"); exit($rc); }
+[$sub, $in, $out] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? ''];
+if (!in_array($sub, ['outline', 'check', 'topdf', 'sheet', 'convert'], true) || $in === '' || $out === '') fail('usage: slides_tool outline|check|topdf|sheet|convert FILE OUTPUT', 2);
+if (!is_file($in)) fail("no such file: $in");
+$ext = strtolower(pathinfo($in, PATHINFO_EXTENSION));
+if (!in_array($ext, ['pptx', 'pptm', 'ppsx', 'potx', 'ppt', 'pps', 'pot', 'odp', 'otp', 'fodp', 'key'], true)) fail("not a presentation (.pptx .ppt .odp ...): $in");
+
+$tmps = [];
+register_shutdown_function(function () use (&$tmps) { foreach ($tmps as $d) { if (is_dir($d)) { foreach (glob("$d/*") ?: [] as $f) @unlink($f); @rmdir($d); } } });
+function scratch(): string { global $tmps; $d = sys_get_temp_dir() . '/lo_slides_' . getmypid() . '_' . mt_rand(1000, 9999); @mkdir($d, 0700, true); $tmps[] = $d; return $d; }
+
+// ---- conversion between deck formats ---
+if ($sub === 'convert') {
+    $oe = strtolower(pathinfo($out, PATHINFO_EXTENSION)); if (!in_array($oe, ['pptx', 'odp', 'ppt'], true)) fail("the output must be .pptx, .odp or .ppt, not .$oe");
+    if ($oe === $ext) { copy($in, $out); echo "Already .$oe: copied.\n"; exit(0); }
+    $had = false; if ($ext === 'pptm' || $ext === 'ppsx') { $zz = new ZipArchive(); if ($zz->open($in) === true) { for ($i = 0; $i < $zz->numFiles; $i++) if (preg_match('~vbaProject\.bin$~', $zz->getNameIndex($i))) $had = true; $zz->close(); } }
+    $e = lo_convert($in, $oe, $out, 600); if ($e) fail($e);
+    echo "Wrote $out" . ($had ? "\nWARNING: the deck had macros and $oe cannot keep them: they are NOT in the result." : '') . "\n"; exit(0);
+}
+
+// ---- PDF and contact sheet -------------------------------------------------------------------------------------------------------------------
+if ($sub === 'topdf' || $sub === 'sheet') {
+    $pdf = $sub === 'topdf' ? $out : (($d = scratch()) . '/deck.pdf');
+    $e = lo_convert($in, 'pdf', $pdf, 600); if ($e) fail($e);
+    if ($sub === 'topdf') { echo "Wrote $out\n"; exit(0); }
+    if (!trim((string)shell_exec('command -v pdftoppm 2>/dev/null')) || !trim((string)shell_exec('command -v montage 2>/dev/null'))) fail('pdftoppm (poppler-utils) and montage (imagemagick) are needed for the contact sheet');
+    $d = dirname($pdf); exec('pdftoppm -r 40 -png ' . escapeshellarg($pdf) . ' ' . escapeshellarg("$d/s") . ' 2>&1', $o, $rc);
+    $imgs = glob("$d/s-*.png") ?: []; sort($imgs, SORT_NATURAL);
+    if (!$imgs) fail('no slides could be drawn');
+    $cols = min(4, max(1, count($imgs)));
+    exec('montage ' . implode(' ', array_map('escapeshellarg', $imgs)) . ' -tile ' . $cols . 'x -geometry +6+6 -background "#888888" ' . escapeshellarg($out) . ' 2>&1', $o2, $rc2);
+    if ($rc2 !== 0 || !is_file($out)) fail('montage failed: ' . trim(implode(' ', array_slice($o2, -2))));
+    echo "Wrote $out (" . count($imgs) . " slides)\n"; exit(0);
+}
+
+// ---- reading a deck: [title, texts[], notes, pictures[[name, alt]], fonts, minSize, words] per slide ---------------------------------------------------------
+$src = $in;
+if (!in_array($ext, ['pptx', 'pptm', 'ppsx', 'potx', 'odp'], true)) {       // an older or foreign format: LibreOffice makes a .pptx first
+    $src = scratch() . '/deck.pptx'; $e = lo_convert($in, 'pptx', $src, 600); if ($e) fail($e);
+    $ext = 'pptx';
+}
+$z = new ZipArchive(); if ($z->open($src) !== true) fail('not a readable presentation (a damaged or password-protected file?)');
+$slides = []; $meta = ['macros' => false, 'fonts' => [], 'size' => '', 'format' => $ext];
+function dom(string $xml): ?DOMDocument { $d = new DOMDocument(); return @$d->loadXML($xml, LIBXML_NONET | LIBXML_NOERROR | LIBXML_NOWARNING) ? $d : null; }
+
+if ($ext === 'odp') {
+    $d = dom((string)$z->getFromName('content.xml')); if (!$d) fail('content.xml is missing or damaged');
+    $x = new DOMXPath($d); foreach (['office' => 'urn:oasis:names:tc:opendocument:xmlns:office:1.0', 'draw' => 'urn:oasis:names:tc:opendocument:xmlns:drawing:1.0', 'text' => 'urn:oasis:names:tc:opendocument:xmlns:text:1.0', 'presentation' => 'urn:oasis:names:tc:opendocument:xmlns:presentation:1.0', 'svg' => 'urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0'] as $p => $u) $x->registerNamespace($p, $u);
+    foreach ($x->query('//draw:page') as $pg) {
+        $s = ['title' => '', 'texts' => [], 'notes' => '', 'pics' => [], 'minSize' => null];
+        foreach ($x->query('.//draw:frame', $pg) as $fr) {
+            $cls = $x->query('.//draw:text-box', $fr)->length ? 'text' : '';
+            $lay = $fr->getAttributeNS('urn:oasis:names:tc:opendocument:xmlns:presentation:1.0', 'class');
+            if ($x->query('.//draw:image', $fr)->length) { $alt = ''; foreach ($x->query('./svg:desc', $fr) as $n) $alt = trim($n->textContent); $s['pics'][] = [$fr->getAttribute('draw:name') ?: 'picture', $alt]; continue; }
+            $t = []; foreach ($x->query('.//text:p', $fr) as $p) { $line = trim($p->textContent); if ($line !== '') $t[] = $line; }
+            if ($lay === 'title') $s['title'] = implode(' ', $t); elseif ($t) $s['texts'] = array_merge($s['texts'], $t);
+        }
+        foreach ($x->query('.//presentation:notes//text:p', $pg) as $p) $s['notes'] .= trim($p->textContent) . ' ';
+        $slides[] = $s;
+    }
+    if ($z->locateName('Basic/script-lc.xml') !== false) $meta['macros'] = true;
+} else {
+    $pres = dom((string)$z->getFromName('ppt/presentation.xml')); if (!$pres) fail('ppt/presentation.xml is missing: not a .pptx');
+    $px = new DOMXPath($pres); $px->registerNamespace('p', 'http://schemas.openxmlformats.org/presentationml/2006/main'); $px->registerNamespace('r', 'http://schemas.openxmlformats.org/officeDocument/2006/relationships');
+    $sz = $px->query('//p:sldSz')->item(0); if ($sz) { $w = (int)$sz->getAttribute('cx'); $h = (int)$sz->getAttribute('cy'); $meta['size'] = $h ? round($w / $h, 2) . ':1 (' . round($w / 914400, 1) . ' x ' . round($h / 914400, 1) . ' in)' : ''; }
+    $rels = dom((string)$z->getFromName('ppt/_rels/presentation.xml.rels')); $map = [];
+    if ($rels) foreach ($rels->getElementsByTagName('Relationship') as $r) $map[$r->getAttribute('Id')] = $r->getAttribute('Target');
+    $order = []; foreach ($px->query('//p:sldIdLst/p:sldId') as $id) { $rid = $id->getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id'); if (isset($map[$rid])) $order[] = 'ppt/' . ltrim($map[$rid], '/'); }
+    if (!$order) for ($i = 1; $z->locateName("ppt/slides/slide$i.xml") !== false; $i++) $order[] = "ppt/slides/slide$i.xml";
+    for ($i = 0; $i < $z->numFiles; $i++) if (preg_match('~vbaProject\.bin$~', $z->getNameIndex($i))) $meta['macros'] = true;
+    foreach ($order as $path) {
+        $d = dom((string)$z->getFromName($path)); if (!$d) { $slides[] = ['title' => '', 'texts' => [], 'notes' => '', 'pics' => [], 'minSize' => null, 'bad' => true]; continue; }
+        $x = new DOMXPath($d); $x->registerNamespace('p', 'http://schemas.openxmlformats.org/presentationml/2006/main'); $x->registerNamespace('a', 'http://schemas.openxmlformats.org/drawingml/2006/main');
+        $s = ['title' => '', 'texts' => [], 'notes' => '', 'pics' => [], 'minSize' => null];
+        foreach ($x->query('//p:sp') as $sp) {
+            $ph = $x->query('.//p:nvPr/p:ph', $sp)->item(0); $type = $ph ? ($ph->getAttribute('type') ?: 'body') : '';
+            $paras = []; foreach ($x->query('.//a:p', $sp) as $p) { $t = ''; foreach ($x->query('.//a:t', $p) as $tn) $t .= $tn->textContent; if (trim($t) !== '') $paras[] = trim($t); }
+            if ($type === 'title' || $type === 'ctrTitle') $s['title'] = implode(' ', $paras); elseif ($type === 'sldNum' || $type === 'dt' || $type === 'ftr') continue; elseif ($paras) $s['texts'] = array_merge($s['texts'], $paras);
+        }
+        foreach ($x->query('//a:rPr[@sz]') as $rp) { $v = (int)$rp->getAttribute('sz'); if ($v > 0 && ($s['minSize'] === null || $v < $s['minSize'])) $s['minSize'] = $v; }
+        foreach ($x->query('//a:latin[@typeface]|//a:ea[@typeface]|//a:cs[@typeface]') as $f) { $tf = $f->getAttribute('typeface'); if ($tf !== '' && $tf[0] !== '+') $meta['fonts'][$tf] = true; }
+        foreach ($x->query('//p:pic') as $pic) { $c = $x->query('.//p:cNvPr', $pic)->item(0); $s['pics'][] = [$c ? $c->getAttribute('name') : 'picture', $c ? trim($c->getAttribute('descr')) : '']; }
+        $relPath = dirname($path) . '/_rels/' . basename($path) . '.rels'; $rd = dom((string)$z->getFromName($relPath));
+        if ($rd) foreach ($rd->getElementsByTagName('Relationship') as $r) if (substr($r->getAttribute('Type'), -11) === '/notesSlide') {
+            $np = 'ppt/' . ltrim(str_replace('../', '', $r->getAttribute('Target')), '/'); $nd = dom((string)$z->getFromName($np));
+            if ($nd) { $nx = new DOMXPath($nd); $nx->registerNamespace('a', 'http://schemas.openxmlformats.org/drawingml/2006/main'); $nx->registerNamespace('p', 'http://schemas.openxmlformats.org/presentationml/2006/main');
+                foreach ($nx->query('//p:sp[.//p:ph[@type="body"]]//a:p') as $p) { $t = ''; foreach ($nx->query('.//a:t', $p) as $tn) $t .= $tn->textContent; $s['notes'] .= trim($t) . ' '; } }
+        }
+        $slides[] = $s;
+    }
+}
+$z->close();
+$name = basename($in); $nS = count($slides);
+/** a description that says nothing: empty, a file name (pandoc and PowerPoint fill it in), or a generic "Picture 3" */
+$noAlt = fn(string $a) => trim($a) === '' || preg_match('/\.(png|jpe?g|gif|svg|bmp|tiff?|webp|emf|wmf)$/i', trim($a)) || preg_match('/^(picture|image|graphic|figure|photo)\s*\d*$/i', trim($a));
+$words = function (array $s): int { $t = $s['title'] . ' ' . implode(' ', $s['texts']); return preg_match_all('/[\p{L}\p{N}][\p{L}\p{N}\'’-]*/u', $t); };
+
+if ($sub === 'outline') {
+    $o = "# Outline: $name\n\n" . "$nS slide(s)" . ($meta['size'] ? ", $meta[size]" : '') . ($meta['macros'] ? ', **contains macros**' : '') . "\n\n";
+    foreach ($slides as $i => $s) {
+        $o .= '## ' . ($i + 1) . '. ' . ($s['title'] !== '' ? $s['title'] : '(no title)') . "\n\n";
+        foreach ($s['texts'] as $t) $o .= '- ' . $t . "\n";
+        foreach ($s['pics'] as [$n, $alt]) $o .= '- [picture ' . $n . (!$noAlt($alt) ? ': ' . $alt : ', no description') . "]\n";
+        if (trim($s['notes']) !== '') $o .= "\n> Notes: " . trim($s['notes']) . "\n";
+        $o .= "\n";
+    }
+    file_put_contents($out, $o); echo "Wrote $out ($nS slides)\n"; exit(0);
+}
+
+// ---- check -------------------------------------------------------------------------------------------------------------------------------------
+$err = 0; $warn = 0; $msgs = []; $titles = [];
+$add = function (string $kind, int $n, string $m) use (&$msgs, &$err, &$warn, $name) { $msgs[] = "$name($n) $kind: $m"; if ($kind === 'Error') $err++; elseif ($kind === 'Warning') $warn++; };
+$maxWords = 50; $maxPara = 25; $minPt = 14; $noNotes = 0;
+if ($nS === 0) $add('Error', 1, 'the file has no slides');
+foreach ($slides as $i => $s) {
+    $n = $i + 1;
+    if (!empty($s['bad'])) { $add('Error', $n, 'the slide could not be read (damaged XML)'); continue; }
+    $w = $words($s); $isTitleSlide = $i === 0 && count($s['texts']) <= 2;
+    if ($s['title'] === '') $add($i === 0 || count($s['texts']) + count($s['pics']) === 0 ? 'Error' : 'Warning', $n, 'the slide has no title (a screen reader and the outline need one)');
+    if ($w === 0 && !$s['pics']) $add('Error', $n, 'the slide is empty');
+    if ($w > $maxWords && !$isTitleSlide) $add('Warning', $n, "$w words on one slide (more than $maxWords is a wall of text: split it)");
+    foreach ($s['texts'] as $t) { $pw = preg_match_all('/\S+/u', $t); if ($pw > $maxPara) { $add('Warning', $n, "a paragraph of $pw words (a slide line should be a short phrase)"); break; } }
+    if ($s['minSize'] !== null && $s['minSize'] < $minPt * 100) $add('Warning', $n, 'text as small as ' . ($s['minSize'] / 100) . " pt (under $minPt pt cannot be read from the back of a room)");
+    foreach ($s['pics'] as [$pn, $alt]) if ($noAlt($alt)) $add('Warning', $n, "picture '$pn' has no description (alt text)");
+    if (trim($s['notes']) === '') $noNotes++;
+    $tk = mb_strtolower(trim($s['title'])); if ($tk !== '') { if (isset($titles[$tk])) $add('Note', $n, "the title '" . $s['title'] . "' repeats slide " . $titles[$tk]); else $titles[$tk] = $n; }
+}
+if ($nS > 0 && $noNotes === $nS) $add('Note', 1, 'no slide has speaker notes');
+elseif ($noNotes > 0) $add('Note', 1, "$noNotes of $nS slides have no speaker notes");
+if (count($meta['fonts']) > 3) $add('Warning', 1, count($meta['fonts']) . ' different fonts are named in the slides (' . implode(', ', array_slice(array_keys($meta['fonts']), 0, 6)) . '): use at most 3');
+if ($meta['macros']) $add('Note', 1, 'the file contains macros (they are not read or run here)');
+$tw = array_sum(array_map($words, $slides));
+$report = "# Presentation check: $name\n\n- Slides: $nS" . ($meta['size'] ? "; shape $meta[size]" : '') . "\n- Words in total: $tw" . ($nS ? '; average ' . round($tw / $nS) . ' a slide' : '') . "\n- Pictures: " . array_sum(array_map(fn($s) => count($s['pics']), $slides)) . "; with speaker notes: " . ($nS - $noNotes) . "\n- Limits used: $maxWords words a slide, $maxPara words a line, $minPt pt text\n\n";
+$report .= ($msgs ? "## Problems ($err errors, $warn warnings)\n\n" . implode("\n", $msgs) . "\n" : "No problems found.\n") . "\n[exit code " . ($err > 0 ? 1 : 0) . "]\n";
+file_put_contents($out, $report); echo "Wrote $out ($err errors, $warn warnings)\n"; exit(0);

@@ -1,0 +1,23 @@
+{
+  "id": "web-site",
+  "name": "Web Site",
+  "icon": "language",
+  "description": "A web site or page: structure, content, styling, publishing.",
+  "detect": [],
+  "note": "This is a web site project. Keep the content, styling and scripts in separate files, prefer plain HTML, CSS and a little JavaScript unless a framework is already in use, and check the result at phone and desktop widths.",
+  "verify": "open the page; the Web site check",
+  "group": "Software & games",
+  "details": "A web site or page. The agent keeps content, styling and scripts in separate files, prefers plain HTML, CSS and a little JavaScript unless you ask for a framework, and checks that the page opens and the links work. The Web site tools preview the folder in your browser (only this computer can open it), check every page and style sheet (markup, missing title or alt text, duplicate ids, broken links, images and #anchors, file names that would break on Linux) with file and line and a Fix with agent button, list the pages, and pack the site as a zip.",
+  "examples": [
+    "A one-page portfolio in plain HTML and CSS",
+    "A multi-page documentation site",
+    "Fix broken links and missing alt text",
+    "A landing page with a contact form in PHP"
+  ],
+  "tools": [
+    {
+      "tool": "website",
+      "why": "preview the site, check it for broken links and mistakes, list its pages, pack it"
+    }
+  ]
+}

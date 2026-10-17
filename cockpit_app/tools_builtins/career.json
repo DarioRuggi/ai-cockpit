@@ -1,0 +1,78 @@
+{
+    "id": "career",
+    "name": "Job search and CV",
+    "description": "Check a CV, compare it with a job ad, track applications and prepare for interviews, from plain files. CV looks for date gaps and overlaps in the experience list (dates like Mar 2019 - Jun 2022, 03/2019, 2019-03, in several languages), mixed date formats, length, weak or passive phrasing and missing contact details. Match lists the job ad's key words that are and are not in the CV; it never adds anything: a missing word is only a prompt to ask whether you really have that skill. Tracker reads an applications CSV (company, role, applied, status, follow-up): follow-ups due, status counts and the response rate. Questions builds an interview-practice question bank from the ad's requirements, with empty fields for true examples. Reading and counting aids, not career advice. The original is never changed.",
+    "binary": "php",
+    "version_args": "--version",
+    "website": "https://pandoc.org",
+    "packages": {
+        "apt": "php-cli php-mbstring pandoc",
+        "dnf": "php-cli php-mbstring pandoc",
+        "pacman": "php pandoc",
+        "zypper": "php8 php8-mbstring pandoc",
+        "brew": "php pandoc"
+    },
+    "presets": [
+        {
+            "id": "cv",
+            "label": "Check a CV",
+            "description": "Date gaps over 3 months, overlaps, mixed date formats, length, weak phrases (\"responsible for\", \"worked on\" and equivalents in several languages), passive phrasing, missing e-mail or phone. Problems come back as file(line), with Fix with agent.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_cvcheck",
+            "command": "php {WEBROOT}/career_tool cv {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "match",
+            "label": "CV against a job ad",
+            "description": "Type the path of the job ad (a text file) in the extra arguments. Lists the ad's most frequent meaningful words that are found and not found in the CV. Never adds a skill: only add what you really have.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_match",
+            "command": "php {WEBROOT}/career_tool match {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "tracker",
+            "label": "Application tracker (CSV)",
+            "description": "Follow-ups due (a follow-up date that has come, or 10 days after applying with no reply), status counts and response rate. Type today=YYYY-MM-DD to check as of another day.",
+            "input_kinds": [
+                "csv",
+                "file",
+                "spreadsheet",
+                "text"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_tracker",
+            "command": "php {WEBROOT}/career_tool tracker {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "questions",
+            "label": "Interview question bank from the ad",
+            "description": "Bullet requirements of the job ad (or its Requirements section) become practice questions with empty answer fields, plus the standard questions. Use true examples only.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_questions",
+            "command": "php {WEBROOT}/career_tool questions {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        }
+    ]
+}

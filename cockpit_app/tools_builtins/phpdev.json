@@ -1,0 +1,90 @@
+{
+    "id": "phpdev",
+    "name": "PHP projects",
+    "description": "Check a PHP project by reading it (nothing is run or included). Syntax check runs php -l on every file and gives each error as file(line); Security scan lists risky patterns: command and code execution with request data, SQL built from request data, unescaped output, include of request data, unserialize, removed functions (mysql_*), disabled TLS checks, weak hashes and randoms, hard-coded secrets; Guard check lists the scripts that read a request but do not include your auth file (the kind of endpoint that answers with no login check); Outline lists classes, functions and methods with their line; Minimum PHP version finds the oldest PHP the code needs from its features (match, enum, readonly, ?->, union types). The scan is by patterns: it lists candidates, with false alarms, and a person decides. vendor/, node_modules/ and .git/ are skipped.",
+    "binary": "php",
+    "version_args": "--version",
+    "website": "https://www.php.net",
+    "packages": {
+        "apt": "php-cli",
+        "dnf": "php-cli",
+        "pacman": "php",
+        "zypper": "php8",
+        "brew": "php"
+    },
+    "presets": [
+        {
+            "id": "lint",
+            "label": "Syntax check (php -l on every file)",
+            "description": "Every .php, .phtml and .inc file in the folder (or the one file) is checked with this machine's PHP. Errors come back as file(line), with Fix with agent.",
+            "input_kinds": [
+                "folder",
+                "code",
+                "file"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_lint",
+            "command": "php {WEBROOT}/php_tool lint {INPUT} {OUTPUT}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "scan",
+            "label": "Security scan (risky patterns)",
+            "description": "Candidates found by reading the code: command execution, eval, SQL built from request data, include of request data, unserialize, unescaped output, redirects to request values, file access with request data, TLS checks off, weak hashes and randoms, hard-coded secrets, removed functions. By patterns: some are false alarms.",
+            "input_kinds": [
+                "folder",
+                "code",
+                "file"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_scan",
+            "command": "php {WEBROOT}/php_tool scan {INPUT} {OUTPUT}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "guard",
+            "label": "Guard check: scripts with no login check",
+            "description": "Lists the PHP scripts that read a request (GET, POST, cookies, uploads) and do not include the auth file. Type the auth file name in the extra arguments if it is not auth.php: auth=login_check.php. A script may guard itself some other way, so each one listed needs a look.",
+            "input_kinds": [
+                "folder"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_guard",
+            "command": "php {WEBROOT}/php_tool guard {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "outline",
+            "label": "Outline: classes, functions, methods",
+            "description": "Every class, interface, trait, enum, function and method with its file and line.",
+            "input_kinds": [
+                "folder",
+                "code",
+                "file"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_outline",
+            "command": "php {WEBROOT}/php_tool outline {INPUT} {OUTPUT}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "version",
+            "label": "Minimum PHP version the code needs",
+            "description": "From the language features used (match, enum, readonly, ?->, attributes, union types, fn, ??=, strict_types ...) and a few functions that exist only in newer PHP (str_contains, array_is_list ...). Useful before moving to a host with an older PHP.",
+            "input_kinds": [
+                "folder",
+                "code",
+                "file"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_version",
+            "command": "php {WEBROOT}/php_tool version {INPUT} {OUTPUT}",
+            "timeout_seconds": 600
+        }
+    ]
+}

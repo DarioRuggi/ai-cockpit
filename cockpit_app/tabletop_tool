@@ -1,0 +1,112 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// tabletop_tool — the Tabletop games tools' work, for the tool presets (tools_builtins/tabletop.json). A command-line program, never reachable over the web.
+//
+//   php tabletop_tool roll       EXPRESSIONS OUTPUT [seed=N times=N]       roll dice expressions, one per line (2d6+3, 4d6kh3, 2d20kl1, d100, 3d8dl1+1d4-2); a seed makes the rolls repeatable
+//   php tabletop_tool odds       EXPRESSIONS OUTPUT [target=N]             exact probability table (min, max, mean, each total, and "at least"); sampled and labelled when too many combinations
+//   php tabletop_tool initiative COMBATANTS OUTPUT [seed=N die=20]         a CSV (name, bonus, hp, ac, team, count) becomes an initiative order and a tracker table; count>1 makes numbered copies
+//   php tabletop_tool sheet      SHEET OUTPUT [require=a,b abilities=str,dex budget=27 costs=8:0,9:1,... min=3 max=18]   check a "Field: value" character sheet: required fields, ability ranges, YOUR point-buy table and budget
+//   php tabletop_tool notes      NOTES OUTPUT [with=ENTITIES.csv]          index of NPCs, locations and anything else by mention: where, how often, never mentioned. NOTES is a file or a folder of .md/.txt
+//
+// Dice: NdM, d20 means 1d20, kh/kl keep the highest/lowest, dh/dl drop the highest/lowest, +/- numbers and several terms. At most 1000 dice of at most 1,000,000 sides. A seed gives the same rolls every time
+// (the seed is always printed). Point-buy and required fields are whatever YOU pass: no game system's rules are built in. ENTITIES.csv: name, type (npc, location, item ...), aliases separated by |.
+// The originals are never changed. Rolling is fair pseudo-random chance, not a prediction.
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "tabletop_tool: $m\n"); exit($rc); }
+[$sub, $in, $out] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? ''];
+$args = array_slice($argv, 4);
+if (!in_array($sub, ['roll', 'odds', 'initiative', 'sheet', 'notes'], true) || $in === '' || $out === '') fail('usage: tabletop_tool roll|odds|initiative|sheet|notes INPUT OUTPUT [key=value ...]', 2);
+$opt = []; foreach ($args as $a) foreach (preg_split('/\s+(?=\w+=)/', trim($a)) as $p) if (strpos($p, '=') !== false) { [$k, $v] = explode('=', $p, 2); $opt[strtolower(trim($k))] = trim($v); }
+if (!file_exists($in)) fail("no such file: $in"); $name = basename($in);
+function ascii(string $s): string { $s = mb_strtolower(trim($s)); $t = function_exists('iconv') ? @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $s) : false; $s = ($t !== false && $t !== '') ? $t : $s; return trim(preg_replace('/[^a-z0-9]+/', ' ', $s)); }
+function readtext(string $f): string { $t = (string)file_get_contents($f); if (strncmp($t, "\xEF\xBB\xBF", 3) === 0) $t = substr($t, 3); if (!mb_check_encoding($t, 'UTF-8')) $t = mb_convert_encoding($t, 'UTF-8', 'CP1252'); return str_replace(["\r\n", "\r"], "\n", $t); }
+function seeded(array $opt): int { $s = isset($opt['seed']) && preg_match('/^-?\d+$/', $opt['seed']) ? (int)$opt['seed'] : random_int(1, 999999); mt_srand($s); return $s; }
+
+// ---- dice ---------------------------------------------------------------------------------------------------------------------------------------
+/** a parsed expression: list of terms [sign, n, m, mode|null, k] or [sign, const] */
+function parse_dice(string $e): array {
+    $e = strtolower(preg_replace('/\s+/', '', $e)); if ($e === '') throw new Exception('empty expression'); if (!preg_match('/^[+-]?[0-9d+\-khl]+$/', $e)) throw new Exception("\"$e\" has characters that are not dice notation");
+    preg_match_all('/([+-]?)(\d*)d(\d+)(?:(kh|kl|dh|dl|k)(\d+))?|([+-]?)(\d+)/', $e, $m, PREG_SET_ORDER); $re = ''; $terms = [];
+    foreach ($m as $x) { $re .= $x[0]; if (isset($x[7]) && $x[7] !== '' && ($x[2] ?? '') === '' && ($x[3] ?? '') === '') { $terms[] = [($x[6] === '-') ? -1 : 1, (int)$x[7]]; continue; }
+        $sign = $x[1] === '-' ? -1 : 1; $n = $x[2] === '' ? 1 : (int)$x[2]; $s = (int)$x[3]; $mode = ($x[4] ?? '') === '' ? null : ($x[4] === 'k' ? 'kh' : $x[4]); $k = ($x[5] ?? '') === '' ? 0 : (int)$x[5];
+        if ($n < 1 || $n > 1000) throw new Exception("number of dice must be 1-1000 in \"{$x[0]}\""); if ($s < 2 || $s > 1000000) throw new Exception("sides must be 2-1000000 in \"{$x[0]}\""); if ($mode !== null && ($k < 1 || $k >= $n + ($mode[0] === 'k' ? 1 : 0) || ($mode[0] === 'd' && $k >= $n))) throw new Exception("cannot " . ($mode[0] === 'k' ? 'keep' : 'drop') . " $k of $n dice in \"{$x[0]}\"");
+        $terms[] = [$sign, $n, $s, $mode, $k]; }
+    if ($re !== $e || !$terms) throw new Exception("could not read \"$e\" as dice notation (examples: 2d6+3, 4d6kh3, 2d20kl1, d100)");
+    return $terms; }
+function roll_term(array $t): array { if (count($t) === 2) return [$t[0] * $t[1], [], [], (string)($t[0] * $t[1])]; [$sg, $n, $s, $mode, $k] = $t; $d = []; for ($i = 0; $i < $n; $i++) $d[] = mt_rand(1, $s); $kept = $d;
+    if ($mode !== null) { $o = $d; sort($o); $kept = match ($mode) { 'kh' => array_slice($o, $n - $k), 'kl' => array_slice($o, 0, $k), 'dh' => array_slice($o, 0, $n - $k), 'dl' => array_slice($o, $k) }; }
+    $sum = array_sum($kept) * $sg; $txt = ($sg < 0 ? '-' : '') . $n . 'd' . $s . ($mode ? $mode . $k : ''); return [$sum, $d, $kept, $txt]; }
+function term_dist(array $t, int &$sampled, int $seed): array { if (count($t) === 2) return [$t[0] * $t[1] => 1.0]; [$sg, $n, $s, $mode, $k] = $t; $dist = [];
+    if ($mode === null) { $cur = [0 => 1.0]; for ($i = 0; $i < $n; $i++) { $nx = []; foreach ($cur as $v => $p) for ($f = 1; $f <= $s; $f++) $nx[$v + $f] = ($nx[$v + $f] ?? 0) + $p / $s; $cur = $nx; if (count($cur) > 200000) throw new Exception('too many outcomes for an exact table'); } $dist = $cur; }
+    elseif (pow($s, $n) <= 2000000) { $idx = array_fill(0, $n, 1); $total = pow($s, $n); $cnt = [];
+        for ($c = 0; $c < $total; $c++) { $o = $idx; sort($o); $kept = match ($mode) { 'kh' => array_slice($o, $n - $k), 'kl' => array_slice($o, 0, $k), 'dh' => array_slice($o, 0, $n - $k), 'dl' => array_slice($o, $k) }; $v = array_sum($kept); $cnt[$v] = ($cnt[$v] ?? 0) + 1;
+            for ($j = 0; $j < $n; $j++) { if (++$idx[$j] <= $s) break; $idx[$j] = 1; } } foreach ($cnt as $v => $c) $dist[$v] = $c / $total; }
+    else { $sampled = 200000; mt_srand($seed); $cnt = []; for ($i = 0; $i < 200000; $i++) { [$v] = roll_term([1, $n, $s, $mode, $k]); $cnt[$v] = ($cnt[$v] ?? 0) + 1; } foreach ($cnt as $v => $c) $dist[$v] = $c / 200000; }
+    if ($sg < 0) { $nd = []; foreach ($dist as $v => $p) $nd[-$v] = $p; $dist = $nd; } ksort($dist); return $dist; }
+
+if ($sub === 'roll' || $sub === 'odds') {
+    $lines = array_values(array_filter(array_map('trim', explode("\n", readtext($in))), fn($l) => $l !== '' && $l[0] !== '#')); if (!$lines) fail("$name has no dice expressions"); if (count($lines) > 200) fail('at most 200 expressions per file');
+    $seed = seeded($opt); $times = max(1, min(100, (int)($opt['times'] ?? 1))); $target = isset($opt['target']) && is_numeric($opt['target']) ? (int)$opt['target'] : null; $msgs = [];
+    $o = ($sub === 'roll' ? "# Dice rolls from $name\n\nSeed $seed (use seed=$seed to repeat these exact rolls).\n" : "# Probability tables from $name\n\nExact unless marked sampled. Probabilities are per roll of the expression.\n");
+    foreach ($lines as $ln => $e) { try { $terms = parse_dice($e); } catch (Exception $x) { $msgs[] = "$name(" . (array_search($e, explode("\n", readtext($in))) + 1) . ') Error: ' . $x->getMessage(); continue; }
+        if ($sub === 'roll') { $o .= "\n## $e\n\n"; for ($t = 1; $t <= $times; $t++) { $tot = 0; $parts = []; foreach ($terms as $term) { [$sum, $d, $kept, $txt] = roll_term($term); $tot += $sum; if (count($term) === 2) { $parts[] = ($term[0] < 0 ? '-' : '+') . abs($term[1]); continue; }
+                $disp = array_map(fn($v) => (string)$v, $d); if ($term[3] !== null) { $left = $kept; $disp = []; foreach ($d as $v) { $i = array_search($v, $left, true); if ($i !== false) { unset($left[$i]); $disp[] = (string)$v; } else $disp[] = "~~$v~~"; } } $parts[] = $txt . ' [' . implode(', ', $disp) . ']=' . $sum; }
+                $o .= ($times > 1 ? "$t. " : '') . '**' . $tot . '**  (' . implode(' ', $parts) . ")\n\n"; } continue; }
+        $sampled = 0; $dist = [[0 => 1.0]]; $dist = [0 => 1.0]; $minv = 0; $maxv = 0;
+        try { foreach ($terms as $term) { $td = term_dist($term, $sampled, $seed); $nx = []; foreach ($dist as $a => $pa) foreach ($td as $b => $pb) $nx[$a + $b] = ($nx[$a + $b] ?? 0) + $pa * $pb; $dist = $nx; if (count($dist) > 200000) throw new Exception('too many outcomes'); } } catch (Exception $x) { $msgs[] = "$name Error: $e: " . $x->getMessage(); continue; }
+        ksort($dist); $mean = 0; foreach ($dist as $v => $p) $mean += $v * $p; $sd = 0; foreach ($dist as $v => $p) $sd += $p * ($v - $mean) ** 2; $o .= "\n## $e" . ($sampled ? " (sampled: $sampled rolls, seed $seed; the figures are approximate)" : '') . "\n\nMinimum " . array_key_first($dist) . ', maximum ' . array_key_last($dist) . ', mean ' . round($mean, 3) . ', standard deviation ' . round(sqrt($sd), 3) . '.';
+        if ($target !== null) { $ge = 0; foreach ($dist as $v => $p) if ($v >= $target) $ge += $p; $o .= " Chance of $target or more: " . sprintf('%.2f%%', $ge * 100) . '.'; }
+        $o .= "\n\n"; if (count($dist) > 80) { $o .= "(" . count($dist) . " different totals: showing those with at least 0.1% chance)\n\n"; } $o .= "| Total | Chance | At least |\n|---:|---:|---:|\n"; $rem = 1.0; foreach ($dist as $v => $p) { $ge = $rem; $rem -= $p; if (count($dist) > 80 && $p < 0.001) continue; $o .= "| $v | " . sprintf('%.2f%%', $p * 100) . ' | ' . sprintf('%.2f%%', max($ge, 0) * 100) . " |\n"; } }
+    if ($msgs) $o .= "\n## Problems\n\n" . implode("\n", $msgs) . "\n"; if ($msgs && count($msgs) === count($lines)) { fwrite(STDERR, implode("\n", $msgs) . "\n"); exit(1); }
+    file_put_contents($out, $o); echo "Wrote $out (" . count($lines) . " expressions" . ($sub === 'roll' ? ", seed $seed" : '') . ")\n"; exit(0);
+}
+// ---- initiative --------------------------------------------------------------------------------------------------------------------------------
+function csv_rows(string $f): array { $t = readtext($f); if (trim($t) === '') fail(basename($f) . ' is empty'); $first = strtok($t, "\n"); $c = ["\t" => substr_count($first, "\t"), ';' => substr_count($first, ';'), ',' => substr_count($first, ',')]; arsort($c); $sep = array_key_first($c);
+    $h = fopen('php://memory', 'r+'); fwrite($h, $t); rewind($h); $ln = 0; $hdr = null; $rows = []; while (($r = fgetcsv($h, 0, $sep, '"', '')) !== false) { $ln++; if ($r === [null] || (count($r) === 1 && trim((string)$r[0]) === '')) continue; if ($hdr === null) { $hdr = array_map('ascii', $r); continue; } $rows[] = ['line' => $ln, 'c' => $r]; } return [$hdr ?? [], $rows]; }
+function col(array $hdr, array $names): ?int { foreach ($hdr as $i => $h) if (in_array($h, $names, true)) return $i; return null; }
+if ($sub === 'initiative') {
+    [$hd, $rows] = csv_rows($in); $cn = col($hd, ['name', 'nom', 'nome', 'nombre', 'combatant', 'creature']); $cb = col($hd, ['bonus', 'init', 'initiative', 'init bonus', 'modifier', 'mod', 'initiative bonus']); $chp = col($hd, ['hp', 'pv', 'lp', 'pf', 'hit points']); $cac = col($hd, ['ac', 'ca', 'cd', 'armor class', 'armour class']); $ct = col($hd, ['team', 'side', 'equipe', 'gruppe', 'squadra', 'equipo', 'type']); $cc = col($hd, ['count', 'qty', 'number', 'quantity', 'nombre de', 'anzahl', 'quantita', 'cantidad']);
+    if ($cn === null) fail("$name needs a name column (found: " . implode(', ', $hd) . ')'); if (!$rows) fail("$name has no combatants"); $die = max(2, min(1000, (int)($opt['die'] ?? 20))); $seed = seeded($opt); $list = []; $msgs = []; $seen = [];
+    foreach ($rows as $r) { $nm = trim((string)($r['c'][$cn] ?? '')); if ($nm === '') { $msgs[] = "$name({$r['line']}) Error: a combatant has no name"; continue; } $bn = $cb !== null ? trim((string)($r['c'][$cb] ?? '')) : ''; $bonus = $bn === '' ? 0 : (preg_match('/^[+-]?\d+$/', $bn) ? (int)$bn : null);
+        if ($bonus === null) { $msgs[] = "$name({$r['line']}) Error: initiative bonus \"$bn\" of $nm is not a whole number"; continue; } if ($bn === '' && $cb !== null) $msgs[] = "$name({$r['line']}) Note: $nm has no initiative bonus: used 0";
+        $cnt = $cc !== null && trim((string)($r['c'][$cc] ?? '')) !== '' ? (int)$r['c'][$cc] : 1; if ($cnt < 1 || $cnt > 100) { $msgs[] = "$name({$r['line']}) Error: count $cnt of $nm is not 1-100"; continue; }
+        $hp = $chp !== null ? trim((string)($r['c'][$chp] ?? '')) : ''; if ($hp !== '' && (!ctype_digit($hp) || (int)$hp < 1)) $msgs[] = "$name({$r['line']}) Warning: hit points \"$hp\" of $nm are not a positive whole number";
+        if (isset($seen[ascii($nm)])) $msgs[] = "$name({$r['line']}) Warning: $nm appears twice (line " . $seen[ascii($nm)] . ')'; else $seen[ascii($nm)] = $r['line'];
+        for ($i = 1; $i <= $cnt; $i++) { $roll = mt_rand(1, $die); $list[] = ['n' => $cnt > 1 ? "$nm $i" : $nm, 'roll' => $roll, 'bonus' => $bonus, 'total' => $roll + $bonus, 'hp' => $hp, 'ac' => $cac !== null ? trim((string)($r['c'][$cac] ?? '')) : '', 'team' => $ct !== null ? trim((string)($r['c'][$ct] ?? '')) : '']; } }
+    if (!$list) fail("no usable combatants in $name:\n" . implode("\n", $msgs)); usort($list, fn($a, $b) => [$b['total'], $b['bonus'], $a['n']] <=> [$a['total'], $a['bonus'], $b['n']]);
+    $o = "# Initiative from $name\n\nd$die + bonus, seed $seed (seed=$seed repeats it). Ties: higher bonus first, then name order: break real ties at the table as your rules say.\n\n| # | Name | Roll | Bonus | Total | Team | HP | AC | Notes |\n|--:|---|--:|--:|--:|---|--:|--:|---|\n";
+    foreach ($list as $i => $c) $o .= '| ' . ($i + 1) . " | {$c['n']} | {$c['roll']} | " . sprintf('%+d', $c['bonus']) . " | {$c['total']} | {$c['team']} | {$c['hp']} | {$c['ac']} | |\n";
+    $o .= "\n## Round tracker\n\n| Name | Round 1 | Round 2 | Round 3 | Round 4 | Round 5 |\n|---|---|---|---|---|---|\n"; foreach ($list as $c) $o .= "| {$c['n']} (" . ($c['hp'] !== '' ? "HP {$c['hp']}" : 'HP ?') . ") |  |  |  |  |  |\n";
+    if ($msgs) $o .= "\n## Problems\n\n" . implode("\n", $msgs) . "\n"; file_put_contents($out, $o); echo "Wrote $out (" . count($list) . " combatants, seed $seed)\n"; exit(0);
+}
+// ---- sheet -------------------------------------------------------------------------------------------------------------------------------------
+if ($sub === 'sheet') {
+    $fields = []; $lns = []; foreach (explode("\n", readtext($in)) as $i => $l) if (preg_match('/^\s*(?:[-*+]\s*)?\**([^:*|#][^:*|]{0,40}?)\**\s*[:=]\s*\**\s*(.*?)\s*$/u', $l, $m)) { $k = ascii($m[1]); if ($k === '' || isset($fields[$k])) continue; $fields[$k] = trim($m[2], " *"); $lns[$k] = $i + 1; }
+    if (!$fields) fail("$name has no \"Field: value\" lines"); $req = isset($opt['require']) ? array_map('ascii', explode(',', $opt['require'])) : ['name', 'class', 'level']; $ab = isset($opt['abilities']) ? array_map('ascii', explode(',', $opt['abilities'])) : []; $msgs = [];
+    $min = isset($opt['min']) ? (int)$opt['min'] : null; $max = isset($opt['max']) ? (int)$opt['max'] : null; $budget = isset($opt['budget']) && is_numeric($opt['budget']) ? (int)$opt['budget'] : null; $costs = [];
+    if (isset($opt['costs'])) foreach (explode(',', $opt['costs']) as $p) { if (!preg_match('/^\s*(\d+)\s*:\s*(\d+)\s*$/', $p, $m)) fail("costs must look like costs=8:0,9:1,10:2 (score:cost), not \"$p\"", 2); $costs[(int)$m[1]] = (int)$m[2]; }
+    if ($costs && $budget === null) fail('costs= needs a budget= to compare with', 2); if ($budget !== null && !$costs) fail('budget= needs your cost table: costs=8:0,9:1,...', 2);
+    foreach ($req as $r) if ($r !== '') { if (!isset($fields[$r])) $msgs[] = "$name(1) Error: required field \"$r\" is missing"; elseif ($fields[$r] === '') $msgs[] = "$name({$lns[$r]}) Error: required field \"$r\" is empty"; }
+    $scores = []; foreach ($ab as $a) { if (!isset($fields[$a])) { $msgs[] = "$name(1) Error: ability \"$a\" is missing"; continue; } $v = $fields[$a]; if (!preg_match('/^-?\d+$/', $v)) { $msgs[] = "$name({$lns[$a]}) Error: ability \"$a\" is \"$v\", not a whole number"; continue; } $v = (int)$v; $scores[$a] = $v;
+        if ($min !== null && $v < $min) $msgs[] = "$name({$lns[$a]}) Error: $a $v is below the minimum $min"; if ($max !== null && $v > $max) $msgs[] = "$name({$lns[$a]}) Error: $a $v is above the maximum $max"; }
+    $spent = null; if ($costs && count($scores) === count($ab) && $ab) { $spent = 0; foreach ($scores as $a => $v) { if (!isset($costs[$v])) { $msgs[] = "$name({$lns[$a]}) Error: $a $v is not in your cost table (scores listed: " . implode(', ', array_keys($costs)) . ')'; $spent = null; break; } $spent += $costs[$v]; } if ($spent !== null && $spent > $budget) $msgs[] = "$name(1) Error: point-buy spends $spent, over the budget $budget"; elseif ($spent !== null && $spent < $budget) $msgs[] = "$name(1) Note: point-buy spends $spent of $budget ($budget-$spent unspent)"; }
+    foreach ($fields as $k => $v) if ($v === '' && !in_array($k, $req, true)) $msgs[] = "$name({$lns[$k]}) Note: field \"$k\" is empty";
+    $e = count(array_filter($msgs, fn($m) => strpos($m, ' Error: ') !== false)); $o = "# Character sheet check of $name\n\n" . count($fields) . " fields found. Required: " . ($req ? implode(', ', $req) : '(none)') . '. ' . ($ab ? 'Abilities: ' . implode(', ', array_map(fn($a) => "$a " . ($scores[$a] ?? '?'), $ab)) . '. ' : '') . ($spent !== null ? "Point-buy: $spent of $budget (using YOUR table)." : ($costs ? '' : 'No point-buy table given, so none is checked: no system rules are assumed.')) . "\n\n";
+    foreach ($msgs as $m) $o .= "$m\n"; if (!$msgs) $o .= "No problems found.\n"; $o .= "\n" . count($msgs) . " finding(s), $e error(s). The rules are the ones you passed in; this does not know any game system.\n"; file_put_contents($out, $o); echo "Wrote $out ($e errors)\n"; exit(0);
+}
+// ---- notes -------------------------------------------------------------------------------------------------------------------------------------
+$files = []; if (is_dir($in)) { foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($in, FilesystemIterator::SKIP_DOTS)) as $f) if (preg_match('/\.(md|txt|markdown)$/i', $f->getFilename())) $files[] = $f->getPathname(); sort($files); } else $files = [$in];
+if (!$files) fail("no .md or .txt notes in $in"); $ents = []; $auto = false;
+if (isset($opt['with'])) { if (!is_file($opt['with'])) fail('no such entity file: ' . $opt['with']); [$hd, $rows] = csv_rows($opt['with']); $cn = col($hd, ['name', 'nom', 'nome', 'nombre']); $ct = col($hd, ['type', 'kind', 'category', 'typ', 'tipo']); $ca = col($hd, ['aliases', 'alias', 'also', 'aka']); if ($cn === null) fail('the entity file needs a name column');
+    foreach ($rows as $r) { $nm = trim((string)($r['c'][$cn] ?? '')); if ($nm === '') continue; $al = $ca !== null ? array_filter(array_map('trim', explode('|', (string)($r['c'][$ca] ?? '')))) : []; $ents[$nm] = ['type' => $ct !== null ? trim((string)($r['c'][$ct] ?? '')) : '', 'names' => array_merge([$nm], $al), 'hits' => []]; } }
+$texts = []; foreach ($files as $f) { $texts[$f] = explode("\n", readtext($f)); }
+if (!$ents) { $auto = true; foreach ($texts as $f => $ls) foreach ($ls as $l) if (preg_match_all('/\*\*([^*]{2,40})\*\*/u', $l, $mm)) foreach ($mm[1] as $b) $ents[trim($b)] ??= ['type' => '', 'names' => [trim($b)], 'hits' => []]; if (!$ents) fail('no entities: give with=ENTITIES.csv (name, type, aliases) or mark names in **bold** in the notes'); }
+foreach ($texts as $f => $ls) { $sec = ''; foreach ($ls as $i => $l) { if (preg_match('/^\s{0,3}#{1,6}\s+(.*)$/', $l, $m)) $sec = trim($m[1]); $al = ' ' . ascii($l) . ' ';
+    foreach ($ents as $en => &$e) foreach ($e['names'] as $n) { $nn = ascii($n); if ($nn !== '' && strpos($al, ' ' . $nn . ' ') !== false) { $e['hits'][] = [basename($f) . ':' . ($i + 1), $sec]; break; } } unset($e); } }
+$o = "# Notes index of " . ($files[0] === $in ? $name : "$name (" . count($files) . " files)") . "\n\n" . ($auto ? "No entity list given: the names are the terms written in **bold** (candidates; pass with=ENTITIES.csv for a typed index). " : '') . "A mention is a whole-word match of the name or an alias, ignoring case and accents, so a common word used as a name will over-count.\n"; $none = []; $by = [];
+foreach ($ents as $en => $e) { if (!$e['hits']) { $none[] = $en; continue; } $by[$e['type'] !== '' ? $e['type'] : 'untyped'][$en] = $e; }
+ksort($by); foreach ($by as $type => $list) { $o .= "\n## " . (strlen($type) <= 3 ? strtoupper($type) : (strlen($type) <= 3 ? strtoupper($type) : ucfirst($type))) . "\n\n"; uasort($list, fn($a, $b) => count($b['hits']) <=> count($a['hits'])); foreach ($list as $en => $e) { $secs = array_values(array_unique(array_filter(array_column($e['hits'], 1)))); $o .= "- **$en**: " . count($e['hits']) . ' mention(s) - ' . implode(', ', array_map(fn($h) => $h[0], array_slice($e['hits'], 0, 8))) . (count($e['hits']) > 8 ? ', ...' : '') . ($secs ? ' (under: ' . implode('; ', array_slice($secs, 0, 4)) . ')' : '') . "\n"; } }
+$o .= "\n## Never mentioned (" . count($none) . ")\n\n"; foreach ($none as $n) $o .= "- $n" . ($ents[$n]['type'] !== '' ? ' (' . $ents[$n]['type'] . ')' : '') . "\n"; if (!$none) $o .= "None: every entity appears at least once.\n";
+file_put_contents($out, $o); echo "Wrote $out (" . count($ents) . ' entities, ' . count($none) . " never mentioned)\n"; exit(0);

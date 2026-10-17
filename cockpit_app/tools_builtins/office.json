@@ -1,0 +1,355 @@
+{
+    "id": "office",
+    "name": "Document formats",
+    "description": "Convert between the office formats, in both directions, with the macros in mind: Microsoft Office (doc docx docm xls xlsx xlsm ppt pptx pptm), LibreOffice and OpenOffice (odt ods odp, sxw sxc sxi), RTF, CSV, Gnumeric, and what LibreOffice reads of AbiWord, WordPerfect and Apple iWork. A conversion that would silently lose VBA macros (LibreOffice drops them going to .doc, .docx or .xlsx, and Basic never becomes VBA) is REFUSED unless you ask for it. Macros can be listed, extracted as text for review and porting, and put into an .ods/.odt/.odp. An inspector says what is inside a file and what a conversion could lose; a round trip check compares the text or cell values and the macros. Everything runs in a throw-away LibreOffice profile with macro security at its maximum: nothing is ever executed. Give the file as the input; the converted file is the output.",
+    "binary": "php",
+    "version_args": "--version",
+    "website": "https://www.libreoffice.org",
+    "packages": {
+        "apt": "php-cli php-xml php-zip php-mbstring libreoffice-writer libreoffice-calc libreoffice-impress gnumeric",
+        "dnf": "php-cli php-xml libreoffice-writer libreoffice-calc libreoffice-impress gnumeric",
+        "pacman": "php libreoffice-fresh gnumeric",
+        "zypper": "php8 php8-zip php8-mbstring libreoffice-writer libreoffice-calc libreoffice-impress gnumeric",
+        "brew": "php libreoffice gnumeric"
+    },
+    "presets": [
+        {
+            "id": "macros",
+            "label": "Macros: list what is in the file",
+            "description": "Lists every macro module (VBA from Microsoft Office, Basic or Python from LibreOffice) in any document, spreadsheet or presentation: size, auto-run procedures (Auto_Open, Workbook_Open ...), and risky calls (Shell, CreateObject, downloads, deleting files). The macros are only read, never run.",
+            "input_kinds": [
+                "document",
+                "file"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_macros",
+            "command": "php {WEBROOT}/office_tool macros {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "extract-macros",
+            "label": "Extract the macros as text (.bas)",
+            "description": "All the macro modules of the file as one UTF-8 text file with a header per module (accents and non-Latin letters decoded from the file's code page): for reading, reviewing and porting. Nothing is run.",
+            "input_kinds": [
+                "document",
+                "file"
+            ],
+            "output_kind": "code",
+            "output_ext": "bas",
+            "output_stem": "{NAME}_macros",
+            "command": "php {WEBROOT}/office_tool extract {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "inject-ods",
+            "label": "Put a macro module into a spreadsheet (.ods)",
+            "description": "Adds the Basic or VBA source in the file given in the extra arguments (a .bas or .txt) as a new module of a spreadsheet (.ods) (library Standard; VBA source gets Option VBASupport 1). Never replaces a module. LibreOffice macro security decides whether it may run. Convert a Microsoft file to the LibreOffice format first.",
+            "input_kinds": [
+                "document",
+                "file"
+            ],
+            "output_kind": "document",
+            "output_ext": "ods",
+            "output_stem": "{NAME}_with_macro",
+            "command": "php {WEBROOT}/office_tool inject {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "inject-odt",
+            "label": "Put a macro module into a text document (.odt)",
+            "description": "Adds the Basic or VBA source in the file given in the extra arguments (a .bas or .txt) as a new module of a text document (.odt) (library Standard; VBA source gets Option VBASupport 1). Never replaces a module. LibreOffice macro security decides whether it may run. Convert a Microsoft file to the LibreOffice format first.",
+            "input_kinds": [
+                "document",
+                "file"
+            ],
+            "output_kind": "document",
+            "output_ext": "odt",
+            "output_stem": "{NAME}_with_macro",
+            "command": "php {WEBROOT}/office_tool inject {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "inject-odp",
+            "label": "Put a macro module into a presentation (.odp)",
+            "description": "Adds the Basic or VBA source in the file given in the extra arguments (a .bas or .txt) as a new module of a presentation (.odp) (library Standard; VBA source gets Option VBASupport 1). Never replaces a module. LibreOffice macro security decides whether it may run. Convert a Microsoft file to the LibreOffice format first.",
+            "input_kinds": [
+                "document",
+                "file"
+            ],
+            "output_kind": "document",
+            "output_ext": "odp",
+            "output_stem": "{NAME}_with_macro",
+            "command": "php {WEBROOT}/office_tool inject {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "inspect",
+            "label": "Inspect: what is inside (and what a conversion could lose)",
+            "description": "Sheets, formulas, pictures, comments, tracked changes, links to other workbooks, pivot tables, protection, macros: counts for any Microsoft or OpenDocument file (older formats are read through LibreOffice), and what is at risk in a conversion.",
+            "input_kinds": [
+                "document",
+                "file"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_inspect",
+            "command": "php {WEBROOT}/office_tool inspect {INPUT} {OUTPUT}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "verify",
+            "label": "Verify a conversion (there and back, compare)",
+            "description": "Converts the file to another format and back, then compares the text (documents) or the cell values (spreadsheets), and the macros. Type the format to go through in the extra arguments (default: odt for documents, ods for spreadsheets; try doc, docx, xls, xlsx, rtf). Reports the first differences; exit 1 if anything differs or macros were lost.",
+            "input_kinds": [
+                "document",
+                "file"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_verify",
+            "command": "php {WEBROOT}/office_tool verify {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 900
+        },
+        {
+            "id": "to-docx",
+            "label": "Convert to Word (.docx)",
+            "description": "Converts a text document: .doc .odt .rtf .sxw .wpd .abw .pages ... to a Microsoft Word 2007+ document, with LibreOffice in a throw-away profile (your own LibreOffice settings are never touched; macros are never run). If the source has macros and the result would lose them, the conversion is REFUSED and nothing is written (type drop-macros in the extra arguments to convert anyway). A document cannot become a spreadsheet or the other way round: that is refused with the reason.",
+            "input_kinds": [
+                "document",
+                "file",
+                "csv",
+                "spreadsheet"
+            ],
+            "output_kind": "document",
+            "output_ext": "docx",
+            "output_stem": "{NAME}",
+            "command": "php {WEBROOT}/office_tool convert {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 900
+        },
+        {
+            "id": "to-doc",
+            "label": "Convert to Word 97-2003 (.doc)",
+            "description": "Converts a text document to a older Microsoft Word document (macros are NOT kept by LibreOffice: the safeguard refuses a document that has them), with LibreOffice in a throw-away profile (your own LibreOffice settings are never touched; macros are never run). If the source has macros and the result would lose them, the conversion is REFUSED and nothing is written (type drop-macros in the extra arguments to convert anyway). A document cannot become a spreadsheet or the other way round: that is refused with the reason.",
+            "input_kinds": [
+                "document",
+                "file",
+                "csv",
+                "spreadsheet"
+            ],
+            "output_kind": "document",
+            "output_ext": "doc",
+            "output_stem": "{NAME}",
+            "command": "php {WEBROOT}/office_tool convert {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 900
+        },
+        {
+            "id": "to-odt",
+            "label": "Convert to Writer / OpenDocument text (.odt)",
+            "description": "Converts a Word, RTF, WordPerfect, AbiWord ... document to a LibreOffice and OpenOffice text document, with LibreOffice in a throw-away profile (your own LibreOffice settings are never touched; macros are never run). If the source has macros and the result would lose them, the conversion is REFUSED and nothing is written (type drop-macros in the extra arguments to convert anyway). A document cannot become a spreadsheet or the other way round: that is refused with the reason.",
+            "input_kinds": [
+                "document",
+                "file",
+                "csv",
+                "spreadsheet"
+            ],
+            "output_kind": "document",
+            "output_ext": "odt",
+            "output_stem": "{NAME}",
+            "command": "php {WEBROOT}/office_tool convert {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 900
+        },
+        {
+            "id": "to-rtf",
+            "label": "Convert to Rich Text (.rtf)",
+            "description": "Converts a text document to a Rich Text Format, read by almost every word processor, with LibreOffice in a throw-away profile (your own LibreOffice settings are never touched; macros are never run). If the source has macros and the result would lose them, the conversion is REFUSED and nothing is written (type drop-macros in the extra arguments to convert anyway). A document cannot become a spreadsheet or the other way round: that is refused with the reason.",
+            "input_kinds": [
+                "document",
+                "file",
+                "csv",
+                "spreadsheet"
+            ],
+            "output_kind": "document",
+            "output_ext": "rtf",
+            "output_stem": "{NAME}",
+            "command": "php {WEBROOT}/office_tool convert {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 900
+        },
+        {
+            "id": "to-txt",
+            "label": "Convert to Plain text (.txt, UTF-8)",
+            "description": "Converts a text document to a plain text, with LibreOffice in a throw-away profile (your own LibreOffice settings are never touched; macros are never run). If the source has macros and the result would lose them, the conversion is REFUSED and nothing is written (type drop-macros in the extra arguments to convert anyway). A document cannot become a spreadsheet or the other way round: that is refused with the reason.",
+            "input_kinds": [
+                "document",
+                "file",
+                "csv",
+                "spreadsheet"
+            ],
+            "output_kind": "document",
+            "output_ext": "txt",
+            "output_stem": "{NAME}",
+            "command": "php {WEBROOT}/office_tool convert {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 900
+        },
+        {
+            "id": "to-xlsx",
+            "label": "Convert to Excel (.xlsx)",
+            "description": "Converts a spreadsheet: .xls .ods .csv .sxc .gnumeric .numbers ... to a Microsoft Excel 2007+ workbook (no macros: use .xlsm for those), with LibreOffice in a throw-away profile (your own LibreOffice settings are never touched; macros are never run). If the source has macros and the result would lose them, the conversion is REFUSED and nothing is written (type drop-macros in the extra arguments to convert anyway). A document cannot become a spreadsheet or the other way round: that is refused with the reason.",
+            "input_kinds": [
+                "document",
+                "file",
+                "csv",
+                "spreadsheet"
+            ],
+            "output_kind": "document",
+            "output_ext": "xlsx",
+            "output_stem": "{NAME}",
+            "command": "php {WEBROOT}/office_tool convert {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 900
+        },
+        {
+            "id": "to-xlsm",
+            "label": "Convert to Excel with macros (.xlsm)",
+            "description": "Converts a spreadsheet to a Microsoft Excel workbook that keeps VBA macros, with LibreOffice in a throw-away profile (your own LibreOffice settings are never touched; macros are never run). If the source has macros and the result would lose them, the conversion is REFUSED and nothing is written (type drop-macros in the extra arguments to convert anyway). A document cannot become a spreadsheet or the other way round: that is refused with the reason.",
+            "input_kinds": [
+                "document",
+                "file",
+                "csv",
+                "spreadsheet"
+            ],
+            "output_kind": "document",
+            "output_ext": "xlsm",
+            "output_stem": "{NAME}",
+            "command": "php {WEBROOT}/office_tool convert {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 900
+        },
+        {
+            "id": "to-xls",
+            "label": "Convert to Excel 97-2003 (.xls)",
+            "description": "Converts a spreadsheet to a older Microsoft Excel workbook (keeps VBA), with LibreOffice in a throw-away profile (your own LibreOffice settings are never touched; macros are never run). If the source has macros and the result would lose them, the conversion is REFUSED and nothing is written (type drop-macros in the extra arguments to convert anyway). A document cannot become a spreadsheet or the other way round: that is refused with the reason.",
+            "input_kinds": [
+                "document",
+                "file",
+                "csv",
+                "spreadsheet"
+            ],
+            "output_kind": "document",
+            "output_ext": "xls",
+            "output_stem": "{NAME}",
+            "command": "php {WEBROOT}/office_tool convert {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 900
+        },
+        {
+            "id": "to-ods",
+            "label": "Convert to Calc / OpenDocument spreadsheet (.ods)",
+            "description": "Converts an Excel, CSV, Gnumeric ... spreadsheet to a LibreOffice and OpenOffice spreadsheet (Excel VBA becomes LibreOffice Basic), with LibreOffice in a throw-away profile (your own LibreOffice settings are never touched; macros are never run). If the source has macros and the result would lose them, the conversion is REFUSED and nothing is written (type drop-macros in the extra arguments to convert anyway). A document cannot become a spreadsheet or the other way round: that is refused with the reason.",
+            "input_kinds": [
+                "document",
+                "file",
+                "csv",
+                "spreadsheet"
+            ],
+            "output_kind": "document",
+            "output_ext": "ods",
+            "output_stem": "{NAME}",
+            "command": "php {WEBROOT}/office_tool convert {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 900
+        },
+        {
+            "id": "to-csv",
+            "label": "Convert to CSV (.csv, UTF-8, first sheet)",
+            "description": "Converts a spreadsheet to a comma-separated values of the FIRST sheet, with LibreOffice in a throw-away profile (your own LibreOffice settings are never touched; macros are never run). If the source has macros and the result would lose them, the conversion is REFUSED and nothing is written (type drop-macros in the extra arguments to convert anyway). A document cannot become a spreadsheet or the other way round: that is refused with the reason.",
+            "input_kinds": [
+                "document",
+                "file",
+                "csv",
+                "spreadsheet"
+            ],
+            "output_kind": "document",
+            "output_ext": "csv",
+            "output_stem": "{NAME}",
+            "command": "php {WEBROOT}/office_tool convert {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 900
+        },
+        {
+            "id": "to-gnumeric",
+            "label": "Convert to Gnumeric (.gnumeric)",
+            "description": "Converts a spreadsheet to a Gnumeric workbook (through Gnumeric's own converter; macros are not kept), with LibreOffice in a throw-away profile (your own LibreOffice settings are never touched; macros are never run). If the source has macros and the result would lose them, the conversion is REFUSED and nothing is written (type drop-macros in the extra arguments to convert anyway). A document cannot become a spreadsheet or the other way round: that is refused with the reason.",
+            "input_kinds": [
+                "document",
+                "file",
+                "csv",
+                "spreadsheet"
+            ],
+            "output_kind": "document",
+            "output_ext": "gnumeric",
+            "output_stem": "{NAME}",
+            "command": "php {WEBROOT}/office_tool convert {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 900
+        },
+        {
+            "id": "to-pptx",
+            "label": "Convert to PowerPoint (.pptx)",
+            "description": "Converts a presentation: .ppt .odp .sxi .key ... to a Microsoft PowerPoint 2007+ deck, with LibreOffice in a throw-away profile (your own LibreOffice settings are never touched; macros are never run). If the source has macros and the result would lose them, the conversion is REFUSED and nothing is written (type drop-macros in the extra arguments to convert anyway). A document cannot become a spreadsheet or the other way round: that is refused with the reason.",
+            "input_kinds": [
+                "document",
+                "file",
+                "csv",
+                "spreadsheet"
+            ],
+            "output_kind": "document",
+            "output_ext": "pptx",
+            "output_stem": "{NAME}",
+            "command": "php {WEBROOT}/office_tool convert {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 900
+        },
+        {
+            "id": "to-ppt",
+            "label": "Convert to PowerPoint 97-2003 (.ppt)",
+            "description": "Converts a presentation to a older Microsoft PowerPoint deck, with LibreOffice in a throw-away profile (your own LibreOffice settings are never touched; macros are never run). If the source has macros and the result would lose them, the conversion is REFUSED and nothing is written (type drop-macros in the extra arguments to convert anyway). A document cannot become a spreadsheet or the other way round: that is refused with the reason.",
+            "input_kinds": [
+                "document",
+                "file",
+                "csv",
+                "spreadsheet"
+            ],
+            "output_kind": "document",
+            "output_ext": "ppt",
+            "output_stem": "{NAME}",
+            "command": "php {WEBROOT}/office_tool convert {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 900
+        },
+        {
+            "id": "to-odp",
+            "label": "Convert to Impress / OpenDocument presentation (.odp)",
+            "description": "Converts a PowerPoint ... presentation to a LibreOffice and OpenOffice presentation, with LibreOffice in a throw-away profile (your own LibreOffice settings are never touched; macros are never run). If the source has macros and the result would lose them, the conversion is REFUSED and nothing is written (type drop-macros in the extra arguments to convert anyway). A document cannot become a spreadsheet or the other way round: that is refused with the reason.",
+            "input_kinds": [
+                "document",
+                "file",
+                "csv",
+                "spreadsheet"
+            ],
+            "output_kind": "document",
+            "output_ext": "odp",
+            "output_stem": "{NAME}",
+            "command": "php {WEBROOT}/office_tool convert {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 900
+        },
+        {
+            "id": "to-pdf",
+            "label": "Convert to PDF (.pdf)",
+            "description": "Converts any of them to a PDF of any document, spreadsheet or presentation, with LibreOffice in a throw-away profile (your own LibreOffice settings are never touched; macros are never run). A document cannot become a spreadsheet or the other way round: that is refused with the reason.",
+            "input_kinds": [
+                "document",
+                "file",
+                "csv",
+                "spreadsheet"
+            ],
+            "output_kind": "document",
+            "output_ext": "pdf",
+            "output_stem": "{NAME}",
+            "command": "php {WEBROOT}/office_tool convert {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 900
+        }
+    ]
+}

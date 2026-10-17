@@ -1,0 +1,41 @@
+{
+  "id": "learning",
+  "name": "Study and Learning",
+  "icon": "school",
+  "description": "Learning a subject: explanations, exercises, summaries, revision.",
+  "detect": [],
+  "note": "This is a study project. Explain at the level the learner has shown, check understanding with a question or exercise before moving on, and keep a running summary of what has been covered.",
+  "verify": "answers to the exercises",
+  "group": "Research & learning",
+  "details": "Studying a subject. The agent explains at the level you have shown, checks your understanding with a question or exercise before moving on, and keeps a running list of what you found hard. The Shelf can ground it in the textbooks you own.",
+  "examples": [
+    "Learn Free Pascal from the books on your Shelf, with exercises",
+    "A language course: vocabulary, reading, speaking",
+    "Revision for an exam, with a list of weak points",
+    "A paper explained at the level you choose"
+  ],
+  "tools": [
+    {
+      "tool": "lang",
+      "why": "vocabulary lists: check, flash cards, word frequency, listen, compare a reading"
+    },
+    {
+      "tool": "poppler",
+      "why": "the text of a PDF textbook"
+    },
+    {
+      "tool": "whisper",
+      "why": "transcribe a lecture"
+    }
+  ],
+  "starter": [
+    {
+      "path": "plan.md",
+      "content": "# Study plan\n\nGoal (what I can do at the end):\nDeadline:\nTime per week:\n\n| Week | Topic | Done |\n|---|---|---|\n"
+    },
+    {
+      "path": "notes.md",
+      "content": "# Notes\n\nIn my own words, one idea at a time. Then three questions I could be asked about it.\n"
+    }
+  ]
+}

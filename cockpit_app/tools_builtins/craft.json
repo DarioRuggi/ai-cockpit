@@ -1,0 +1,72 @@
+{
+    "id": "craft",
+    "name": "Craft helper",
+    "description": "Calculating aids for hobby crafts (knitting, crochet, sewing, woodworking, model-making) on plain CSV and markdown files. Cut list packs board, rod or fabric-length parts into stock lengths (first-fit decreasing, with saw kerf, offcuts and waste); Yarn estimates yarn from the area of the pieces and a swatch you measured; Fabric gives the fabric length from the area of the pieces (a lower bound); Pattern check reads a markdown knitting or crochet pattern for missing or doubled row numbers, bad repeats and stitch counts that do not match the (N sts) you wrote; Materials totals a materials list with cost and what is left to buy. Results are estimates from the numbers you give; nothing is looked up. The original is never changed.",
+    "binary": "php",
+    "version_args": "--version",
+    "website": "https://www.php.net",
+    "packages": {
+        "apt": "php-cli php-mbstring",
+        "dnf": "php-cli php-mbstring",
+        "pacman": "php",
+        "zypper": "php8 php8-mbstring",
+        "brew": "php"
+    },
+    "presets": [
+        {
+            "id": "cutlist",
+            "label": "Cut list (boards, rods, fabric lengths)",
+            "description": "A CSV of parts (name, length, qty, optional material). Type stock=2400 kerf=3 in the extra arguments (boards=N limits the number of boards). Fractions such as 36 1/2 are read.",
+            "input_kinds": ["text", "file", "document"],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_cutlist",
+            "command": "php {WEBROOT}/craft_tool cutlist {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "yarn",
+            "label": "Yarn estimate (from area and swatch)",
+            "description": "A CSV of pieces (name, width, height, qty; unit=cm|mm|in). Extra arguments: swatch=10x10 swatch_yarn=METRES (and/or swatch_g=GRAMS) measured on your own swatch, skein=METRES, margin=10; or gauge=20x28 stitch_length=CM. An estimate.",
+            "input_kinds": ["text", "file", "document"],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_yarn",
+            "command": "php {WEBROOT}/craft_tool yarn {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "fabric",
+            "label": "Fabric length (from area)",
+            "description": "A CSV of pieces (name, width, height, qty). Type fabric_width=140 in the extra arguments (margin=10, unit=cm|mm|in). A lower bound from the area, not a cutting layout.",
+            "input_kinds": ["text", "file", "document"],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_fabric",
+            "command": "php {WEBROOT}/craft_tool fabric {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "rows",
+            "label": "Pattern check (rows, repeats, stitch counts)",
+            "description": "A markdown pattern with lines such as \"Row 1: (k2, p2) x 6 (24 sts)\" and \"Repeat rows 1-4 x 5\". Reports missing or doubled rows, repeats of rows that do not exist, and counts that do not add up, as file(line) findings.",
+            "input_kinds": ["text", "file", "document"],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_rowcheck",
+            "command": "php {WEBROOT}/craft_tool rows {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "materials",
+            "label": "Materials list (totals and cost)",
+            "description": "A CSV with item, qty, unit cost, optional unit, category or supplier, and have. Totals the cost, totals by supplier and shows the cost of what you still have to buy. Type currency=EUR for a label.",
+            "input_kinds": ["text", "file", "document"],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_materials",
+            "command": "php {WEBROOT}/craft_tool materials {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        }
+    ]
+}

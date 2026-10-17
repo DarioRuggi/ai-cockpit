@@ -1,0 +1,101 @@
+#!/bin/bash
+# =============================================================================
+# data_run — the Data tools' work, for the tool presets (tools_builtins/data.json): look at a table, ask it questions in SQL,
+# summarise a column, convert a spreadsheet. Answers are markdown tables, written to <output>.
+#
+#   data_run csv-head      IN OUT [N]          the first N rows (default 10)
+#   data_run csv-describe  IN OUT              per column: rows, empty, distinct, min, max, and for numbers sum, mean
+#   data_run csv-query     IN OUT SQL...       any SELECT; the table is called t
+#   data_run csv-to-sqlite IN OUT              IN.db beside the file (never replaced), a short report in OUT
+#   data_run col-stats     IN OUT COLUMN       count, sum, mean, min, max of one column
+#   data_run col-count     IN OUT COLUMN [N]   the N most frequent values (default 20)
+#   data_run xlsx-to-csv   IN OUT              the first sheet of an .xlsx/.ods/.xls as CSV (LibreOffice, headless)
+#
+# IN is a CSV file (comma, semicolon or tab separated; a UTF-8 BOM and CRLF are fine). COLUMN is a name, the name with _ for spaces, or
+# a number (1 = first). The CSV is imported into a PRIVATE temporary database; the SQL runs in sqlite's safe, read-only mode
+# (no ATTACH, no extensions, no shell, no writes), so a query can only read that one table. The source file is never changed.
+# =============================================================================
+set -u
+SUB="${1:-}"; IN="${2:-}"; OUT="${3:-}"; shift 3 2>/dev/null || true
+fail() { printf 'data_run: %s\n' "$*" > "${OUT:-/dev/stderr}"; printf 'data_run: %s\n' "$*" >&2; exit 1; }
+[ -n "$SUB" ] && [ -n "$IN" ] && [ -n "$OUT" ] || { echo "usage: data_run SUBCOMMAND INPUT OUTPUT [ARGS]" >&2; exit 2; }
+[ -f "$IN" ] || fail "no such file: $IN"
+command -v sqlite3 >/dev/null 2>&1 || fail "sqlite3 is not installed (sudo apt install sqlite3)"
+T="$(mktemp -d)" || fail "no temporary folder"; trap 'rm -rf "${T:?}"' EXIT
+DB="$T/t.db"
+qid() { printf '"%s"' "${1//\"/\"\"}"; }                      # quote an identifier
+# SQL condition: this row's value in column $1 is a plain number (optional minus, digits, at most one point): 2026-01 and 12abc are not
+numcond() { local c z; c=$(qid "$1"); z="(CASE WHEN substr($c,1,1)='-' THEN substr($c,2) ELSE $c END)"; printf "(%s <> '' AND %s NOT GLOB '*[^0-9.]*' AND %s NOT GLOB '*.*.*')" "$z" "$z" "$z"; }
+
+# ---- import: BOM off, separator detected, header row = column names ------------------------------------------------------------------------
+import_csv() {
+    sed '1s/^\xEF\xBB\xBF//' "$IN" > "$T/in.csv"
+    [ -s "$T/in.csv" ] || fail "the file is empty"
+    local head c s t sep=','; head="$(head -n 1 "$T/in.csv")"
+    c=$(printf '%s' "$head" | tr -cd ',' | wc -c); s=$(printf '%s' "$head" | tr -cd ';' | wc -c); t=$(printf '%s' "$head" | tr -cd '\t' | wc -c)
+    if [ "$s" -gt "$c" ] && [ "$s" -ge "$t" ]; then sep=';'; elif [ "$t" -gt "$c" ]; then sep=$'\t'; fi
+    sqlite3 "$DB" ".mode csv" ".separator \"$sep\"" ".import $T/in.csv t" 2> "$T/err" || true
+    [ -s "$T/err" ] && ! grep -q 'expected [0-9]* columns' "$T/err" && fail "could not read the table: $(head -c 300 "$T/err")"
+    NCOLS=$(sqlite3 "$DB" "select count(*) from pragma_table_info('t');" 2>/dev/null || echo 0)
+    [ "${NCOLS:-0}" -ge 1 ] || fail "could not read a header row from the file"
+}
+q() { sqlite3 -safe -readonly -header -markdown "$DB" "$1" 2> "$T/qerr"; local rc=$?; if [ $rc -ne 0 ] || [ -s "$T/qerr" ]; then fail "$(head -c 400 "$T/qerr")"; fi; }
+
+# a column given as name, name_with_underscores or a 1-based number -> the real name
+resolve_col() {
+    local want="$1" n=""
+    [ -n "$want" ] || fail "which column? (a name, or a number: 1 = the first)"
+    if [[ "$want" =~ ^[0-9]+$ ]]; then n=$(sqlite3 "$DB" "select name from pragma_table_info('t') where cid=$((want-1));"); fi
+    [ -z "$n" ] && n=$(sqlite3 "$DB" "select name from pragma_table_info('t') where name=$(printf "'%s'" "${want//\'/\'\'}") limit 1;")
+    [ -z "$n" ] && n=$(sqlite3 "$DB" "select name from pragma_table_info('t') where replace(name,' ','_')=$(printf "'%s'" "${want//\'/\'\'}") limit 1;")
+    [ -n "$n" ] || fail "no column '$want'. Columns: $(sqlite3 "$DB" "select group_concat(name, ', ') from pragma_table_info('t');")"
+    printf '%s' "$n"
+}
+
+case "$SUB" in
+csv-head)
+    import_csv; N="${1:-10}"; [[ "$N" =~ ^[0-9]+$ ]] || N=10; [ "$N" -ge 1 ] || N=10; [ "$N" -le 1000 ] || N=1000
+    { q "select * from t limit $N;"; } > "$OUT.tmp" || exit 1; mv "$OUT.tmp" "$OUT"
+    { echo; echo "($(sqlite3 "$DB" 'select count(*) from t;') rows, $NCOLS columns; the first $N shown)"; } >> "$OUT" ;;
+csv-describe)
+    import_csv
+    sql=""
+    while IFS= read -r col; do
+        [ -n "$sql" ] && sql="$sql UNION ALL "
+        c=$(qid "$col"); lit="'${col//\'/\'\'}'"; nc=$(numcond "$col")
+        allnum="(SUM($nc) = SUM($c <> '') AND SUM($c <> '') > 0)"
+        sql="${sql}SELECT $lit AS column, COUNT(*) AS rows, SUM($c IS NULL OR $c = '') AS empty, COUNT(DISTINCT NULLIF($c, '')) AS distinct_values, "
+        sql="${sql}CASE WHEN $allnum THEN MIN(CASE WHEN $nc THEN CAST($c AS REAL) END) ELSE MIN(CASE WHEN $c <> '' THEN $c END) END AS min, "
+        sql="${sql}CASE WHEN $allnum THEN MAX(CASE WHEN $nc THEN CAST($c AS REAL) END) ELSE MAX(CASE WHEN $c <> '' THEN $c END) END AS max, "
+        sql="${sql}CASE WHEN $allnum THEN SUM(CASE WHEN $nc THEN CAST($c AS REAL) END) END AS sum, "
+        sql="${sql}CASE WHEN $allnum THEN ROUND(AVG(CASE WHEN $nc THEN CAST($c AS REAL) END), 4) END AS mean FROM t"
+    done < <(sqlite3 "$DB" "select name from pragma_table_info('t') order by cid;")
+    { q "$sql"; } > "$OUT.tmp" || exit 1; mv "$OUT.tmp" "$OUT"
+    { echo; echo "($(sqlite3 "$DB" 'select count(*) from t;') rows, $NCOLS columns. sum and mean are filled only for columns where every non-empty value is a number.)"; } >> "$OUT" ;;
+csv-query)
+    SQL="$*"; [ -n "${SQL// /}" ] || fail "give the SQL after the file: the table is called t, for example  SELECT city, COUNT(*) FROM t GROUP BY city"
+    case "$(printf '%s' "$SQL" | sed 's/^[[:space:]]*//')" in .*) fail "dot-commands are not accepted: write SQL" ;; esac
+    import_csv
+    { q "$SQL"; } > "$OUT.tmp" || exit 1; mv "$OUT.tmp" "$OUT"
+    [ -s "$OUT" ] || echo "(the query returned no rows)" > "$OUT" ;;
+csv-to-sqlite)
+    import_csv; DEST="${IN%.*}.db"
+    [ -e "$DEST" ] && fail "$DEST already exists: it is not replaced (move or delete it first)"
+    cp "$DB" "$DEST" || fail "could not write $DEST"
+    { echo "Wrote $DEST"; echo; echo "Table t: $(sqlite3 "$DEST" 'select count(*) from t;') rows, $NCOLS columns:"; sqlite3 "$DEST" "select '  ' || name from pragma_table_info('t') order by cid;"; echo; echo "Open it with:  sqlite3 '$DEST'"; } > "$OUT" ;;
+col-stats)
+    import_csv; col="$(resolve_col "${1:-}")" || exit 1; c=$(qid "$col"); nc=$(numcond "$col")
+    { q "select '${col//\'/\'\'}' as column, COUNT(*) as rows, SUM($c IS NULL OR $c = '') as empty, SUM($nc) as numeric_values, COUNT(DISTINCT NULLIF($c, '')) as distinct_values, MIN(CASE WHEN $nc THEN CAST($c AS REAL) END) as min, MAX(CASE WHEN $nc THEN CAST($c AS REAL) END) as max, SUM(CASE WHEN $nc THEN CAST($c AS REAL) END) as sum, ROUND(AVG(CASE WHEN $nc THEN CAST($c AS REAL) END), 4) as mean from t;"; } > "$OUT.tmp" || exit 1; mv "$OUT.tmp" "$OUT"
+    { echo; echo "(min, max, sum and mean use only the values that are plain numbers; the other values are not counted in them)"; } >> "$OUT" ;;
+col-count)
+    import_csv; col="$(resolve_col "${1:-}")" || exit 1; c=$(qid "$col"); N="${2:-20}"; [[ "$N" =~ ^[0-9]+$ ]] || N=20; [ "$N" -ge 1 ] || N=20
+    { q "select $c as value, COUNT(*) as count, ROUND(100.0 * COUNT(*) / (select count(*) from t), 1) as percent from t group by $c order by count desc, value limit $N;"; } > "$OUT.tmp" || exit 1; mv "$OUT.tmp" "$OUT" ;;
+xlsx-to-csv)
+    SO="$(command -v soffice || command -v libreoffice || true)"; [ -n "$SO" ] || fail "LibreOffice is not installed (sudo apt install libreoffice-calc)"
+    mkdir -p "$T/lo"; cp "$IN" "$T/lo/in.${IN##*.}"
+    ( cd "$T/lo" && HOME="$T/home" timeout 120 "$SO" --headless --convert-to csv --outdir "$T/lo/out" "in.${IN##*.}" >/dev/null 2>&1 ) || true
+    [ -f "$T/lo/out/in.csv" ] || fail "LibreOffice could not convert this file"
+    cp "$T/lo/out/in.csv" "$OUT" ;;
+*) fail "unknown subcommand '$SUB'" ;;
+esac
+exit 0

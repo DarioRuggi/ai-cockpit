@@ -1,0 +1,24 @@
+{
+    "id": "web-fetch",
+    "name": "Web fetch",
+    "description": "Fetch a URL and return its text content (HTML stripped). 16KB cap per fetch.",
+    "tags": ["network", "research"],
+    "scopes": ["per-project"],
+    "implementations": {
+        "claude": {
+            "type": "mcp",
+            "command": "uvx",
+            "args": ["mcp-server-fetch"]
+        },
+        "gemini": {
+            "type": "mcp",
+            "command": "uvx",
+            "args": ["mcp-server-fetch"]
+        },
+        "ollama": {
+            "type": "tool-shim",
+            "shim": "webfetch_shim.sh",
+            "system_prompt_addition": "FETCH:<url> — fetch the URL's text content (HTML tags stripped, 16KB max)."
+        }
+    }
+}

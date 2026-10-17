@@ -1,0 +1,50 @@
+{
+    "id": "trip",
+    "name": "Travel planning",
+    "description": "Check and budget a trip from an itinerary CSV, and build a packing list. Columns are found by name: type (flight, train, hotel ... in several languages), description, from, to, start (departure, check-in), end (arrival, check-out), start offset and end offset (UTC offsets such as +02:00), amount, currency, category. Check finds unreadable dates, items that end before they start, impossible connections (an arrival after the next departure), tight connections under a limit you set, lodging overlaps and nights with no lodging, and gives every duration as real elapsed time when UTC offsets are present; Budget totals by day, category and currency with the exchange rates YOU supply (nothing is looked up); Packing builds a deduplicated list from the trip length, the climate and the activities. Arithmetic on your own bookings, not travel advice: check visa, health and entry rules with the official sources. The original is never changed.",
+    "binary": "php",
+    "version_args": "--version",
+    "website": "https://www.php.net",
+    "packages": {
+        "apt": "php-cli php-mbstring",
+        "dnf": "php-cli php-mbstring",
+        "pacman": "php",
+        "zypper": "php8 php8-mbstring",
+        "brew": "php"
+    },
+    "presets": [
+        {
+            "id": "check",
+            "label": "Check the itinerary",
+            "description": "Unreadable dates and items ending before they start (error), impossible connections (error), tight connections under 60 minutes (warning; change it with min=45 in the extra arguments), lodging overlaps and uncovered nights (warning), a table of durations in real elapsed time when UTC offsets are given. Problems come back as file(line), with Fix with agent.",
+            "input_kinds": ["csv", "file", "spreadsheet", "text"],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_check",
+            "command": "php {WEBROOT}/trip_tool check {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "budget",
+            "label": "Budget by day, category and currency",
+            "description": "Totals each currency as written; with base=EUR rates=USD=0.92,GBP=1.17 in the extra arguments (1 USD = 0.92 EUR, your own rates) also totals by category and by day in the base currency. Lodging is spread over its nights. Lines with no rate are listed, never guessed.",
+            "input_kinds": ["csv", "file", "spreadsheet", "text"],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_budget",
+            "command": "php {WEBROOT}/trip_tool budget {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "packing",
+            "label": "Packing list",
+            "description": "A deduplicated checklist from the trip length (from the itinerary dates, a phrase such as \"7 days\", or days=7 in the extra arguments), the climate (climate=cold, hot, rain, mild, or words in the file) and the activities (activities=hiking,beach,ski,business,camping,city,formal). Items already ticked as checkboxes in the file are not repeated.",
+            "input_kinds": ["csv", "file", "text"],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_packing",
+            "command": "php {WEBROOT}/trip_tool packing {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        }
+    ]
+}

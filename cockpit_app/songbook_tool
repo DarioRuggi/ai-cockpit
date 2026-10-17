@@ -1,0 +1,158 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// songbook_tool — the Music practice and songbook tools' work, for the tool presets (tools_builtins/songbook.json). A command-line program, never reachable over the web.
+//
+//   php songbook_tool practice  LOG.csv      OUTPUT [goal=150 today=YYYY-MM-DD]  practice log (date, piece, minutes): minutes per week and per piece, streaks, progress against a weekly goal in minutes
+//   php songbook_tool setlist   SETLIST.csv  OUTPUT [slot=60 gap=30]            set list (title, minutes, key, tempo): total against the slot, key jumps, the same tempo three in a row
+//   php songbook_tool transpose CHART.txt    OUTPUT +2|-3|to=G [from=C flats|sharps]   chord chart or ChordPro transposed, sharps or flats chosen to suit, and a capo suggestion
+//   php songbook_tool lyrics    LYRICS.md    OUTPUT [SETLIST.csv]                lyric sheets ("# Title" per song): sections labelled, verse numbers complete, songs against a set list
+//   php songbook_tool index     SONGS.md     OUTPUT [title="My songbook"]        contents, alphabetical index and index by key as Markdown, ready for Pandoc
+//
+// Counting and text work on your own files. The tool does not hear anything and does not write music: for notation see the Music scores kind (LilyPond, score tool). The original is never changed.
+// Problems come back as file(line) Error|Warning|Note: ...
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "songbook_tool: $m\n"); exit($rc); }
+[$sub, $in, $out] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? '']; $args = array_slice($argv, 4);
+if (!in_array($sub, ['practice', 'setlist', 'transpose', 'lyrics', 'index'], true) || $in === '' || $out === '') fail('usage: songbook_tool practice|setlist|transpose|lyrics|index INPUT OUTPUT [options]', 2);
+function load(string $f): string { if (!is_file($f)) fail("no such file: $f"); $r = (string)file_get_contents($f); if (strncmp($r, "\xEF\xBB\xBF", 3) === 0) $r = substr($r, 3); if (!mb_check_encoding($r, 'UTF-8')) fail("not valid UTF-8: $f"); $r = str_replace(["\r\n", "\r"], "\n", $r); if (trim($r) === '') fail("the file is empty: $f"); return $r; }
+$raw = load($in); $name = basename($in); $opt = []; $loose = [];
+foreach ($args as $a) { $a = trim($a); if (preg_match_all('/(\w+)=("[^"]*"|\S*)/u', $a, $mm, PREG_SET_ORDER)) { foreach ($mm as $m) $opt[strtolower($m[1])] = trim($m[2], '"'); $rest = trim(preg_replace('/(\w+)=("[^"]*"|\S*)/u', '', $a)); if ($rest !== '') foreach (preg_split('/\s+/', $rest) as $w) $loose[] = $w; } elseif ($a !== '') foreach (preg_split('/\s+/', $a) as $w) $loose[] = $w; }
+$msgs = []; $nerr = 0; $nwarn = 0;
+$add = function (string $k, int $l, string $m) use (&$msgs, &$nerr, &$nwarn, $name) { $msgs[] = "$name($l) $k: $m"; if ($k === 'Error') $nerr++; elseif ($k === 'Warning') $nwarn++; };
+function finish(string $out, string $body, array $msgs, int $nerr, int $nwarn, bool $comment = false): void {
+    $p = ($msgs ? implode("\n", $msgs) . "\n" : "None.\n") . "\n$nerr errors, $nwarn warnings.\n[exit code 0]";
+    file_put_contents($out, $comment ? $body . "\n<!--\nProblems found\n\n$p\n-->\n" : $body . "\n## Problems found\n\n$p\n"); echo "Wrote $out ($nerr errors, $nwarn warnings)\n"; exit(0);
+}
+function read_csv(string $raw): array {
+    $first = strtok($raw, "\n"); $sep = ','; $best = substr_count($first, ','); foreach ([';', "\t"] as $c) if (substr_count($first, $c) > $best) { $sep = $c; $best = substr_count($first, $c); }
+    $h = fopen('php://temp', 'r+'); fwrite($h, $raw); rewind($h); $hd = null; $rows = []; $ln = 0;
+    while (($r = fgetcsv($h, 0, $sep, '"', '')) !== false) { $ln++; if ($r === [null] || (count($r) === 1 && trim((string)$r[0]) === '')) continue; $r = array_map(fn($x) => trim((string)$x), $r); if ($hd === null) { $hd = array_map('mb_strtolower', $r); continue; } $rows[] = ['line' => $ln, 'c' => $r]; }
+    return [$hd ?? [], $rows];
+}
+function colx(array $hd, array $names): ?int { foreach ($names as $n) foreach ($hd as $i => $x) if ($x === $n) return $i; foreach ($names as $n) foreach ($hd as $i => $x) if (mb_strpos($x, $n) !== false) return $i; return null; }
+function pdate(string $s): ?string { if (preg_match('/^(\d{4})-(\d{1,2})-(\d{1,2})$/', $s, $m) && checkdate((int)$m[2], (int)$m[3], (int)$m[1])) return sprintf('%04d-%02d-%02d', $m[1], $m[2], $m[3]); if (preg_match('/^(\d{1,2})[\/.](\d{1,2})[\/.](\d{4})$/', $s, $m) && checkdate((int)$m[2], (int)$m[1], (int)$m[3])) return sprintf('%04d-%02d-%02d', $m[3], $m[2], $m[1]); return null; }
+function dnum(string $d): int { return (int)(strtotime($d . ' UTC') / 86400); }
+function secs(string $s): ?int { $s = trim($s); if (preg_match('/^(\d+):(\d{2})$/', $s, $m)) return (int)$m[1] * 60 + (int)$m[2]; if (preg_match('/^\d+([.,]\d+)?$/', $s)) return (int)round((float)str_replace(',', '.', $s) * 60); return null; }
+function mmss(int $s): string { return $s >= 3600 ? sprintf('%d:%02d:%02d', intdiv($s, 3600), intdiv($s % 3600, 60), $s % 60) : sprintf('%d:%02d', intdiv($s, 60), $s % 60); }
+const SH = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']; const FL = ['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B'];
+function root(string $r): ?int { if (!preg_match('/^([A-Ga-g])([#b♯♭]?)/u', $r, $m)) return null; $i = ['C'=>0,'D'=>2,'E'=>4,'F'=>5,'G'=>7,'A'=>9,'B'=>11][strtoupper($m[1])]; if ($m[2] === '#' || $m[2] === '♯') $i++; elseif ($m[2] !== '') $i--; return ($i + 12) % 12; }
+function keyparse(string $k): ?array { $k = trim($k); if (!preg_match('/^([A-Ga-g][#b♯♭]?)\s*(m|min|minor|maj|major)?$/u', $k, $m)) return null; return [root($m[1]), isset($m[2]) && in_array(strtolower($m[2]), ['m', 'min', 'minor'], true) && !($m[1][0] >= 'a' && $m[2] === 'M')]; }
+const CHORD = '/^([A-G][#b]?)((?:maj|min|dim|aug|sus|add|alt|m|M|\d|[+°ø()#b\-,])*)(?:\/([A-G][#b]?))?$/u';
+function ischord(string $t): bool { return (bool)preg_match(CHORD, $t); }
+function chordline(string $l): bool { $t = preg_split('/\s+/', trim($l)); if (!$t || $t === ['']) return false; $c = 0; foreach ($t as $x) { if (ischord($x)) $c++; elseif (!preg_match('/^(\||\|\||\|:|:\||[-–\/]|x\d+|\d+x|N\.?C\.?|%|\.{2,})$/iu', $x)) return false; } return $c > 0 && !(count($t) === 1 && $t[0] === 'A'); }
+function tchord(string $ch, int $n, bool $fl): string { if (!preg_match(CHORD, $ch, $m)) return $ch; $names = $fl ? FL : SH; $r = $names[(root($m[1]) + $n % 12 + 12) % 12]; $b = isset($m[3]) && $m[3] !== '' ? '/' . $names[(root($m[3]) + $n % 12 + 12) % 12] : ''; return $r . $m[2] . $b; }
+
+// ---- practice -----------------------------------------------------------------------------------------------------------------------------------
+if ($sub === 'practice') {
+    [$hd, $rows] = read_csv($raw); $di = colx($hd, ['date', 'day', 'fecha', 'datum', 'data', 'jour', 'giorno']); $pi = colx($hd, ['piece', 'song', 'tune', 'title', 'exercise', 'morceau', 'stück', 'brano', 'pieza', 'peça']); $mi = colx($hd, ['minutes', 'min', 'duration', 'durée', 'minuten', 'minuti', 'minutos', 'time']);
+    if ($di === null || $mi === null) fail('the practice log needs the columns date and minutes (found: ' . implode(', ', $hd) . ')');
+    $today = $opt['today'] ?? date('Y-m-d'); if (!pdate($today)) fail("today must be a date YYYY-MM-DD, not $today", 2); $today = pdate($today); $goal = isset($opt['goal']) ? (float)$opt['goal'] : null; $wk = []; $pc = []; $days = []; $wp = []; $tot = 0;
+    foreach ($rows as $r) { $c = $r['c']; $l = $r['line']; $d = pdate($c[$di] ?? ''); $m = is_numeric(str_replace(',', '.', $c[$mi] ?? '')) ? (float)str_replace(',', '.', $c[$mi]) : null;
+        if (!$d) { $add('Error', $l, 'the date "' . ($c[$di] ?? '') . '" cannot be read (use YYYY-MM-DD or DD/MM/YYYY)'); continue; } if ($m === null || $m <= 0) { $add('Error', $l, 'the minutes "' . ($c[$mi] ?? '') . '" are not a positive number'); continue; }
+        if ($d > $today) $add('Warning', $l, "the date $d is after today ($today)"); if ($m > 480) $add('Warning', $l, "$m minutes in one entry: check it");
+        $w = date('o-\WW', strtotime($d . ' UTC')); $wk[$w] = ($wk[$w] ?? 0) + $m; $p = $pi !== null && ($c[$pi] ?? '') !== '' ? $c[$pi] : '(no piece)'; $pc[$p]['m'] = ($pc[$p]['m'] ?? 0) + $m; $pc[$p]['n'] = ($pc[$p]['n'] ?? 0) + 1; $pc[$p]['last'] = max($pc[$p]['last'] ?? '', $d); $wp[$w][$p] = 1; $days[$d] = 1; $tot += $m; }
+    if (!$days) fail('no readable practice entries found'); ksort($wk); ksort($days);
+    $o = "# Practice log: $name\n\nToday: $today. Total: " . round($tot) . ' minutes (' . round($tot / 60, 1) . " hours) on " . count($days) . " days, " . count($pc) . " pieces.\n\n## Minutes per week (Monday to Sunday)\n\n| Week | Minutes | Pieces" . ($goal ? ' | Goal ' . round($goal) : '') . " |\n|---|---|---|" . ($goal ? '---|' : '') . "\n"; $met = 0;
+    foreach ($wk as $w => $m) { $o .= "| $w | " . round($m) . ' | ' . count($wp[$w]) . ($goal ? ' | ' . round(100 * $m / $goal) . '%' . ($m >= $goal ? ' met' : '') : '') . " |\n"; if ($goal && $m >= $goal) $met++; }
+    if ($goal) { $last = array_key_last($wk); $o .= "\nGoal: $goal minutes a week. Met in $met of " . count($wk) . " weeks. Latest week ($last): " . round($wk[$last]) . ' minutes, ' . round(100 * $wk[$last] / $goal) . "%" . ($wk[$last] < $goal ? ', ' . round($goal - $wk[$last]) . ' to go' : '') . ".\n"; }
+    $o .= "\n## Per piece\n\n| Piece | Minutes | Sessions | Last practised |\n|---|---|---|---|\n"; uasort($pc, fn($a, $b) => $b['m'] <=> $a['m']); foreach ($pc as $p => $v) $o .= "| $p | " . round($v['m']) . " | {$v['n']} | {$v['last']} |\n";
+    $ds = array_map('dnum', array_keys($days)); $best = 1; $run = 1; for ($i = 1; $i < count($ds); $i++) { $run = $ds[$i] === $ds[$i - 1] + 1 ? $run + 1 : 1; $best = max($best, $run); }
+    $cur = 0; $t = dnum($today); $k = in_array($t, $ds, true) ? $t : (in_array($t - 1, $ds, true) ? $t - 1 : null); if ($k !== null) while (in_array($k, $ds, true)) { $cur++; $k--; }
+    $o .= "\n## Streaks\n\n- Longest streak: $best consecutive days\n- Current streak: $cur days" . ($cur ? ' (counts if you practised today or yesterday)' : ' (nothing today or yesterday)') . "\n"; $gap = $t - end($ds); if ($gap > 7) $add('Note', 1, "no practice for $gap days");
+    finish($out, $o, $msgs, $nerr, $nwarn);
+}
+
+// ---- setlist ------------------------------------------------------------------------------------------------------------------------------------
+if ($sub === 'setlist') {
+    [$hd, $rows] = read_csv($raw); $ti = colx($hd, ['title', 'song', 'name', 'titre', 'titel', 'titolo', 'título', 'canción']); $mi = colx($hd, ['minutes', 'duration', 'length', 'time', 'durée', 'dauer', 'durata', 'duración']); $ki = colx($hd, ['key', 'tonalité', 'tonart', 'tonalità', 'tono']); $bi = colx($hd, ['tempo', 'bpm']);
+    if ($ti === null || $mi === null) fail('the set list needs the columns title and minutes (found: ' . implode(', ', $hd) . ')');
+    $slot = isset($opt['slot']) ? (float)$opt['slot'] : null; $gap = isset($opt['gap']) ? (int)$opt['gap'] : 0; $run = 0; $n = 0; $prev = null; $same = 0; $o = "# Set list check: $name\n\n" . ($gap ? "Changeover between songs: $gap seconds. " : '') . "Running time is the sum of the song lengths" . ($gap ? ' plus the changeovers' : '') . ".\n\n| # | Title | Length | Running | Key | Tempo |\n|---|---|---|---|---|---|\n"; $tl = [];
+    foreach ($rows as $r) { $c = $r['c']; $l = $r['line']; $t = $c[$ti] ?? ''; if ($t === '') { $add('Error', $l, 'a row without a title'); continue; } $s = secs($c[$mi] ?? ''); if ($s === null || $s <= 0) { $add('Error', $l, "the length \"" . ($c[$mi] ?? '') . "\" of \"$t\" cannot be read (use m:ss or minutes)"); continue; }
+        $key = $ki !== null ? ($c[$ki] ?? '') : ''; $kp = $key !== '' ? keyparse($key) : null; if ($key !== '' && !$kp) $add('Warning', $l, "the key \"$key\" of \"$t\" is not recognised (C, F#, Bb, Am ...)"); elseif ($ki !== null && $key === '') $add('Note', $l, "no key for \"$t\"");
+        $tp = $bi !== null && is_numeric($c[$bi] ?? '') ? (int)$c[$bi] : null; if ($bi !== null && ($c[$bi] ?? '') !== '' && $tp === null) $add('Warning', $l, "the tempo \"" . $c[$bi] . "\" of \"$t\" is not a number"); if ($tp !== null && ($tp < 30 || $tp > 300)) $add('Warning', $l, "a tempo of $tp bpm for \"$t\": check it");
+        $n++; $run += $s + ($n > 1 ? $gap : 0); $o .= "| $n | $t | " . mmss($s) . ' | ' . mmss($run) . " | $key | " . ($tp ?? '') . " |\n";
+        if ($prev && $kp && $prev['kp']) { $fa = (($kp[0] + ($kp[1] ? 3 : 0)) * 7) % 12; $fb = (($prev['kp'][0] + ($prev['kp'][1] ? 3 : 0)) * 7) % 12; $d = abs($fa - $fb); $d = min($d, 12 - $d); if ($d >= 3) $add('Warning', $l, "big key jump: \"{$prev['t']}\" ({$prev['key']}) to \"$t\" ($key) is $d steps apart on the circle of fifths"); }
+        if ($prev && $tp !== null && $prev['tp'] !== null && abs($tp - $prev['tp']) <= 2) { $same++; if ($same === 2) $add('Warning', $l, "the same tempo (about $tp bpm) three songs in a row, ending with \"$t\""); } else $same = 0; $prev = ['t' => $t, 'key' => $key, 'kp' => $kp, 'tp' => $tp]; }
+    if (!$n) fail('no readable songs found'); $o .= "\nTotal: $n songs, " . mmss($run) . ' (' . round($run / 60, 1) . " minutes).\n";
+    if ($slot !== null) { $sl = $slot * 60; if ($run > $sl) $add('Error', 1, 'the set runs ' . mmss($run) . ", " . mmss((int)($run - $sl)) . " over the slot of " . rtrim(rtrim(number_format($slot, 1), '0'), '.') . ' minutes'); elseif ($run < $sl * 0.85) $add('Warning', 1, 'the set runs ' . mmss($run) . ', ' . mmss((int)($sl - $run)) . ' short of the slot of ' . rtrim(rtrim(number_format($slot, 1), '0'), '.') . ' minutes'); else $o .= 'Fits the slot of ' . rtrim(rtrim(number_format($slot, 1), '0'), '.') . ' minutes with ' . mmss((int)($sl - $run)) . " to spare.\n"; } else $add('Note', 1, 'no slot length given (slot=60 in the extra arguments): the total was not compared');
+    $o .= "\nKey jumps are counted in steps round the circle of fifths between consecutive songs, a minor key counted as its relative major (3 steps or more is flagged: for example C to E, or G to Eb). Warnings are prompts, not rules.\n"; finish($out, $o, $msgs, $nerr, $nwarn);
+}
+
+// ---- transpose ----------------------------------------------------------------------------------------------------------------------------------
+if ($sub === 'transpose') {
+    $lines = explode("\n", $raw); $semi = null; $to = $opt['to'] ?? null; $from = $opt['from'] ?? null; $style = null;
+    foreach ($loose as $w) { if (preg_match('/^[+-]?\d+$/', $w)) $semi = (int)$w; elseif (strtolower($w) === 'flats') $style = true; elseif (strtolower($w) === 'sharps') $style = false; }
+    if (isset($opt['up'])) $semi = (int)$opt['up']; if (isset($opt['down'])) $semi = -(int)$opt['down']; if (isset($opt['semitones'])) $semi = (int)$opt['semitones']; if (isset($opt['style'])) $style = strtolower($opt['style']) === 'flats' ? true : (strtolower($opt['style']) === 'sharps' ? false : null);
+    $firstChord = null; $usesFl = false; $usesSh = false; $nchord = 0; $pro = (bool)preg_match('/\[[A-G][^\]]*\]/', $raw);
+    foreach ($lines as $l) { $toks = []; if ($pro) { if (preg_match_all('/\[([^\]]+)\]/', $l, $m)) $toks = $m[1]; } elseif (chordline($l)) $toks = preg_split('/\s+/', trim($l)); foreach ($toks as $t) if (ischord($t)) { preg_match(CHORD, $t, $cm); $firstChord ??= $t; $nchord++; if (str_contains($cm[1] . ($cm[3] ?? ''), 'b')) $usesFl = true; if (str_contains($cm[1] . ($cm[3] ?? ''), '#')) $usesSh = true; } }
+    if (!$nchord) fail('no chords found: expected lines of chords such as "C G Am F", or ChordPro [C] markers');
+    if ($semi === null && $to === null) fail('say how far to move: +2 or -3 (semitones), or to=G', 2);
+    if ($semi === null) { $tk = keyparse($to); if (!$tk) fail("not a key: $to", 2); $fk = $from !== null ? keyparse($from) : null; if ($from !== null && !$fk) fail("not a key: $from", 2);
+        if (!$fk) { if (preg_match('/\{\s*key\s*:\s*([^}\s]+)\s*\}/i', $raw, $m)) $fk = keyparse($m[1]); } if (!$fk && $firstChord) { preg_match(CHORD, $firstChord, $cm); $fk = [root($cm[1]), false]; $add('Note', 1, "the starting key is taken from the first chord ($firstChord): give from=KEY if that is not the key"); }
+        if (!$fk) fail('the starting key is unknown: give from=KEY', 2); $semi = ($tk[0] - $fk[0] + 12) % 12; }
+    $semi = (($semi % 12) + 12) % 12;
+    if ($style === null) {      // spelling follows the key signature of the new key: F Bb Eb Ab Db Gb and d g c f bb eb use flats, the rest sharps
+        if (isset($tk) && $tk) { $tr = $tk[0]; $tm = $tk[1]; $explicit = trim((string)$to); }
+        else { preg_match(CHORD, (string)$firstChord, $cm); $tr = (root($cm[1]) + $semi) % 12; $tm = (bool)preg_match('/^(m(?!aj)|min)/', $cm[2]); $explicit = ''; }
+        $style = $tm ? in_array($tr, [2, 7, 0, 5, 10, 3], true) : in_array($tr, [5, 10, 3, 8, 1], true);
+        if ($tr === 6 && !$tm) $style = (strlen($explicit) > 1 && $explicit[1] === 'b');
+    }
+    $res = []; $changed = 0; $resChords = [];
+    foreach ($lines as $l) {
+        if ($pro) { if (preg_match('/^\s*\{\s*key\s*:\s*([^}\s]+)\s*\}/i', $l, $km) && ($kp = keyparse($km[1]))) { $names = $style ? FL : SH; $nk = $names[($kp[0] + $semi) % 12] . ($kp[1] ? 'm' : ''); $res[] = '{key: ' . $nk . '}'; continue; }
+            $res[] = preg_replace_callback('/\[([^\]]+)\]/', function ($m) use ($semi, $style, &$changed, &$resChords) { if (!ischord($m[1])) return $m[0]; $changed++; $x = tchord($m[1], $semi, $style); $resChords[$x] = 1; return "[$x]"; }, $l); continue; }
+        if (!chordline($l)) { $res[] = $l; continue; }
+        $outl = ''; $pos = 0; preg_match_all('/\S+/u', $l, $mm, PREG_OFFSET_CAPTURE);
+        foreach ($mm[0] as [$tok, $off]) { $col = mb_strlen(substr($l, 0, $off)); $new = ischord($tok) ? tchord($tok, $semi, $style) : $tok; if (ischord($tok)) { $changed++; $resChords[$new] = 1; } $cur = mb_strlen($outl); if ($cur < $col) $outl .= str_repeat(' ', $col - $cur); elseif ($cur > 0) $outl .= ' '; $outl .= $new; }
+        $res[] = $outl; }
+    $o = implode("\n", $res); if (substr($o, -1) !== "\n") $o .= "\n";
+    $o .= "\n---\nTransposed up $semi semitones (" . ($semi === 0 ? 'unchanged' : ($semi > 6 ? 'the same as down ' . (12 - $semi) : "or down " . (12 - $semi))) . "), written with " . ($style ? 'flats' : 'sharps') . ". $changed chords changed. Chords were recognised by their shape (A-G, # or b, m, 7, maj7, sus, add, dim, aug, slash bass): check anything unusual.\n";
+    $easy = ['C', 'D', 'E', 'G', 'A', 'Am', 'Dm', 'Em']; $best = null; $names = $style ? FL : SH;
+    foreach ($resChords as $ch => $_) { }
+    for ($capo = 0; $capo <= 7; $capo++) { $bad = []; $shapes = []; foreach (array_keys($resChords) as $ch) { preg_match(CHORD, $ch, $cm); $sr = $names[(root($cm[1]) - $capo + 12) % 12]; $min = (bool)preg_match('/^(m(?!aj)|min)/', $cm[2]); $b = ($cm[3] ?? '') !== '' ? '/' . $names[(root($cm[3]) - $capo + 12) % 12] : ''; $shape = $sr . $cm[2] . $b; $shapes[$ch] = $shape; $dim = preg_match('/dim|aug|ø|°|\+/', $cm[2]); if ($dim || !in_array($sr . ($min ? 'm' : ''), $easy, true)) $bad[] = $shape; }
+        if ($best === null || count($bad) < count($best['bad'])) $best = ['capo' => $capo, 'bad' => $bad, 'shapes' => $shapes]; }
+    $o .= 'Capo suggestion: ' . ($best['capo'] === 0 ? 'no capo' : 'capo on fret ' . $best['capo']) . ' and play ' . implode(' ', array_unique(array_values($best['shapes']))) . '.';
+    $o .= $best['bad'] ? ' Chords still needing a barre or a stretch there: ' . implode(' ', array_unique($best['bad'])) . ". (Open shapes counted: C D E G A Am Dm Em; the choice is a guess at what is easy, not a rule.)\n" : " Every shape is one of the open chords C D E G A Am Dm Em (suffixes such as 7 or sus kept).\n";
+    file_put_contents($out, $o); echo "Wrote $out ($changed chords, up $semi)\n"; exit(0);
+}
+
+// ---- lyrics / index: the songs ------------------------------------------------------------------------------------------------------------------
+$LAB = 'verse|chorus|refrain|bridge|pre-?chorus|intro|outro|coda|tag|interlude|solo|strophe|couplet|pont|estribillo|estrofa|ritornello|strofa|refr[ãa]o|ponte|vers|br[üu]cke';
+$songs = []; $cur = null; $lines = explode("\n", $raw);
+foreach ($lines as $i => $l) { $ln = $i + 1; if (preg_match('/^#\s+(.+?)\s*#*\s*$/u', $l, $m)) { $cur = count($songs); $songs[] = ['t' => trim($m[1]), 'line' => $ln, 'body' => [], 'meta' => []]; continue; }
+    if ($cur === null) continue; if (preg_match('/^\s*(key|artist|composer|tempo|tonart|tonalité|tonalità)\s*:\s*(.+?)\s*$/iu', $l, $m) && !$songs[$cur]['body']) { $songs[$cur]['meta'][strtolower($m[1])] = $m[2]; continue; } $songs[$cur]['body'][] = [$ln, $l]; }
+if (!$songs) fail('no songs found: each song starts with a line "# Title"');
+function norm(string $t): string { $t = mb_strtolower($t); $t = preg_replace('/[^\p{L}\p{N}]+/u', ' ', $t); return trim($t); }
+
+if ($sub === 'lyrics') {
+    $sl = []; $sf = $loose[0] ?? ''; if ($sf !== '') { $sr = load($sf); [$h2, $r2] = read_csv($sr); $tc = colx($h2, ['title', 'song', 'name', 'titre', 'titel', 'titolo', 'título']); if ($tc !== null) foreach ($r2 as $r) { if (($r['c'][$tc] ?? '') !== '') $sl[norm($r['c'][$tc])] = ['t' => $r['c'][$tc], 'v' => null]; $vc = colx($h2, ['verses', 'strophes', 'strofe', 'estrofas']); if ($vc !== null && is_numeric($r['c'][$vc] ?? '')) $sl[norm($r['c'][$tc])]['v'] = (int)$r['c'][$vc]; }
+        else foreach (explode("\n", $sr) as $x) { $x = trim(preg_replace('/^(\d+[.)]|[-*•])\s*/u', '', trim($x))); if ($x !== '') $sl[norm($x)] = ['t' => $x, 'v' => null]; } }
+    $o = "# Lyric sheet check: $name\n\n| Song | Sections labelled | Verses |\n|---|---|---|\n"; $seen = [];
+    foreach ($songs as $s) { $blocks = []; $label = null; $block = []; $labels = []; $verses = []; $text = 0;
+        $flush = function () use (&$block, &$label, &$blocks) { if ($block) $blocks[] = [$block[0][0], $label, count($block)]; $block = []; $label = null; };
+        foreach ($s['body'] as [$ln, $l]) { $t = trim($l); if ($t === '') { $flush(); continue; }
+            if (preg_match('/^(?:#{2,6}\s*)?\[?\s*(' . $LAB . ')\s*(\d*)\s*\]?\s*:?\s*$/iu', $t, $m) || preg_match('/^\{\s*(?:c|comment|ci|cb)\s*:\s*(' . $LAB . ')\s*(\d*)\s*\}$/iu', $t, $m) || preg_match('/^\{\s*start_of_(verse|chorus|bridge)\s*(?::\s*(?:' . $LAB . ')?\s*(\d*))?\s*\}$/iu', $t, $m)) { $flush(); $label = mb_strtolower($m[1]) . (($m[2] ?? '') !== '' ? ' ' . $m[2] : ''); $labels[] = $label; if (preg_match('/^(verse|strophe|couplet|estrofa|strofa|vers)\b\s*(\d+)?/iu', $label, $vm)) $verses[] = [$vm[2] ?? '', $ln]; $blocks[] = [$ln, $label, 0]; continue; }
+            if (preg_match('/^\{\s*end_of_/i', $t) || preg_match('/^\{[^}]*\}$/', $t)) continue; $block[] = [$ln, $l]; $text++; if (!$label && !preg_match('/^(\[[^\]]+\]|[A-G][^\s]*|\s)*$/u', $t)) { } }
+        $flush(); if ($text === 0) $add('Error', $s['line'], "the song \"{$s['t']}\" has no lyrics under it");
+        $prevlab = null; foreach ($blocks as [$ln, $lab, $cnt]) { if ($cnt > 0 && $lab === null) { $add('Warning', $ln, "an unlabelled block of $cnt lines in \"{$s['t']}\": label it (Verse 1, Chorus, Bridge ...)"); } }
+        $nums = []; foreach ($verses as [$n, $ln]) if ($n !== '') $nums[(int)$n] = $ln; if ($nums) { ksort($nums); for ($k = 1, $mx = max(array_keys($nums)); $k <= $mx; $k++) if (!isset($nums[$k])) $add('Warning', $s['line'], "\"{$s['t']}\" has verse " . max(array_keys($nums)) . " but no verse $k"); if (min(array_keys($nums)) > 1) $add('Warning', $s['line'], "\"{$s['t']}\" starts at verse " . min(array_keys($nums)) . ', not 1'); }
+        $nv = count($verses); $k = norm($s['t']); if (isset($seen[$k])) $add('Warning', $s['line'], "the song \"{$s['t']}\" appears twice (first on line " . $seen[$k] . ')'); $seen[$k] = $s['line'];
+        if ($sl) { if (!isset($sl[$k])) $add('Note', $s['line'], "\"{$s['t']}\" is not in the set list"); elseif ($sl[$k]['v'] !== null && $nv < $sl[$k]['v']) $add('Error', $s['line'], "\"{$s['t']}\" has $nv verses but the set list says " . $sl[$k]['v'] . ': ' . ($sl[$k]['v'] - $nv) . ' missing'); }
+        $o .= "| {$s['t']} | " . count($labels) . " | $nv |\n"; }
+    if ($sl) { $have = []; foreach ($songs as $s) $have[norm($s['t'])] = 1; foreach ($sl as $k => $x) if (!isset($have[$k])) $add('Error', 1, 'the set list has "' . $x['t'] . '" but there are no lyrics for it'); $o .= "\nChecked against the set list " . basename($sf) . ' (' . count($sl) . " titles).\n"; }
+    $o .= "\nA section label is a line such as [Verse 1], Chorus: or ## Bridge (several languages are understood); ChordPro {start_of_verse} and {c: Chorus} also count. The tool cannot tell whether a verse's words are right or complete.\n"; finish($out, $o, $msgs, $nerr, $nwarn);
+}
+
+// ---- index --------------------------------------------------------------------------------------------------------------------------------------
+$title = $opt['title'] ?? (preg_replace('/\.[^.]+$/', '', $name) ?: 'Songbook'); $art = '/^(the|a|an|le|la|les|l\'|un|une|der|die|das|ein|eine|il|lo|gli|el|los|las|o|os|um|uma)\s+/iu'; $ents = []; $seen = [];
+foreach ($songs as $k => $s) { $key = $s['meta']['key'] ?? ($s['meta']['tonart'] ?? ($s['meta']['tonalité'] ?? ($s['meta']['tonalità'] ?? ''))); $ents[] = ['n' => $k + 1, 't' => $s['t'], 'key' => $key, 'art' => $s['meta']['artist'] ?? ($s['meta']['composer'] ?? ''), 'sort' => trim(preg_replace($art, '', $s['t'])), 'line' => $s['line']];
+    $nk = norm($s['t']); if (isset($seen[$nk])) $add('Warning', $s['line'], "the title \"{$s['t']}\" appears twice (first on line {$seen[$nk]})"); $seen[$nk] = $s['line']; if ($key === '') $add('Note', $s['line'], "no Key: line for \"{$s['t']}\" (it is left out of the index by key)"); elseif (!keyparse($key)) $add('Warning', $s['line'], "the key \"$key\" of \"{$s['t']}\" is not recognised"); if (!array_filter($s['body'], fn($b) => trim($b[1]) !== '')) $add('Warning', $s['line'], "\"{$s['t']}\" has no text under it"); }
+$o = "---\ntitle: \"" . str_replace('"', "'", $title) . "\"\n---\n\n## Contents\n\n"; foreach ($ents as $e) $o .= "{$e['n']}. {$e['t']}" . ($e['key'] !== '' ? " ({$e['key']})" : '') . ($e['art'] !== '' ? ", {$e['art']}" : '') . "\n";
+$al = $ents; usort($al, fn($a, $b) => strcasecmp(iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $a['sort']) ?: $a['sort'], iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $b['sort']) ?: $b['sort']));
+$o .= "\n## Alphabetical index\n\n"; $L = null; foreach ($al as $e) { $c = mb_strtoupper(mb_substr(iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $e['sort']) ?: $e['sort'], 0, 1)); if (!preg_match('/\p{L}/u', $c)) $c = '#'; if ($c !== $L) { $o .= "\n**$c**\n\n"; $L = $c; } $o .= "- {$e['t']} ({$e['n']})\n"; }
+$bk = []; foreach ($ents as $e) if ($e['key'] !== '' && ($kp = keyparse($e['key']))) $bk[($kp[0] * 2 + ($kp[1] ? 1 : 0))][] = [($kp[1] ? FL : SH)[$kp[0]] . ($kp[1] ? 'm' : ''), $e];
+ksort($bk); $o .= "\n## Index by key\n\n"; if (!$bk) $o .= "No keys given: add a line \"Key: G\" under each song title.\n"; foreach ($bk as $list) { $o .= "**{$list[0][0]}**\n\n"; foreach ($list as [$kn, $e]) $o .= "- {$e['t']} ({$e['n']})\n"; $o .= "\n"; }
+$o .= "\nSongs are numbered in the order of the file (page numbers depend on the layout, which Pandoc decides). Make a PDF or Word file with: pandoc FILE.md --toc -o songbook.pdf (or .docx).\n";
+finish($out, $o, $msgs, $nerr, $nwarn, true);

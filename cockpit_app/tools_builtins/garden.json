@@ -1,0 +1,77 @@
+{
+    "id": "garden",
+    "name": "Garden planner",
+    "description": "Plans a garden from a plant CSV (name, sow_from, sow_to, harvest_days, spacing_cm; optional hemisphere, water_days). The hemisphere is always an argument (hemisphere=north or hemisphere=south): none is assumed. Calendar shows what can be sown from a start date and when it can be harvested; Bed counts how many plants fit a bed; Log check finds impossible or out-of-season entries in a garden log; To-do lists sowings, harvests and watering day by day. Dates come from your CSV, not a forecast. The original is never changed.",
+    "binary": "php",
+    "version_args": "--version",
+    "website": "https://www.php.net",
+    "packages": {
+        "apt": "php-cli php-mbstring",
+        "dnf": "php-cli php-mbstring",
+        "pacman": "php",
+        "zypper": "php8 php8-mbstring",
+        "brew": "php"
+    },
+    "presets": [
+        {
+            "id": "calendar",
+            "label": "Sowing and harvest calendar",
+            "description": "Give start=YYYY-MM-DD and hemisphere=north or hemisphere=south in the extra arguments. For every plant: sowing window (open now, opens in N days, next year), earliest and latest harvest date, spacing. Months may be numbers or names in six languages; a row marked for the other hemisphere is moved by six months and flagged.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_calendar",
+            "command": "php {WEBROOT}/garden_tool calendar {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "spacing",
+            "label": "Plants per bed",
+            "description": "Give bed=240x120 (and unit=cm, m, in or ft; plant=NAME for one plant) in the extra arguments. Counts how many fit with each plant's spacing_cm: on a square grid and in staggered rows.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_bed",
+            "command": "php {WEBROOT}/garden_tool spacing {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "logcheck",
+            "label": "Check a garden log",
+            "description": "The input is a log CSV (date, bed, plant, action). Finds unreadable and future dates, duplicates, harvests with no sowing or far sooner than the plant allows, and sowings outside the window. Extra arguments: plants=FILE.csv hemisphere=north.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_logcheck",
+            "command": "php {WEBROOT}/garden_tool logcheck {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "todo",
+            "label": "To-do list for the next days",
+            "description": "Give start=YYYY-MM-DD hemisphere=north or south, days=14, and optionally log=LOG.csv water=3. A day-by-day checklist: sowing windows opening or closing, harvests due for what the log says is in the ground, and watering at the interval you set.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_todo",
+            "command": "php {WEBROOT}/garden_tool todo {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        }
+    ]
+}

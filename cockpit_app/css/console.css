@@ -1,0 +1,465 @@
+    /* =========================================================
+       CONTENT AREA
+       ========================================================= */
+    .content-area {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        position: relative;
+    }
+
+    /* =========================================================
+       CONSOLE TOOLBAR — always visible slim bar above console
+       ========================================================= */
+    .console-toolbar {
+        background: var(--bg-panel);
+        border-bottom: 1px solid var(--border-dim);
+        padding: 4px 10px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-shrink: 0;
+        height: 30px;
+    }
+    /* Search input inside always-visible toolbar */
+    .console-toolbar input[type="text"] {
+        flex: 1;
+        background: var(--bg-active);
+        color: var(--text-primary);
+        border: 1px solid var(--border-dim);
+        padding: 2px 7px;
+        font-family: var(--font-ui);
+        font-size: 11.5px;
+        border-radius: 3px;
+        outline: none;
+        min-width: 0;
+        transition: border-color 0.15s;
+    }
+    .console-toolbar input[type="text"]:focus { border-color: var(--border-bright); }
+    .console-toolbar input[type="text"]::placeholder { color: var(--text-muted); }
+
+    /* =========================================================
+       CONSOLE
+       ========================================================= */
+    .console {
+        flex: 1;
+        background: var(--bg-console);
+        overflow-y: auto;
+        padding: 16px 18px;
+        font-family: var(--font-mono);
+        font-size: var(--font-size-console);
+        line-height: 1.65;
+        scroll-behavior: smooth;
+    }
+
+    /* Message blocks */
+    .msg {
+        display: flex;
+        flex-direction: column;
+        margin-bottom: 14px;
+        padding-left: 10px;
+        border-left: 2px solid transparent;
+        animation: msgIn 0.15s ease;
+        position: relative;
+    }
+    /* Line number badge — shown when line numbers are enabled */
+    .msg-linenum {
+        display: none;
+        color: var(--text-muted);
+        font-family: var(--font-mono);
+        font-size: 10px;
+        min-width: 28px;
+        text-align: right;
+        user-select: none;
+        flex-shrink: 0;
+        padding-right: 8px;
+        border-right: 1px solid var(--border-dim);
+        margin-right: 8px;
+        align-self: flex-start;
+        padding-top: 2px;
+    }
+    /* When line numbers are on, make .msg a flex row so number sits beside content */
+    .console.line-numbers .msg {
+        flex-direction: row;
+        align-items: flex-start;
+        padding-left: 0;
+        border-left: none;
+    }
+    /* Move the left border to the content area instead */
+    .console.line-numbers .msg > div {
+        border-left: 2px solid transparent;
+        padding-left: 8px;
+        flex: 1;
+        min-width: 0;
+    }
+    .console.line-numbers .msg-linenum { display: flex; align-items: flex-start; }
+    /* Search highlight */
+    .search-highlight { background: rgba(91,143,212,0.35); border-radius: 2px; }
+    .search-highlight.current { background: rgba(224,184,78,0.45); }
+    @keyframes msgIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+    /* Each turn is a card (2026-09-13): a delicate contour, a tinted background
+       per side (prompt vs reply), a title row that stays visible while a long
+       turn scrolls past, and a fold. Code segments keep their own darker box. */
+    .msg > .msg-wrap {
+        border: 1px solid var(--border-dim);
+        border-left-width: 2px;
+        border-radius: 6px;
+        background: color-mix(in srgb, var(--bg-base) 94%, var(--msg-accent, var(--border-mid)) 6%);
+    }
+    .msg-dario > .msg-wrap { background: color-mix(in srgb, var(--bg-base) 90%, var(--warm) 10%); }
+    .msg-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 0;
+        padding: 4px 10px;
+        position: sticky;
+        top: 0;
+        z-index: 3;
+        border-bottom: 1px solid var(--border-dim);
+        border-radius: 5px 5px 0 0;
+        background: color-mix(in srgb, var(--bg-active) 82%, var(--msg-accent, var(--border-mid)) 18%);
+        cursor: pointer;
+        user-select: none;
+    }
+    .ico { font-size: 1.1em; vertical-align: -0.2em; line-height: 1; }
+    .ico-fill { font-variation-settings: 'FILL' 1; }
+    .msg-header .msg-fold { font-size: 14px; color: var(--text-dim); transition: transform 0.15s; }
+    .msg-collapsed .msg-header { border-bottom: none; border-radius: 5px; }
+    .msg-collapsed .msg-body { display: none; }
+    .msg-collapsed .msg-header .msg-fold { transform: rotate(-90deg); }
+    .msg-body { padding: 6px 10px 8px; }
+    .msg-tag {
+        font-family: var(--font-ui);
+        font-size: 10.5px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+    }
+    .msg-meta {
+        font-family: var(--font-ui);
+        font-size: 10px;
+        color: var(--text-dim);
+    }
+    .msg-model {
+        font-family: var(--font-ui);
+        font-size: 10px;
+        color: var(--text-muted);
+        font-style: italic;
+    }
+    .msg-body {
+        color: var(--text-primary);
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+
+    /* Code block folding */
+    .cp-cb-collapsed > pre { display: none; }
+    .cp-cb-collapsed .cp-cb-fold { transform: rotate(0deg); }
+    .cp-codeblock:not(.cp-cb-collapsed) .cp-cb-fold { transform: rotate(0deg); }
+    .cp-cb-collapsed .cp-cb-header { border-bottom: none; }
+    .cp-cb-collapsed .cp-cb-fold { content: 'expand_more'; }
+
+    /* System message folding */
+    .msg-system-group { margin: 2px 0; }
+    .msg-system-group-toggle {
+        cursor: pointer; font-size: 10px; color: var(--text-dim);
+        padding: 2px 8px; display: flex; align-items: center; gap: 4px;
+        border: 1px solid var(--border-dim); border-radius: 3px;
+        background: var(--bg-darker); margin: 2px 0;
+    }
+    .msg-system-group-toggle:hover { color: var(--text-muted); }
+
+    /* Per-agent message styles */
+    .msg-dario   { border-left-color: var(--warm); }
+    .msg-claude  { border-left-color: var(--claude); }
+    .msg-gemini  { border-left-color: var(--gemini); }
+    .msg-ollama  { border-left-color: var(--ollama); }
+    .msg-system  { border-left-color: var(--border-mid); }
+    .msg-error   { border-left-color: #7a3a2a; }
+
+    .tag-dario  { color: var(--warm); }
+    .tag-claude { color: var(--claude); }
+    .tag-gemini { color: var(--gemini); }
+    .tag-ollama { color: var(--ollama); }
+    .tag-system { color: var(--text-dim); font-style: italic; }
+    .tag-error  { color: #c0522a; }
+
+    /* =========================================================
+       FONT CONTROLS — compact row in footer
+       ========================================================= */
+    .font-controls {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 0 0 0;
+        border-top: 1px solid var(--border-dim);
+        margin-top: 6px;
+        flex-wrap: wrap;
+    }
+    .font-controls label {
+        font-size: 10px;
+        color: var(--text-muted);
+        white-space: nowrap;
+    }
+    .font-family-select {
+        background: var(--bg-active);
+        color: var(--text-dim);
+        border: 1px solid var(--border-dim);
+        padding: 2px 5px;
+        font-family: var(--font-ui);
+        font-size: 10.5px;
+        border-radius: 3px;
+        cursor: pointer;
+        max-width: 140px;
+    }
+    .font-family-select:focus { outline: none; border-color: var(--border-bright); }
+    .font-size-control {
+        display: flex;
+        align-items: center;
+        gap: 3px;
+    }
+    .font-size-btn {
+        background: var(--bg-active);
+        border: 1px solid var(--border-dim);
+        color: var(--text-dim);
+        width: 20px;
+        height: 20px;
+        cursor: pointer;
+        border-radius: 2px;
+        font-size: 13px;
+        line-height: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.15s;
+        padding: 0;
+    }
+    .font-size-btn:hover { color: var(--text-primary); border-color: var(--border-bright); }
+    .font-size-display {
+        font-family: var(--font-mono);
+        font-size: 10.5px;
+        color: var(--text-dim);
+        min-width: 32px;
+        text-align: center;
+    }
+    .font-controls-sep {
+        width: 1px;
+        height: 14px;
+        background: var(--border-dim);
+    }
+
+    /* =========================================================
+       FOOTER — input area
+       ========================================================= */
+    .footer {
+        background: var(--bg-panel);
+        border-top: 1px solid var(--border-dim);
+        padding: 10px 12px 0;
+        flex-shrink: 0;
+        /* Fixed height so the chat|prompt barrier (this border-top) aligns with the
+           bottom of the left/right sidebar titles (243px panel − ~24px header). */
+        height: 219px;
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+    /* The Mode row and the Style row are ONE fixed line each. Pipeline, Broadcast and Plan add controls (agents, order editor, hint, pattern); those used to wrap and make the row taller (29 / 34 / 57 px),
+       which squeezed the fixed-height footer and pushed the status bar off the screen. Now nothing wraps: a row that is too narrow scrolls sideways (thin bar, or the mouse wheel). */
+    #ma-strip, #style-strip { box-sizing: border-box; overflow-x: auto; overflow-y: hidden; white-space: nowrap; }
+    #ma-strip { height: 29px; flex: 0 0 29px; }
+    #style-strip { height: 27px; flex: 0 0 27px; }
+    #ma-strip > *, #style-strip > * { flex-shrink: 0; }
+    #ma-strip::-webkit-scrollbar, #style-strip::-webkit-scrollbar, #power-strip::-webkit-scrollbar { height: 3px; background: transparent; }
+    #ma-strip::-webkit-scrollbar-track, #style-strip::-webkit-scrollbar-track, #power-strip::-webkit-scrollbar-track { background: transparent; }
+    #ma-strip::-webkit-scrollbar-thumb, #style-strip::-webkit-scrollbar-thumb, #power-strip::-webkit-scrollbar-thumb { background: var(--border-mid); border-radius: 2px; }
+    /* the Power Buttons strip is one extra row inside the footer: the footer grows by exactly that row while buttons exist (the chat panel above shrinks by it) */
+    body.has-power-strip .footer { height: calc(219px + 28px); }
+    textarea#prompt-in {
+        width: 100%;
+        background: var(--bg-active);
+        color: var(--text-primary);
+        border: 1px solid var(--border-mid);
+        padding: 8px 10px;
+        font-family: var(--font-mono);
+        font-size: 12.5px;
+        resize: none;
+        height: 64px;
+        border-radius: 3px;
+        transition: border-color 0.15s;
+        line-height: 1.5;
+    }
+    textarea#prompt-in:focus { outline: none; border-color: var(--border-bright); }
+
+    .footer-hint {
+        color: var(--text-muted);
+        font-size: 10px;
+        margin: 4px 0 6px 2px;
+    }
+
+    .btn-row {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+    }
+
+    /* Action buttons */
+    .action-btn {
+        font-family: var(--font-ui);
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        padding: 6px 14px;
+        border: 1px solid var(--border-mid);
+        background: var(--bg-active);
+        color: var(--text-base);
+        cursor: pointer;
+        border-radius: 3px;
+        transition: all 0.15s;
+        white-space: nowrap;
+    }
+    /* Uniform topbar control buttons: same width & height, content centered
+       both axes so they line up in a tidy grid (Start/Stop/Restart · Mode/
+       Theme · Jobs/Accum). */
+    .topbar-settings-grid .topbar-ctrl-btn { width: 100%; justify-content: center; }
+    .count-badge { position: absolute; top: -3px; right: -2px; padding: 0 4px; font-size: 8.5px; line-height: 1.4; }
+    .topbar-ctrl-btn {
+        display: flex;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 4px;
+        box-sizing: border-box;
+        width: 92px;
+        height: 24px;
+        padding: 0 8px;
+        font-size: 10px;
+    }
+    /* Larger variant for Start/Stop/Restart — 2026-07-02, the small shared
+       .topbar-ctrl-btn size was "very hard to see" per user feedback. */
+    .topbar-ctrl-btn-lg {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 5px;
+        box-sizing: border-box;
+        flex: 1;
+        min-width: 64px;
+        height: 32px;
+        padding: 0 8px;
+        font-size: 12px;
+        font-weight: 700;
+    }
+    .action-btn .material-symbols-rounded { color: inherit; font-size: 13px; }
+    .action-btn:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--border-bright); }
+    .action-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    #btn-execute {
+        flex: 2;
+        background: var(--gemini-glow);
+        border-color: var(--gemini-dim);
+        color: var(--gemini);
+    }
+    #btn-execute:hover:not(:disabled) { background: rgba(74,127,193,0.2); }
+    #btn-execute.agent-claude { background: var(--claude-glow); border-color: var(--claude-dim); color: var(--claude); }
+    #btn-execute.agent-ollama { background: var(--ollama-glow); border-color: var(--ollama-dim); color: var(--ollama); }
+
+    #btn-cancel {
+        background: transparent;
+        border-color: var(--border-dim);
+        color: var(--text-muted);
+        display: none;
+    }
+    #btn-cancel.visible { display: block; }
+    #btn-cancel:hover { color: #c0522a; border-color: #7a3a2a; }
+
+    #btn-clear  { }
+    #btn-save   { }
+    #btn-status { }
+
+    /* Spinner */
+    #spinner {
+        display: none;
+        color: var(--text-muted);
+        font-size: 10.5px;
+        font-family: var(--font-ui);
+    }
+    #spinner.visible { display: flex; align-items: center; gap: 4px; }
+    .spin-dot {
+        width: 5px; height: 5px;
+        border-radius: 50%;
+        background: var(--text-muted);
+        animation: pulse 1.2s ease infinite;
+    }
+    .spin-dot:nth-child(2) { animation-delay: 0.2s; }
+    .spin-dot:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes pulse { 0%,100%{opacity:0.3} 50%{opacity:1} }
+    /* Sync dot — amber, blinks on a supplier card while usage is being synced
+       in the background (usage_parser.php / stats.php). Hidden when idle. */
+    .sync-dot { display:none; width:5px; height:5px; border-radius:50%;
+                background:var(--accent-amber); flex-shrink:0; margin-left:4px; }
+    .sync-dot.on { display:inline-block; animation:pulse 0.9s ease infinite; }
+
+
+/* Sessions card: three rows of one fixed height, whatever the nesting (Exit sits in
+   #exit-row with the frameless ▁ ▢; Restart is a direct child — flex:1 of the column
+   made them unequal). The card never widens when ▁ ▢ show: Exit gives up width. */
+/* (superseded below: 21px) */
+
+#exit-row #btn-cockpit-exit { flex: 1 1 0; }
+#win-controls { flex: 0 0 auto; }
+
+
+/* Sessions card buttons match Users/Slots/Apps: 21px tall, 9.5px text, 11px glyph
+   (2026-09-20 — the 32px set stood out once the frameless ▁ ▢ joined the row). */
+#topbar-sessions > * { flex: 0 0 21px; height: 21px; }
+#topbar-sessions .topbar-ctrl-btn-lg, #exit-row .topbar-ctrl-btn-lg { height: 21px; min-width: 0; padding: 0 6px; font-size: 9.5px; font-weight: 700; gap: 4px; }
+#win-controls .topbar-ctrl-btn-lg { width: 22px; min-width: 22px; padding: 0; }
+/* frameless: Exit is glyph-only, like ▁ ▢ beside it */
+body.frameless #exit-label { display: none; }
+body.frameless #exit-row #btn-cockpit-exit { flex: 0 0 22px; width: 22px; min-width: 22px; padding: 0; }
+body.frameless #exit-row { justify-content: flex-end; }
+
+/* Right-side groups share the account card's top edge (6px padding + 1px border):
+   Exit/Stop/Restart and Mode/Theme/Rules sat 7px higher than Users/Slots/Apps. */
+#topbar-sessions { padding-top: 7px; }
+#topbar-settings { padding-top: 7px !important; }
+
+/* The slack after the account card goes to the sessions card, not the strip:
+   the strip sizes to its cards, the sessions card grows (4 rows: Exit/▁▢,
+   Stop/Restart, Reopen/Reload/Refresh, …) up to a sane width. 2026-09-21 */
+.sup-strip { flex: 0 1 auto !important; }
+#topbar-sessions { flex: 1 1 auto; min-width: 160px; }   /* absorbs the strip's slack: the bar fills the viewport exactly (1920 on the rig) */
+#win-row .topbar-ctrl-btn-lg { min-width: 0; }
+
+/* Tighter right-side cards (2026-09-21): content-sized, 4px side gaps, 2px between
+   buttons, 2px button side padding. The sessions card no longer grows into the slack. */
+#topbar-sessions { flex: 0 0 auto !important; min-width: 0 !important; max-width: none; padding: 7px 2px 0 !important; gap: 2px !important; }
+#topbar-sessions > div { gap: 2px !important; }
+#topbar-sessions .topbar-ctrl-btn-lg { padding: 0 3px !important; gap: 3px; }
+#topbar-sessions #btn-cockpit-exit { min-width: 0; }
+.sup-account-card { padding: 6px 2px !important; gap: 2px !important; }
+.sup-account-card > button { padding: 0 2px !important; }
+#topbar-settings { padding: 7px 2px 0 !important; gap: 2px !important; }
+#topbar-settings .topbar-settings-grid { gap: 2px !important; grid-template-columns: repeat(3, max-content) !important; }
+#topbar-settings .topbar-ctrl-btn { width: auto !important; padding: 0 2px !important; gap: 2px; }
+#topbar-clock { padding: 2px 0 !important; }
+#clock-time { letter-spacing: 0.04em !important; }
+
+/* (2026-10-02: the four right-hand cards were pulled together with -4px margins because the bar had grown wider than a 1920 screen; superseded below by ONE rhythm, 4px between every card.) */
+/* ONE RHYTHM across the whole bar (2026-10-14, "the left gaps are not the same as the right gaps"): every card is exactly 4px from the next, from the first agent card to Settings, and both ends of
+   the bar have the same margin (the topbar's own 6px padding). It used to be 0 / 11 / 8 / 8 / 24px: the Account card touched the Tools card, the controls panel added its own 12px gap, 8px padding
+   and -4px margins, and the slack landed at the right edge. The width left over now goes to the Clock card (centred text), never into a gap. */
+.topbar-flex { gap: 4px; }
+.sup-account-card, #topbar-sessions, #topbar-settings, #topbar-clock { margin-left: 0; }
+#topbar-controls-panel { flex: 1 1 auto !important; padding: 0 !important; gap: 4px !important; justify-content: flex-start !important; border-left: 0 !important; }
+#topbar-clock { flex: 1 1 auto; padding: 2px 1px !important; }
+#topbar-settings .topbar-settings-grid { justify-content: center; }
+
+/* i18n: a translated label wider than its (size-locked) button scrolls instead of stretching it. */
+.i18n-mq { animation: i18n-mq 7s ease-in-out infinite alternate; }
+.i18n-mq-self { overflow: hidden; white-space: nowrap; animation: i18n-mq 7s ease-in-out infinite alternate; }
+@keyframes i18n-mq { 0%, 15% { text-indent: 0; } 85%, 100% { text-indent: var(--mq, 0); } }
+@media (prefers-reduced-motion: reduce) { .i18n-mq, .i18n-mq-self { animation: none; text-overflow: ellipsis; } }

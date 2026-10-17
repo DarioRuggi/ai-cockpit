@@ -1,0 +1,41 @@
+<!doctype html><meta charset="utf-8"><title>Fake chat</title>
+<style>body{font:14px sans-serif} #log{height:300px;overflow:auto} .msg.bot{white-space:pre-wrap} .msg{margin:6px;padding:6px;border:1px solid #ccc} #bar{position:fixed;bottom:0;left:0;right:0;padding:8px;background:#eee} #in{width:70%;height:50px} #stop{display:none}</style>
+<div id="log"></div>
+<div id="bar"><!-- a React-ish box: ignores a plain .value change, only reacts to input events -->
+<textarea id="in" placeholder="Ask anything"></textarea><button id="send" aria-label="Send message" disabled>Send</button><button id="stop">Stop</button>
+<div id="ce" contenteditable="true" style="display:none;border:1px solid #888;min-height:30px"></div></div>
+<script>
+const params = new URLSearchParams(location.search), mode = params.get('mode') || 'textarea';
+if (mode === 'redirect') { setTimeout(() => location.replace(location.pathname + '?mode=textarea'), 400); }   // a second full page load right after the first, as chat.mistral.ai does
+const inp = document.getElementById('in'), ce = document.getElementById('ce'), send = document.getElementById('send'), stop = document.getElementById('stop'), log = document.getElementById('log');
+let state = ''; if (mode === 'ce') { inp.style.display = 'none'; ce.style.display = 'block'; }
+const val = () => mode === 'ce' ? ce.innerText : state;
+if (mode !== 'ce') inp.addEventListener('input', () => { state = inp.value; send.disabled = !state.trim(); });
+else ce.addEventListener('input', () => { send.disabled = !ce.innerText.trim(); });
+if (mode === 'login') { document.body.innerHTML = '<h1>Log in</h1><input id="email" placeholder="Email"><button>Continue with Google</button>'; }
+if (mode === 'blocked') { document.body.innerHTML = '<h1>Just a moment...</h1><p>Verify you are human</p>'; }
+function go() {
+  const q = val().trim(); if (!q) return;
+  const u = document.createElement('div'); u.className = 'msg user'; u.textContent = q; log.appendChild(u);
+  if (mode === 'ce') ce.innerText = ''; else { inp.value = ''; state = ''; }
+  send.disabled = true; const b = document.createElement('div'); b.className = 'msg bot'; log.appendChild(b); stop.style.display = 'inline';
+  if (mode === 'junk') b.dataset.junk = '1';
+  if (mode === 'math') {
+    const k = (tex, vis) => '<span class="katex"><span class="katex-mathml"><math><semantics><mrow><mi>' + vis + '</mi></mrow><annotation encoding="application/x-tex">' + tex + '</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span style="display:inline-block">' + vis + '</span><span style="display:block">' + vis + '</span></span></span>';
+    setTimeout(() => { b.innerHTML = '<p>Read more</p><p>Researched</p><p>The root is ' + k('i', 'i') + ' and also ' + k('(-i)^2=-1', '(-i)2') + '.</p><p>Second paragraph.</p><p>britannica</p><p>+1</p><p>Third paragraph.</p>'; b.classList.add('ans'); stop.style.display = 'none'; }, 400);
+    return;
+  }
+  if (mode === 'split') {   // one reply drawn as several blocks (a header, code, text) with formulas as pictures whose alt holds the TeX
+    setTimeout(() => { b.innerHTML = '<div class="blk">Show thinking</div><div class="blk"><pre>PHP\nfunction f() {}</pre></div><div class="blk"><p>Area <img class="inline-block align-middle dark:invert" alt="A = \\pi r^2"> where <img class="inline-block align-middle dark:invert" alt="r"> is the radius.</p></div>'; b.classList.add('ans'); stop.style.display = 'none'; }, 400);
+    return;
+  }
+  if (mode === 'letters') {   // an animated label drawn one letter per element, then the answer in its own marked element
+    setTimeout(() => { b.innerHTML = '<div class="think">' + 'Thought for 1s'.split('').map(c => '<span style="display:block">' + (c === ' ' ? '&nbsp;' : c) + '</span>').join('') + '</div><div data-part="answer"><p>The real answer.</p></div><div class="foot">Connect Fast Vibe can make mistakes</div>'; stop.style.display = 'none'; }, 400);
+    return;
+  }
+  const words = (mode === 'junk' ? 'The answer is 42 with Grüße 日本語 done.' : 'You asked: ' + q + ' -- and here is a streamed answer with Grüße 日本語 and a second line.').split(' '); let i = 0;
+  const t = setInterval(() => { b.textContent = (mode === 'junk' ? 'Fake said\nModel-X\n' : '') + words.slice(0, i + 1).join(' ') + (mode === 'junk' ? '\n\n2nd opinion\nJump to latest response\nAll chats are private.' : ''); i++; if (i >= words.length) { clearInterval(t); stop.style.display = 'none'; } }, 60);
+}
+send.onclick = go;
+(mode === 'ce' ? ce : inp).addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && mode === 'ce') { e.preventDefault(); go(); } });
+</script>

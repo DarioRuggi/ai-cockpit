@@ -1,0 +1,203 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// office_tool — the Document formats tools' work, for the tool presets (tools_builtins/office.json). A command-line program, never reachable over the web.
+//
+//   php office_tool convert FILE OUTPUT [drop-macros]   to the format of OUTPUT's extension; REFUSES (and writes nothing) if the source has macros and the
+//                                                       result would lose them, unless "drop-macros" is given. Refuses a document -> spreadsheet kind of change.
+//   php office_tool macros  FILE OUTPUT                 list the macros: modules, size, auto-run procedures, risky calls (Shell, CreateObject, downloads ...). Never runs them.
+//   php office_tool extract FILE OUTPUT                 all the macro modules as one UTF-8 text file (with a header per module), for reading, porting and review
+//   php office_tool inject  FILE OUTPUT SOURCE.bas      put the Basic/VBA source in as a module of an .ods/.odt/.odp (LibreOffice Basic, VBA mode), so it runs there
+//   php office_tool inspect FILE OUTPUT                 what is inside: sheets, formulas, comments, tracked changes, pictures, macros, links, protection ...
+//   php office_tool verify  FILE OUTPUT [ext]           convert to ext (default: the other family's usual one) and back, then compare the text / the cell values
+//
+// Reads Microsoft (doc docx docm xls xlsx xlsm ppt pptx pptm), OpenDocument and OpenOffice (odt ods odp sxw sxc sxi), RTF, CSV, Gnumeric, AbiWord, WordPerfect, Apple iWork
+// through LibreOffice, in a throw-away profile with macro security at its maximum: a macro is never executed here. The original is never changed.
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+require_once __DIR__ . '/lo_lib.php';
+require_once __DIR__ . '/vba_lib.php';
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "office_tool: $m\n"); exit($rc); }
+[$sub, $in, $out, $arg] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? '', $argv[4] ?? ''];
+if (!in_array($sub, ['convert', 'macros', 'extract', 'inject', 'inspect', 'verify'], true) || $in === '' || $out === '') fail('usage: office_tool convert|macros|extract|inject|inspect|verify FILE OUTPUT [ARG]', 2);
+if (!is_file($in)) fail("no such file: $in");
+$ext = strtolower(pathinfo($in, PATHINFO_EXTENSION)); $oext = strtolower(pathinfo($out, PATHINFO_EXTENSION));
+
+// ---- families and filters --------------------------------------------------------------------------------------------------------------------
+$FAM = ['text' => ['doc', 'docx', 'docm', 'dot', 'dotx', 'dotm', 'odt', 'ott', 'fodt', 'sxw', 'stw', 'rtf', 'wpd', 'abw', 'zabw', 'pages', 'txt', 'html', 'htm', 'wps', 'lwp'],
+        'sheet' => ['xls', 'xlsx', 'xlsm', 'xlsb', 'xlt', 'xltx', 'xltm', 'ods', 'ots', 'fods', 'sxc', 'stc', 'csv', 'tsv', 'gnumeric', 'gnm', 'numbers', 'wk1', 'wks', '123', 'dbf'],
+        'slide' => ['ppt', 'pptx', 'pptm', 'pps', 'ppsx', 'pot', 'potx', 'odp', 'otp', 'fodp', 'sxi', 'sti', 'key']];
+$fam = function (string $e) use ($FAM): ?string { foreach ($FAM as $f => $l) if (in_array($e, $l, true)) return $f; return null; };
+// extension -> [family, LibreOffice target spec]; pdf takes any family
+$TO = ['docx' => ['text', 'docx:MS Word 2007 XML'], 'docm' => ['text', 'docm:MS Word 2007 XML VBA'], 'doc' => ['text', 'doc:MS Word 97'], 'odt' => ['text', 'odt:writer8'], 'rtf' => ['text', 'rtf:Rich Text Format'],
+       'txt' => ['text', 'txt:Text (encoded):UTF8'], 'html' => ['text', 'html:HTML (StarWriter)'], 'sxw' => ['text', 'sxw:StarOffice XML (Writer)'],
+       'xlsx' => ['sheet', 'xlsx:Calc MS Excel 2007 XML'], 'xlsm' => ['sheet', 'xlsm:Calc MS Excel 2007 VBA XML'], 'xls' => ['sheet', 'xls:MS Excel 97'], 'ods' => ['sheet', 'ods:calc8'],
+       'csv' => ['sheet', 'csv:Text - txt - csv (StarCalc):44,34,76,1'], 'sxc' => ['sheet', 'sxc:StarOffice XML (Calc)'], 'gnumeric' => ['sheet', 'gnumeric'],
+       'pptx' => ['slide', 'pptx:Impress MS PowerPoint 2007 XML'], 'pptm' => ['slide', 'pptm:Impress MS PowerPoint 2007 XML VBA'], 'ppt' => ['slide', 'ppt:MS PowerPoint 97'], 'odp' => ['slide', 'odp:impress8'], 'sxi' => ['slide', 'sxi:StarOffice XML (Impress)'],
+       'pdf' => [null, 'pdf']];
+
+// ---- macros: found in whatever the file is (never executed) ------------------------------------------------------------------------------------
+/** ['kind' => 'vba'|'basic'|'none', 'modules' => [[name, type, source (UTF-8), where]]] */
+function macro_info(string $path): array {
+    $res = ['kind' => 'none', 'modules' => []]; $head = (string)file_get_contents($path, false, null, 0, 8);
+    $dec = function (string $src, int $cp): string { $enc = $cp ? 'CP' . $cp : 'CP1252'; $u = @mb_convert_encoding($src, 'UTF-8', $enc); return $u === false ? $src : $u; };
+    if (strncmp($head, "PK", 2) === 0) {
+        $z = new ZipArchive(); if ($z->open($path) !== true) return $res;
+        for ($i = 0; $i < $z->numFiles; $i++) {
+            $n = $z->getNameIndex($i);
+            if (preg_match('~(^|/)vbaProject\.bin$~', $n)) { $mods = vba_extract((string)$z->getFromIndex($i)); foreach ((array)$mods as $m) { $res['modules'][] = [$m['name'], $m['type'], $dec($m['source'], $m['codepage'] ?? 1252), $n]; } if ($mods !== null) $res['kind'] = 'vba'; }
+            elseif (preg_match('~^Basic/[^/]+/(?!script-l)[^/]+\.xml$~', $n)) { $x = (string)$z->getFromIndex($i); if (preg_match('~<script:module[^>]*script:name="([^"]*)"[^>]*>(.*)</script:module>~s', $x, $m)) { $res['modules'][] = [html_entity_decode($m[1]), 'basic', html_entity_decode($m[2], ENT_QUOTES | ENT_XML1), $n]; if ($res['kind'] === 'none') $res['kind'] = 'basic'; } }
+            elseif (preg_match('~^Scripts/python/~', $n) && substr($n, -1) !== '/') { $res['modules'][] = [basename($n), 'python', (string)$z->getFromIndex($i), $n]; if ($res['kind'] === 'none') $res['kind'] = 'basic'; }
+        }
+        $z->close(); return $res;
+    }
+    if (strncmp($head, "\xD0\xCF\x11\xE0", 4) === 0) { $mods = vba_extract((string)file_get_contents($path)); if ($mods) { $res['kind'] = 'vba'; foreach ($mods as $m) { $e = @mb_convert_encoding($m['source'], 'UTF-8', 'CP' . ($m['codepage'] ?? 1252)); $res['modules'][] = [$m['name'], $m['type'], $e === false ? $m['source'] : $e, 'VBA storage']; } } }
+    return $res;
+}
+$AUTO = ['auto_open', 'auto_close', 'auto_exec', 'autoexec', 'autonew', 'autoexit', 'document_open', 'document_new', 'document_close', 'workbook_open', 'workbook_beforeclose', 'workbook_activate', 'worksheet_change', 'presentation_open', 'app_presentationopen'];
+$RISK = ['Shell(' => 'runs a program', 'WScript.Shell' => 'runs a program (WScript)', 'CreateObject(' => 'COM object: files, Excel, the network', 'GetObject(' => 'COM object', 'URLDownloadToFile' => 'downloads a file', 'XMLHTTP' => 'network request', 'WinHttp' => 'network request', 'ADODB.Stream' => 'writes files', 'PowerShell' => 'runs PowerShell', 'cmd.exe' => 'runs the command prompt', 'Environ(' => 'reads environment variables', 'Kill ' => 'deletes files', 'RmDir' => 'deletes folders', 'FileCopy' => 'copies files', 'SendKeys' => 'sends keystrokes', 'RegWrite' => 'writes the registry', 'Declare ' => 'calls a Windows API (not portable)', 'Application.OnTime' => 'schedules itself'];
+function macro_report(array $mi, string $name): string {
+    global $AUTO, $RISK;
+    if (!$mi['modules']) return "# Macros: $name\n\nNo macros found.\n";
+    $o = "# Macros: $name\n\nKind: " . ($mi['kind'] === 'vba' ? 'VBA (Microsoft)' : 'LibreOffice Basic / Python') . '; ' . count($mi['modules']) . " module(s). The macros are only read here, never run.\n\n| Module | Type | Lines | Auto-run | Risky calls |\n|---|---|---|---|---|\n";
+    foreach ($mi['modules'] as [$n, $t, $src]) {
+        $low = strtolower($src); $auto = []; foreach ($AUTO as $a) if (preg_match('/\b(sub|function)\s+' . preg_quote($a, '/') . '\b/i', $src)) $auto[] = $a;
+        $risk = []; foreach ($RISK as $k => $d) if (stripos($src, $k) !== false) $risk[] = rtrim($k, ' (') . ' (' . $d . ')';
+        $o .= '| ' . $n . ' | ' . $t . ' | ' . (substr_count($src, "\n") + 1) . ' | ' . ($auto ? implode(', ', $auto) : '-') . ' | ' . ($risk ? implode('; ', $risk) : '-') . " |\n";
+    }
+    return $o;
+}
+
+// ---- macros / extract ------------------------------------------------------------------------------------------------------------------------
+if ($sub === 'macros') { $mi = macro_info($in); file_put_contents($out, macro_report($mi, basename($in)) . "\n[exit code 0]\n"); echo 'Wrote ' . $out . ' (' . count($mi['modules']) . " modules)\n"; exit(0); }
+if ($sub === 'extract') {
+    $mi = macro_info($in); if (!$mi['modules']) fail('no macros found in ' . basename($in));
+    $o = "' Macros of " . basename($in) . ' (' . ($mi['kind'] === 'vba' ? 'VBA' : 'Basic/Python') . ', ' . count($mi['modules']) . " module(s)), extracted as UTF-8 text. Read only: nothing here was run.\r\n";
+    foreach ($mi['modules'] as [$n, $t, $src]) $o .= "\r\n' ============================================================\r\n' Module: $n   (type: $t)\r\n' ============================================================\r\n" . rtrim($src) . "\r\n";
+    file_put_contents($out, $o); echo "Wrote $out (" . count($mi['modules']) . " modules)\n"; exit(0);
+}
+
+// ---- inject (ODF only) -----------------------------------------------------------------------------------------------------------------------
+if ($sub === 'inject') {
+    if (!in_array($ext, ['ods', 'odt', 'odp'], true)) fail('inject works on .ods / .odt / .odp (LibreOffice Basic runs there). For Microsoft files, convert to .ods/.odt first.');
+    if ($oext !== $ext) fail("the output must be .$ext, like the input");
+    $bas = $arg; if ($bas === '' || !is_file($bas)) fail('give the path of the .bas / .txt source file in the extra arguments');
+    $src = (string)file_get_contents($bas); if (!mb_check_encoding($src, 'UTF-8')) $src = mb_convert_encoding($src, 'UTF-8', 'CP1252');
+    $src = str_replace(["\r\n", "\r"], "\n", $src);
+    $name = preg_replace('/[^A-Za-z0-9_]/', '', pathinfo($bas, PATHINFO_FILENAME)) ?: 'Module1'; if (!preg_match('/^[A-Za-z]/', $name)) $name = 'M' . $name;
+    $vba = preg_match('/^\s*(Attribute\s+VB_Name|Option\s+VBASupport|Sub\s+(Auto_Open|Workbook_Open|Document_Open))/mi', $src) || preg_match('/\b(Dim|Set)\s+\w+\s+As\s+(Object|Worksheet|Workbook|Range|Document)\b/i', $src);
+    $src = preg_replace('/^Attribute\s+VB_[^\n]*\n/mi', '', $src);
+    if ($vba && !preg_match('/Option\s+VBASupport\s+1/i', $src)) $src = "Option VBASupport 1\n" . $src;
+    copy($in, $out); $z = new ZipArchive(); if ($z->open($out) !== true) fail('not a readable OpenDocument file');
+    $lc = $z->getFromName('Basic/script-lc.xml'); $lib = 'Standard';
+    if ($lc === false) $lc = '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE library:library-container PUBLIC "-//OpenOffice.org//DTD OfficeDocument 1.0//EN" "library-container.dtd"><library:libraries xmlns:library="http://openoffice.org/2000/library" xmlns:xlink="http://www.w3.org/1999/xlink"><library:library library:name="Standard" xlink:href="$(USER)/basic/Standard/script-lb.xml/" xlink:type="simple" library:link="false"/></library:libraries>';
+    $lbPath = "Basic/$lib/script-lb.xml"; $lb = $z->getFromName($lbPath);
+    if ($lb === false) $lb = '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE library:library PUBLIC "-//OpenOffice.org//DTD OfficeDocument 1.0//EN" "library.dtd"><library:library xmlns:library="http://openoffice.org/2000/library" library:name="Standard" library:readonly="false" library:passwordprotected="false"></library:library>';
+    $n0 = $name; $k = 2; while ($z->locateName("Basic/$lib/$name.xml") !== false) $name = $n0 . $k++;      // never replace a module that is there
+    $lb = preg_replace('~</library:library>\s*$~', '<library:element library:name="' . $name . '"/></library:library>', $lb);
+    $mod = '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE script:module PUBLIC "-//OpenOffice.org//DTD OfficeDocument 1.0//EN" "module.dtd"><script:module xmlns:script="http://openoffice.org/2000/script" script:name="' . $name . '" script:language="StarBasic">' . htmlspecialchars($src, ENT_XML1 | ENT_COMPAT, 'UTF-8') . '</script:module>';
+    $mf = (string)$z->getFromName('META-INF/manifest.xml'); if ($mf === '') fail('the document has no manifest');
+    $add = ''; foreach (["Basic/script-lc.xml" => $z->getFromName('Basic/script-lc.xml') === false, $lbPath => $z->getFromName($lbPath) === false, "Basic/$lib/$name.xml" => true] as $p => $need) if ($need && strpos($mf, 'full-path="' . $p . '"') === false) $add .= '<manifest:file-entry manifest:full-path="' . $p . '" manifest:media-type="text/xml"/>';
+    $mf = preg_replace('~</manifest:manifest>\s*$~', $add . '</manifest:manifest>', $mf);
+    $z->addFromString('Basic/script-lc.xml', $lc); $z->addFromString($lbPath, $lb); $z->addFromString("Basic/$lib/$name.xml", $mod); $z->addFromString('META-INF/manifest.xml', $mf); $z->close();
+    echo "Wrote $out: the module $name (" . (substr_count($src, "\n") + 1) . " lines" . ($vba ? ', VBA mode: Option VBASupport 1' : '') . ") is in the library $lib. Macro security in LibreOffice decides whether it may run.\n"; exit(0);
+}
+
+// ---- inspect ---------------------------------------------------------------------------------------------------------------------------------
+function zip_text(ZipArchive $z, string $n): string { $s = $z->getFromName($n); return $s === false ? '' : $s; }
+function inspect_file(string $in, string $ext, array $mi): array {      // [label => value]
+    $r = []; $z = new ZipArchive();
+    if (!in_array($ext, ['docx', 'docm', 'dotx', 'xlsx', 'xlsm', 'xltx', 'pptx', 'pptm', 'ppsx', 'potx', 'odt', 'ods', 'odp', 'ott', 'ots'], true) || $z->open($in) !== true) return $r;
+    $names = []; for ($i = 0; $i < $z->numFiles; $i++) $names[] = $z->getNameIndex($i);
+    $cnt = fn(string $pre) => count(array_filter($names, fn($n) => strpos($n, $pre) === 0 && substr($n, -1) !== '/'));
+    if (in_array($ext, ['docx', 'docm', 'dotx'], true)) {
+        $d = zip_text($z, 'word/document.xml');
+        $r['Words (approx)'] = preg_match_all('/<w:t[ >][^<]*|<w:t>[^<]*/', $d) ? str_word_count(strip_tags(preg_replace('/<\/w:p>/', ' ', $d))) : 0;
+        $r['Paragraphs'] = substr_count($d, '<w:p>') + substr_count($d, '<w:p '); $r['Tables'] = substr_count($d, '<w:tbl>');
+        $r['Tracked changes (insertions/deletions)'] = substr_count($d, '<w:ins ') . ' / ' . substr_count($d, '<w:del '); $r['Comments'] = substr_count(zip_text($z, 'word/comments.xml'), '<w:comment ');
+        $r['Pictures'] = $cnt('word/media/'); $r['Embedded objects'] = $cnt('word/embeddings/'); $r['Fields'] = substr_count($d, '<w:fldSimple') + substr_count($d, '<w:instrText'); $r['Content controls'] = substr_count($d, '<w:sdt>');
+        $r['Footnotes/endnotes'] = substr_count(zip_text($z, 'word/footnotes.xml'), '<w:footnote ') + substr_count(zip_text($z, 'word/endnotes.xml'), '<w:endnote ');
+        $r['Editing restrictions'] = strpos(zip_text($z, 'word/settings.xml'), 'w:documentProtection') !== false ? 'yes' : 'no';
+    } elseif (in_array($ext, ['xlsx', 'xlsm', 'xltx'], true)) {
+        $wb = zip_text($z, 'xl/workbook.xml'); $f = 0; $cells = 0; $prot = 0; $cond = 0; $dv = 0; foreach ($names as $n) if (preg_match('~^xl/worksheets/sheet\d+\.xml$~', $n)) { $x = (string)$z->getFromName($n); $f += preg_match_all('/<f[ >\/]/', $x); $cells += preg_match_all('/<c /', $x); $prot += substr_count($x, '<sheetProtection'); $cond += substr_count($x, '<conditionalFormatting'); $dv += substr_count($x, '<dataValidation '); }
+        $r['Sheets'] = substr_count($wb, '<sheet ') . (substr_count($wb, 'state="hidden"') + substr_count($wb, 'state="veryHidden"') ? ' (' . (substr_count($wb, 'state="hidden"') + substr_count($wb, 'state="veryHidden"')) . ' hidden)' : '');
+        $r['Cells with content'] = $cells; $r['Formulas'] = $f; $r['Named ranges'] = substr_count($wb, '<definedName '); $r['Charts'] = $cnt('xl/charts/chart'); $r['Pivot tables'] = $cnt('xl/pivotTables/pivotTable');
+        $r['Links to other workbooks'] = $cnt('xl/externalLinks/externalLink'); $r['Protected sheets'] = $prot; $r['Conditional formats'] = $cond; $r['Data validations'] = $dv; $r['Pictures'] = $cnt('xl/media/'); $r['Comments'] = $cnt('xl/comments');
+    } elseif (in_array($ext, ['pptx', 'pptm', 'ppsx', 'potx'], true)) {
+        $r['Slides'] = count(array_filter($names, fn($n) => preg_match('~^ppt/slides/slide\d+\.xml$~', $n))); $r['Notes pages'] = $cnt('ppt/notesSlides/notesSlide'); $r['Pictures/media'] = $cnt('ppt/media/'); $r['Embedded objects'] = $cnt('ppt/embeddings/');
+        $anim = 0; $trans = 0; foreach ($names as $n) if (preg_match('~^ppt/slides/slide\d+\.xml$~', $n)) { $x = (string)$z->getFromName($n); $anim += substr_count($x, '<p:timing'); $trans += substr_count($x, '<p:transition'); } $r['Slides with animations'] = $anim; $r['Slides with transitions'] = $trans;
+    } else {      // OpenDocument
+        $c = zip_text($z, 'content.xml');
+        $r['Tables/sheets'] = substr_count($c, '<table:table '); $r['Formulas'] = substr_count($c, 'table:formula='); $r['Pictures'] = substr_count($c, '<draw:image'); $r['Comments/annotations'] = substr_count($c, '<office:annotation ');
+        $r['Tracked changes'] = substr_count($c, '<text:changed-region'); $r['Slides (pages)'] = substr_count($c, '<draw:page '); $r['Protected'] = strpos($c, 'table:protected="true"') !== false ? 'yes (a sheet)' : 'no'; $r['Charts/embedded objects'] = $cnt('Object ') + $cnt('Obj');
+    }
+    $enc = false; foreach ($names as $n) if ($n === 'EncryptionInfo' || $n === 'EncryptedPackage') $enc = true; if ($enc) $r['Password protected'] = 'yes (cannot be read)';
+    $z->close(); return $r;
+}
+if ($sub === 'inspect') {
+    $mi = macro_info($in); $o = "# Inside " . basename($in) . "\n\n"; $info = inspect_file($in, $ext, $mi); $legacy = false;
+    if (!$info && in_array($ext, ['doc', 'xls', 'ppt', 'dot', 'xlt', 'pps', 'sxw', 'sxc', 'sxi', 'rtf', 'wpd', 'abw', 'pages', 'numbers', 'key', 'gnumeric', 'csv', 'tsv'], true)) {
+        $to = ['text' => 'docx', 'sheet' => 'xlsx', 'slide' => 'pptx'][$fam($ext) ?? 'text']; $tmp = sys_get_temp_dir() . '/office_ins_' . getmypid() . '.' . $to;
+        $e = lo_convert($in, $TO[$to][1], $tmp, 300);
+        if ($e === null) { $info = inspect_file($tmp, $to, ['modules' => []]); $legacy = true; } @unlink($tmp);
+    }
+    $o .= 'Format: .' . $ext . ($fam($ext) ? ' (' . ['text' => 'text document', 'sheet' => 'spreadsheet', 'slide' => 'presentation'][$fam($ext)] . ')' : '') . '; ' . round(filesize($in) / 1024) . " KB\n";
+    if ($legacy) $o .= "Older format: the counts below come from a temporary conversion by LibreOffice; macros are read from the original.\n";
+    $o .= "\n| What | How many |\n|---|---|\n"; foreach ($info as $k => $v) $o .= "| $k | $v |\n";
+    if (!$info) $o .= "| (no details for this format) | |\n";
+    $o .= "\nMacros: " . ($mi['modules'] ? count($mi['modules']) . ' module(s), ' . ($mi['kind'] === 'vba' ? 'VBA' : 'Basic/Python') . ': ' . implode(', ', array_map(fn($m) => $m[0], $mi['modules'])) . ' (run Macros for the detail)' : 'none') . "\n";
+    $risk = []; if (!empty($info['Tracked changes (insertions/deletions)']) && $info['Tracked changes (insertions/deletions)'] !== '0 / 0') $risk[] = 'tracked changes (may be accepted or lost by a conversion)';
+    if (!empty($info['Links to other workbooks'])) $risk[] = 'links to other workbooks (the paths will break)'; if (!empty($info['Pivot tables'])) $risk[] = 'pivot tables (often changed)'; if ($mi['modules']) $risk[] = 'macros (VBA does not survive every conversion)';
+    if (!empty($info['Protected sheets'])) $risk[] = 'protected sheets'; if (!empty($info['Content controls'])) $risk[] = 'content controls (forms)';
+    $o .= $risk ? "\nAt risk in a conversion: " . implode('; ', $risk) . ".\n" : "\nNothing here is usually lost in a conversion.\n";
+    file_put_contents($out, $o . "\n[exit code 0]\n"); echo "Wrote $out\n"; exit(0);
+}
+
+// ---- convert -----------------------------------------------------------------------------------------------------------------------------------
+$sfam = $fam($ext); if ($sfam === null && $ext !== 'pdf') fail("not a document, spreadsheet or presentation LibreOffice reads (.$ext)");
+if ($sub === 'convert') {
+    if (!isset($TO[$oext])) fail("the output format .$oext is not supported (" . implode(' ', array_keys($TO)) . ')');
+    [$tfam, $spec] = $TO[$oext];
+    if ($tfam !== null && $sfam !== null && $tfam !== $sfam) fail("a " . ['text' => 'text document', 'sheet' => 'spreadsheet', 'slide' => 'presentation'][$sfam] . " (.$ext) cannot become a " . ['text' => 'text document', 'sheet' => 'spreadsheet', 'slide' => 'presentation'][$tfam] . " (.$oext): pick a format of the same kind");
+    if ($ext === $oext) { copy($in, $out); echo "Already .$oext: copied.\n"; exit(0); }
+    $src = macro_info($in); $drop = stripos($arg, 'drop-macros') !== false;
+    $tmp = sys_get_temp_dir() . '/office_cv_' . getmypid() . '.' . $oext;
+    if ($oext === 'gnumeric' || $ext === 'gnumeric') {      // Gnumeric's own converter, for the format LibreOffice only half knows
+        if (!trim((string)shell_exec('command -v ssconvert 2>/dev/null'))) fail('ssconvert (gnumeric) is not installed (sudo apt install gnumeric)');
+        $o = []; $rc = 0; exec('ssconvert ' . escapeshellarg($in) . ' ' . escapeshellarg($tmp) . ' 2>&1', $o, $rc); if ($rc !== 0 || !is_file($tmp)) fail('ssconvert failed: ' . trim(implode(' ', array_slice($o, -2))));
+    } else { $e = lo_convert($in, $spec, $tmp, 600); if ($e) fail($e); }
+    $dst = macro_info($tmp);
+    if ($src['modules'] && count($dst['modules']) < count($src['modules']) && !$drop) {
+        @unlink($tmp);
+        $names = implode(', ', array_map(fn($m) => $m[0], $src['modules']));
+        fail("REFUSED: the source has " . count($src['modules']) . " macro module(s) ($names) and the .$oext result would " . ($dst['modules'] ? 'keep only ' . count($dst['modules']) : 'have none') . ". Nothing was written.\n  Keep them: convert to " . ($sfam === 'sheet' ? '.xlsm, .xls or .ods' : ($sfam === 'text' ? '.docm or .odt' : '.pptm or .odp')) . " instead; or extract them first (Extract macros); or add drop-macros to the extra arguments to convert anyway.");
+    }
+    if (!@rename($tmp, $out)) { copy($tmp, $out); @unlink($tmp); }
+    $msg = "Converted .$ext to .$oext: $out (" . round(filesize($out) / 1024) . ' KB)';
+    if ($src['modules']) $msg .= "\nMACROS: the source has " . count($src['modules']) . ' module(s) (' . ($src['kind'] === 'vba' ? 'VBA' : 'Basic') . '); the result ' . (count($dst['modules']) >= count($src['modules']) ? ($dst['kind'] === 'basic' && $src['kind'] === 'vba' ? 'has them as LibreOffice Basic (Option VBASupport 1): review them in LibreOffice' : 'keeps them') : ($drop ? 'has NONE (dropped, as you asked)' : 'lost some'));
+    echo $msg . "\n"; exit(0);
+}
+
+// ---- verify: there and back, then compare -------------------------------------------------------------------------------------------------------------
+if ($sub === 'verify') {
+    $t = strtolower(trim($arg)) ?: ['text' => 'odt', 'sheet' => 'ods', 'slide' => 'odp'][$sfam] ?? '';
+    if (!isset($TO[$t])) fail("the format to go through must be one of: " . implode(' ', array_keys($TO)));
+    if ($sfam === 'slide') fail('verify compares text and cell values: it is for documents and spreadsheets. For a presentation use the Presentations tool (outline).');
+    if ($TO[$t][0] !== $sfam) fail("a .$ext cannot go through .$t (different kind)");
+    $d = sys_get_temp_dir() . '/office_vf_' . getmypid(); @mkdir($d, 0700, true); $sm = macro_info($in);
+    $mid = "$d/mid.$t"; $back = "$d/back.$ext";
+    $e = lo_convert($in, $TO[$t][1], $mid, 600); if ($e) fail("there: $e");
+    $e = isset($TO[$ext]) ? lo_convert($mid, $TO[$ext][1], $back, 600) : 'the way back to .' . $ext . ' is not a supported output'; if ($e) fail("back: $e");
+    $textOf = function (string $f, string $tag) use ($sfam, $d): ?string {
+        $o = "$d/$tag." . ($sfam === 'sheet' ? 'csv' : 'txt'); $e = lo_convert($f, $sfam === 'sheet' ? 'csv:Text - txt - csv (StarCalc):44,34,76,1' : 'txt:Text (encoded):UTF8', $o, 300);
+        return $e ? null : (string)file_get_contents($o);
+    };
+    $a = $textOf($in, 'orig'); $b = $textOf($back, 'back'); $norm = fn($s) => trim(preg_replace('/[ \t\x{00A0}]+/u', ' ', preg_replace('/\r\n?/', "\n", (string)$s)));
+    $same = $a !== null && $b !== null && $norm($a) === $norm($b);
+    $di = $sfam === 'sheet' ? 'cells of the first sheet' : 'text'; $o = "# Round trip: .$ext -> .$t -> .$ext\n\n- Source: " . basename($in) . "\n- Compared: the $di, whitespace-normalised\n- Result: " . ($same ? "**identical**" : '**DIFFERENT**') . "\n";
+    if (!$same && $a !== null && $b !== null) { $la = explode("\n", $norm($a)); $lb = explode("\n", $norm($b)); $n = 0; foreach ($la as $i => $line) { if (($lb[$i] ?? null) !== $line) { $o .= "\nFirst difference at line " . ($i + 1) . ":\n- before: " . mb_substr($line, 0, 160) . "\n- after:  " . mb_substr($lb[$i] ?? '(missing)', 0, 160) . "\n"; if (++$n >= 5) break; } } if (count($la) !== count($lb)) $o .= "\nLines before: " . count($la) . ", after: " . count($lb) . "\n"; }
+    $bm = macro_info($back); $o .= "- Macros before: " . count($sm['modules']) . "; after the round trip: " . count($bm['modules']) . ($sm['modules'] && count($bm['modules']) < count($sm['modules']) ? " **LOST**" : '') . "\n";
+    foreach (glob("$d/*") ?: [] as $f) @unlink($f); @rmdir($d);
+    $bad = !$same || ($sm['modules'] && count($bm['modules']) < count($sm['modules']));
+    file_put_contents($out, $o . "\n[exit code " . ($bad ? 1 : 0) . "]\n"); echo "Wrote $out (" . ($bad ? 'differences found' : 'identical') . ")\n"; exit(0);
+}

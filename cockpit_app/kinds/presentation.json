@@ -1,0 +1,20 @@
+{
+  "id": "presentation",
+  "name": "Presentation",
+  "icon": "slideshow",
+  "description": "A slide deck: written, checked, built.",
+  "detect": ["*.pptx", "*.odp", "*.ppt"],
+  "note": "This is a presentation project. Keep the deck's source as a markdown file (a # heading starts each slide, bullets are the content, a ::: notes block is the speaker notes) and build the .pptx from it with the Presentation tool (an .odp through its convert preset); do not hand-edit binary deck files. One idea per slide, at most six short bullets and about forty words, a real title on every slide, a description (alt text) on every picture, speaker notes where the talk needs them, no more than three fonts, text readable from the back of a room. After every change, build the deck and run the Presentation check, then fix what it lists.",
+  "verify": "slides check",
+  "group": "Writing & documents",
+  "details": "A slide deck. The deck is written as markdown (one heading per slide, bullets, speaker-notes blocks) and built into a PowerPoint deck with pandoc (and a LibreOffice one through LibreOffice), because an agent edits text well and binary decks badly. The Presentation tool reads any existing deck as an outline, checks it (slides with no title, walls of text, tiny text, pictures without a description, missing notes, too many fonts) with the slide number of each problem, draws every slide as one contact-sheet picture to see it at a glance, and makes a PDF.",
+  "examples": [
+    "Turn lecture notes into a 12-slide deck",
+    "Tighten a crowded deck: one idea per slide",
+    "Add speaker notes to every slide",
+    "Check a deck for accessibility before presenting"
+  ],
+  "tools": [
+    {"tool": "slides", "why": "outline, check, thumbnails, PDF, and build the deck from markdown"}
+  ]
+}

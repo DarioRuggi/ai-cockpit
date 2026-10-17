@@ -1,0 +1,19 @@
+{
+    "id": "shorter",
+    "name": "Shorter",
+    "icon": "compress",
+    "colour": "",
+    "description": "About half as long, main points kept.",
+    "prompt": "Make the text about half as long without losing its main points. Keep the language and the tone. Return only the shortened text, nothing else.",
+    "skill": "",
+    "supplier": {
+        "type": "ollama",
+        "model": ""
+    },
+    "input": "clipboard",
+    "output": "clipboard",
+    "tools": "none",
+    "confirm": "first",
+    "allow_secrets": false,
+    "starter": true
+}

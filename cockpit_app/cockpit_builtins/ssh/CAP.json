@@ -1,0 +1,14 @@
+{
+    "id": "ssh",
+    "name": "SSH",
+    "description": "Run commands on remote hosts via SSH. Requires existing SSH keys/config in ~/.ssh/.",
+    "tags": ["network", "remote", "ops"],
+    "scopes": ["per-project"],
+    "implementations": {
+        "ollama": {
+            "type": "tool-shim",
+            "shim": "ssh_shim.sh",
+            "system_prompt_addition": "SSH:<host>:<command> — run a command on a remote host. Host must be in ~/.ssh/config or a hostname you can resolve. Destructive commands require approval."
+        }
+    }
+}

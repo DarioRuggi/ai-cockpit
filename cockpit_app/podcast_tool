@@ -1,0 +1,103 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// podcast_tool — the Podcast tools' work, for the tool presets (tools_builtins/podcast.json). A command-line program, never reachable over the web.
+//
+//   php podcast_tool check      AUDIO OUTPUT          loudness (LUFS), true peak, range, silences, channels, sample rate, bit rate against podcast norms.
+//                                                     Problems as file(second) Warning: lines, then [exit code N]
+//   php podcast_tool chapters   AUDIO OUTPUT          candidate chapter points: the pauses of 3 seconds or more, with their times (a start for show notes)
+//   php podcast_tool normalize  AUDIO OUTPUT          two-pass loudness normalisation to -16 LUFS, true peak -1.5 dB (the format is OUTPUT's extension: mp3 m4a wav flac opus)
+//   php podcast_tool clean      AUDIO OUTPUT          voice clean-up: high-pass, noise reduction, light compression, then loudness to -16 LUFS
+//   php podcast_tool trim       AUDIO OUTPUT          cut the silence at both ends and shorten every pause longer than 2 s to 0.8 s
+//   php podcast_tool tag        AUDIO OUTPUT TAGS     set title/artist/album/date/comment/genre tags: TAGS like  title=Episode 12;artist=Dario  (audio is copied, not re-encoded)
+//
+// The original is never changed. Needs ffmpeg + ffprobe.
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "podcast_tool: $m\n"); exit($rc); }
+[$sub, $in, $out, $arg] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? '', $argv[4] ?? ''];
+if (!in_array($sub, ['check', 'chapters', 'normalize', 'clean', 'trim', 'tag'], true) || $in === '' || $out === '') fail('usage: podcast_tool check|chapters|normalize|clean|trim|tag AUDIO OUTPUT [TAGS]', 2);
+if (!is_file($in)) fail("no such file: $in");
+foreach (['ffmpeg', 'ffprobe'] as $b) if (!trim((string)shell_exec("command -v $b 2>/dev/null"))) fail("$b is not installed (sudo apt install ffmpeg)");
+$oext = strtolower(pathinfo($out, PATHINFO_EXTENSION)); $name = basename($in);
+function sh(string $cmd, ?int &$rc = null): string { $o = []; exec($cmd . ' 2>&1', $o, $rc); return implode("\n", $o); }
+function probe(string $f): array {
+    $j = json_decode(sh('ffprobe -v error -select_streams a:0 -show_entries format=duration,bit_rate:stream=codec_name,channels,sample_rate -of json ' . escapeshellarg($f)), true) ?: [];
+    $s = $j['streams'][0] ?? []; return ['dur' => (float)($j['format']['duration'] ?? 0), 'br' => (int)($j['format']['bit_rate'] ?? 0), 'codec' => $s['codec_name'] ?? '', 'ch' => (int)($s['channels'] ?? 0), 'sr' => (int)($s['sample_rate'] ?? 0)];
+}
+$p = probe($in); if ($p['ch'] === 0) fail("no audio stream in $name");
+function mmss(float $s): string { $s = (int)round($s); return sprintf('%d:%02d:%02d', intdiv($s, 3600), intdiv($s % 3600, 60), $s % 60); }
+/** pauses [start, end, length] of at least $d seconds below $noise dB */
+function silences(string $f, float $d, int $noise = -45): array {
+    $log = sh('ffmpeg -nostdin -hide_banner -nostats -i ' . escapeshellarg($f) . " -af silencedetect=noise={$noise}dB:d=$d -f null -"); $r = []; $st = null;
+    foreach (explode("\n", $log) as $l) { if (preg_match('/silence_start: (-?[\d.]+)/', $l, $m)) $st = (float)$m[1]; elseif (preg_match('/silence_end: ([\d.]+) \| silence_duration: ([\d.]+)/', $l, $m)) { $r[] = [max(0, (float)$m[1] - (float)$m[2]), (float)$m[1], (float)$m[2]]; $st = null; } }
+    if ($st !== null) $r[] = [$st, null, null];       // a silence that runs to the end of the file
+    return $r;
+}
+/** the encoder for the output extension */
+function enc(string $ext, int $ch): ?string {
+    $br = $ch === 1 ? '96k' : '128k';
+    return ['mp3' => "-c:a libmp3lame -b:a $br", 'm4a' => "-c:a aac -b:a $br", 'aac' => "-c:a aac -b:a $br", 'wav' => '-c:a pcm_s16le', 'flac' => '-c:a flac', 'opus' => "-c:a libopus -b:a " . ($ch === 1 ? '64k' : '96k'), 'ogg' => "-c:a libopus -b:a " . ($ch === 1 ? '64k' : '96k')][$ext] ?? null;
+}
+if (in_array($sub, ['normalize', 'clean', 'trim'], true)) { if (enc($oext, $p['ch']) === null) fail("the output format .$oext is not supported (mp3 m4a wav flac opus)"); }
+
+if ($sub === 'chapters') {
+    $s = silences($in, 3.0); $o = "# Candidate chapters: $name\n\nLength " . mmss($p['dur']) . ". A pause of 3 seconds or more is a likely topic change. Add titles from the transcript.\n\n- 0:00:00 — start\n";
+    foreach ($s as [$a, $b, $l]) { if ($b === null || $a < 5 || $a > $p['dur'] - 5) continue; $o .= '- ' . mmss($b) . ' — after a pause of ' . round($l, 1) . " s (at " . mmss($a) . ")\n"; }
+    file_put_contents($out, $o . "\n[exit code 0]\n"); echo "Wrote $out\n"; exit(0);
+}
+
+if ($sub === 'check') {
+    $log = sh('ffmpeg -nostdin -hide_banner -nostats -i ' . escapeshellarg($in) . ' -af ebur128=peak=true -f null -');
+    $I = preg_match('/\n\s*I:\s+(-?[\d.]+) LUFS/', $log, $m) ? (float)$m[1] : null; $LRA = preg_match('/LRA:\s+([\d.]+) LU/', $log, $m) ? (float)$m[1] : null;
+    $TP = preg_match('/True peak:\s*\n\s*Peak:\s+(-?[\d.]+|-inf) dBFS/', $log, $m) ? ($m[1] === '-inf' ? -99.0 : (float)$m[1]) : null;
+    $msgs = []; $err = 0; $warn = 0; $add = function (string $k, int $sec, string $t) use (&$msgs, &$err, &$warn, $name) { $msgs[] = "$name($sec) $k: $t"; if ($k === 'Error') $err++; elseif ($k === 'Warning') $warn++; };
+    if ($p['dur'] < 1) $add('Error', 0, 'the audio is shorter than a second');
+    $target = $p['ch'] === 1 ? -19.0 : -16.0;
+    if ($I === null) $add('Warning', 0, 'the loudness could not be measured');
+    else { if ($I < $target - 2) $add('Warning', 0, sprintf('too quiet: %.1f LUFS integrated (the usual target is %d LUFS for %s)', $I, $target, $p['ch'] === 1 ? 'mono' : 'stereo')); elseif ($I > $target + 2) $add('Warning', 0, sprintf('too loud: %.1f LUFS integrated (the usual target is %d LUFS for %s)', $I, $target, $p['ch'] === 1 ? 'mono' : 'stereo')); }
+    if ($TP !== null && $TP > -1.0) $add('Warning', 0, sprintf('the true peak is %.1f dBTP (above -1.0: it can clip after the encoder)', $TP));
+    if ($LRA !== null && $LRA > 15) $add('Note', 0, sprintf('a loudness range of %.1f LU is wide for speech: a compressor or Clean would even it out', $LRA));
+    if ($p['sr'] > 0 && $p['sr'] < 44100) $add('Note', 0, "the sample rate is {$p['sr']} Hz (44100 or 48000 is the usual for a published podcast)");
+    if ($p['ch'] > 2) $add('Warning', 0, "{$p['ch']} channels: a podcast is mono or stereo");
+    if (in_array($p['codec'], ['mp3', 'aac', 'opus', 'vorbis'], true) && $p['br'] > 0 && $p['br'] < ($p['ch'] === 1 ? 56000 : 96000)) $add('Warning', 0, 'the bit rate is only ' . round($p['br'] / 1000) . ' kbit/s: speech wants at least ' . ($p['ch'] === 1 ? 64 : 96) . ' kbit/s');
+    $sil = silences($in, 1.5); $long = 0;
+    foreach ($sil as [$a, $b, $l]) { if ($a < 0.5 && $l !== null && $l > 1.0) $add('Note', (int)$a, 'the audio starts with ' . round($l, 1) . ' s of silence (trim it)'); elseif ($b === null || $b >= $p['dur'] - 0.3) $add('Note', (int)$a, 'the audio ends with a long silence from ' . mmss($a) . ' (trim it)'); elseif ($l > 4.0) { $long++; if ($long <= 5) $add('Note', (int)$a, 'a pause of ' . round($l, 1) . ' s at ' . mmss($a)); } }
+    if ($long > 5) $add('Note', 0, ($long - 5) . ' more pauses over 4 s (run Chapters for the full list)');
+    $rep = "# Podcast check: $name\n\n- " . strtoupper($p['codec']) . ", " . ($p['ch'] === 1 ? 'mono' : ($p['ch'] === 2 ? 'stereo' : $p['ch'] . ' channels')) . ", {$p['sr']} Hz, " . ($p['br'] ? round($p['br'] / 1000) . ' kbit/s, ' : '') . mmss($p['dur']) . "\n- Loudness: " . ($I !== null ? sprintf('%.1f LUFS', $I) : '?') . ($LRA !== null ? sprintf(' (range %.1f LU)', $LRA) : '') . '; true peak: ' . ($TP !== null ? sprintf('%.1f dBTP', $TP) : '?') . "\n- Targets: " . ($p['ch'] === 1 ? '-19' : '-16') . " LUFS integrated (±2), true peak below -1 dBTP\n\n";
+    $rep .= ($msgs ? "## Problems ($err errors, $warn warnings)\n\n" . implode("\n", $msgs) . "\n" : "No problems found.\n") . "\n[exit code " . ($err > 0 ? 1 : 0) . "]\n";
+    file_put_contents($out, $rep); echo "Wrote $out ($err errors, $warn warnings)\n"; exit(0);
+}
+
+$ff = 'ffmpeg -nostdin -y -hide_banner -loglevel error -i ' . escapeshellarg($in) . ' -vn ';
+$tl = $p['ch'] === 1 ? -19 : -16;   // the podcast norm the check applies: -16 LUFS stereo, -19 mono (so a normalised file passes its own check)
+if ($sub === 'normalize') {
+    $j = sh('ffmpeg -nostdin -hide_banner -nostats -i ' . escapeshellarg($in) . ' -af loudnorm=I=' . $tl . ':TP=-1.5:LRA=11:print_format=json -f null -');
+    if (!preg_match('/\{[^{}]*"input_i"[^{}]*\}/s', $j, $mm)) fail('the loudness could not be measured');
+    $m = json_decode($mm[0], true); if (!$m || !isset($m['input_i'])) fail('the loudness measurement could not be read');
+    $f = sprintf('loudnorm=I=%d:TP=-1.5:LRA=11:measured_I=%s:measured_TP=%s:measured_LRA=%s:measured_thresh=%s:offset=%s:linear=true', $tl, $m['input_i'], $m['input_tp'], $m['input_lra'], $m['input_thresh'], $m['target_offset']);
+    $o = sh($ff . '-af ' . escapeshellarg($f) . ' -ar 44100 ' . enc($oext, $p['ch']) . ' ' . escapeshellarg($out), $rc);
+    if ($rc !== 0 || !is_file($out)) fail('ffmpeg failed: ' . trim(substr($o, -300)));
+    echo sprintf("Wrote %s: from %.1f LUFS to %d LUFS (true peak %.1f dBTP before)\n", $out, (float)$m['input_i'], $tl, (float)$m['input_i'], (float)$m['input_tp']); exit(0);
+}
+if ($sub === 'clean') {
+    $f = 'highpass=f=80,afftdn=nr=12:nf=-30,acompressor=threshold=-18dB:ratio=3:attack=5:release=80,loudnorm=I=' . $tl . ':TP=-1.5:LRA=11';
+    $o = sh($ff . '-af ' . escapeshellarg($f) . ' -ar 44100 ' . enc($oext, $p['ch']) . ' ' . escapeshellarg($out), $rc);
+    if ($rc !== 0 || !is_file($out)) fail('ffmpeg failed: ' . trim(substr($o, -300)));
+    echo "Wrote $out: high-pass 80 Hz, noise reduction, light compression, $tl LUFS\n"; exit(0);
+}
+if ($sub === 'trim') {
+    $f = 'silenceremove=start_periods=1:start_duration=0.2:start_threshold=-50dB:stop_periods=-1:stop_duration=2:stop_threshold=-50dB:stop_silence=0.8';
+    $o = sh($ff . '-af ' . escapeshellarg($f) . ' ' . enc($oext, $p['ch']) . ' ' . escapeshellarg($out), $rc);
+    if ($rc !== 0 || !is_file($out)) fail('ffmpeg failed: ' . trim(substr($o, -300)));
+    $q = probe($out); echo sprintf("Wrote %s: %s -> %s\n", $out, mmss($p['dur']), mmss($q['dur'])); exit(0);
+}
+// tag
+$allowed = ['title', 'artist', 'album', 'album_artist', 'date', 'year', 'comment', 'genre', 'track', 'composer', 'description'];
+$meta = ''; $n = 0;
+foreach (preg_split('/\s*;\s*/', trim($arg)) as $kv) { if ($kv === '') continue; [$k, $v] = array_pad(explode('=', $kv, 2), 2, ''); $k = strtolower(trim($k)); if (!in_array($k, $allowed, true)) fail("not a tag I set: '$k' (" . implode(', ', $allowed) . ')'); $meta .= ' -metadata ' . escapeshellarg($k . '=' . trim($v)); $n++; }
+if ($n === 0) fail('give the tags in the extra arguments: title=Episode 12;artist=Dario;album=My Show');
+if ($oext !== strtolower(pathinfo($in, PATHINFO_EXTENSION))) fail("the output must have the input's extension (.$oext is not)");
+$o = sh('ffmpeg -nostdin -y -hide_banner -loglevel error -i ' . escapeshellarg($in) . ' -map 0 -c copy' . $meta . ' ' . escapeshellarg($out), $rc);
+if ($rc !== 0 || !is_file($out)) fail('ffmpeg failed: ' . trim(substr($o, -300)));
+echo "Wrote $out: $n tag(s) set, audio copied unchanged\n";

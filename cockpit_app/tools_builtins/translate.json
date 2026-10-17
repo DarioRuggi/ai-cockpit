@@ -1,0 +1,109 @@
+{
+    "id": "translate",
+    "name": "Translation",
+    "binary": "php",
+    "version_args": "--version",
+    "website": "https://libretranslate.com",
+    "packages": {
+        "apt": "php-cli php-mbstring",
+        "dnf": "php-cli php-mbstring",
+        "pacman": "php",
+        "zypper": "php8 php8-mbstring",
+        "brew": "php"
+    },
+    "description": "Translate whole files with the LibreTranslate that runs on THIS machine (no cloud, no key); the text goes nowhere else. Give the target in the extra arguments: to=fr (or de, ja, es ...); from=auto by default. The kind of file is read from the INPUT's extension: .md keeps headings, lists, quotes, front matter and code blocks; .srt and .vtt keep cue numbers and times and translate only the text; .txt is translated line by line. Code, `inline code`, URLs, link targets, <html tags>, {placeholders} and %s are never sent for translation and come back exactly. If a machine translation loses a protected piece or a link's brackets, THAT line is left in the original language and reported (file(line) Warning: ...), never a half-broken line. A report is written next to the output (.report.md). Right-to-left lines that mix code and links most often need a second look. Check says whether LibreTranslate answers and which languages it has; Languages lists them.",
+    "presets": [
+        {
+            "id": "text",
+            "label": "Translate a text file (.txt)",
+            "description": "Extra argument: to=he (required). Paragraph by paragraph; blank lines kept.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "txt",
+            "output_stem": "{NAME}_translated",
+            "command": "php {WEBROOT}/translate_tool text {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 1200
+        },
+        {
+            "id": "markdown",
+            "label": "Translate Markdown (.md)",
+            "description": "Extra argument: to=he (required). Headings, lists, quotes, front matter, code and links are kept.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_translated",
+            "command": "php {WEBROOT}/translate_tool text {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 1200
+        },
+        {
+            "id": "srt",
+            "label": "Translate SRT subtitles",
+            "description": "Extra argument: to=he (required). Numbers and times untouched; check the result with the Subtitles tool.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "subtitle",
+            "output_ext": "srt",
+            "output_stem": "{NAME}_translated",
+            "command": "php {WEBROOT}/translate_tool text {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 1200
+        },
+        {
+            "id": "vtt",
+            "label": "Translate WebVTT subtitles",
+            "description": "Extra argument: to=he (required). Header, cue ids and times untouched.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "subtitle",
+            "output_ext": "vtt",
+            "output_stem": "{NAME}_translated",
+            "command": "php {WEBROOT}/translate_tool text {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 1200
+        },
+        {
+            "id": "languages",
+            "label": "Languages LibreTranslate offers",
+            "description": "The input file is ignored.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "translate_languages",
+            "command": "php {WEBROOT}/translate_tool languages {INPUT} {OUTPUT}",
+            "timeout_seconds": 60,
+            "optional_input": "/"
+        },
+        {
+            "id": "check",
+            "label": "Check: does LibreTranslate answer",
+            "description": "Reports the address, and the languages when it is up.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "translate_check",
+            "command": "php {WEBROOT}/translate_tool check {INPUT} {OUTPUT}",
+            "timeout_seconds": 60,
+            "optional_input": "/"
+        }
+    ]
+}

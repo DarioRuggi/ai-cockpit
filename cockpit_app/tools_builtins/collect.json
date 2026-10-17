@@ -1,0 +1,61 @@
+{
+    "id": "collect",
+    "name": "Collection catalogue",
+    "description": "Check and total a collection kept as a CSV catalogue (books, coins, stamps, cards, records, anything) with columns of your own. Check finds missing and inconsistent fields and likely duplicates (normalised title and year, or catalogue number); Want-list compares with a want-list CSV (what you have, miss and hold twice); Summary counts by category, condition and decade; Valuation totals the values YOU wrote by category and condition for an insurance sheet. No value is ever looked up or estimated. The original is never changed.",
+    "binary": "php",
+    "version_args": "--version",
+    "website": "https://www.php.net",
+    "packages": {
+        "apt": "php-cli php-mbstring",
+        "dnf": "php-cli php-mbstring",
+        "pacman": "php",
+        "zypper": "php8 php8-mbstring",
+        "brew": "php"
+    },
+    "presets": [
+        {
+            "id": "check",
+            "label": "Check catalogue (missing fields, duplicates)",
+            "description": "Lists rows with a missing title, year, category, condition or number, years and values that are not valid, condition/category spelled two ways, and duplicates, as file(line) findings.",
+            "input_kinds": ["text", "file", "document"],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_check",
+            "command": "php {WEBROOT}/collect_tool check {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "wanted",
+            "label": "Compare with a want-list",
+            "description": "Type with=WANTLIST.csv in the extra arguments. Shows what you have, what you miss and what you hold twice, matched by catalogue number or by title and year.",
+            "input_kinds": ["text", "file", "document"],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_wanted",
+            "command": "php {WEBROOT}/collect_tool wanted {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "summary",
+            "label": "Summary (category, condition, decade)",
+            "description": "Item counts by category, by condition and by decade, using the quantity column when there is one.",
+            "input_kinds": ["text", "file", "document"],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_summary",
+            "command": "php {WEBROOT}/collect_tool summary {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "valuation",
+            "label": "Insurance valuation sheet",
+            "description": "Totals the values you wrote in the catalogue by category and condition (value times quantity). Rows without a value are listed, not guessed.",
+            "input_kinds": ["text", "file", "document"],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_valuation",
+            "command": "php {WEBROOT}/collect_tool valuation {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        }
+    ]
+}

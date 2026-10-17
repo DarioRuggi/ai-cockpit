@@ -1,0 +1,21 @@
+{
+  "id": "language-study",
+  "name": "Language study",
+  "icon": "translate",
+  "description": "Learning a language: vocabulary, reading, listening, speaking.",
+  "detect": [],
+  "note": "This is a language-study project (any language: French, German, Japanese, Arabic, ...). Keep the vocabulary as a plain list, one entry per line: term and translation separated by a tab, a semicolon or ' - ', an optional example sentence, optional tags; keep files in UTF-8. Give every new word an example sentence that uses it naturally, and mark its register (formal or colloquial). For right-to-left languages (Arabic, Hebrew, Persian, ...), write the word with its vowel marks only if the learner asked for them, keep right-to-left text clean (no mixing of Latin and right-to-left letters in one term), and say which gender and number a form is. Never invent a translation or a rule you are unsure of: say you are unsure. After editing a list, run the vocabulary check; Anki cards, frequency lists, spoken lists and the speech comparison are made by the Language study tool.",
+  "verify": "lang check",
+  "group": "Research & learning",
+  "details": "Learning a language with a vocabulary list at the centre. The Language study tool checks the list (duplicates, empty sides, invisible characters), turns it into an Anki import file with optional reverse cards, ranks the words of a text by frequency so you learn the useful ones first (vowel marks ignored), makes an audio file that says the term, pauses for you to answer, then says the translation (Piper where a voice is installed, eSpeak-NG otherwise), and compares a recording of you reading a text with that text through Whisper, listing the words said differently or not heard. Translation of text is the Translate button.",
+  "examples": [
+    "Build a French vocabulary list with example sentences",
+    "Anki cards from a word list, with reverse cards",
+    "Which 300 words cover most of this Portuguese article",
+    "Check how clearly I read a paragraph aloud"
+  ],
+  "tools": [
+    {"tool": "lang", "why": "check a vocabulary list, make Anki cards, rank words by frequency, a spoken list, compare my reading with the text"},
+    {"tool": "whisper", "why": "transcribe a recording of speech"}
+  ]
+}

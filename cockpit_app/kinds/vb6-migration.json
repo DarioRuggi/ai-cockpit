@@ -1,0 +1,34 @@
+{
+  "id": "vb6-migration",
+  "name": "VB6 migration",
+  "icon": "swap_horiz",
+  "description": "Porting a Visual Basic 6 project to Free Pascal / Lazarus.",
+  "detect": [
+    "*.vbp",
+    "*.vbg"
+  ],
+  "note": "This is a VB6-to-Free-Pascal migration project. VB6 sources are ANSI (Windows-1252, or another code page such as Windows-1251 for Cyrillic or Windows-1255 for Hebrew), not UTF-8: never assume UTF-8 for the originals, and work on UTF-8 copies. Flag every place where VB6 and Pascal behave differently: 16-bit Integer vs 32-bit Longint, Currency (fixed-point), banker's rounding, True = -1, And/Or that do not short-circuit, 1-based strings and Option Base arrays, Variant/Null/Empty, the Double-based Date type. Translate leaf units first and keep each unit compilable.",
+  "verify": "lazbuild / fpc",
+  "group": "Software & games",
+  "details": "Porting a Visual Basic 6 project to Free Pascal and Lazarus. VB6 sources are ANSI (Windows-1252, or another code page such as Windows-1251 for Cyrillic or Windows-1255 for Hebrew), never UTF-8, so the VB6 tools first convert copies to UTF-8 and prove with a round trip that nothing was lost. The project inventory lists forms, modules, classes, references, OCX controls and Windows API calls, and an order to port in (leaf modules first, forms last) with the places where VB6 and Pascal behave differently. A cheat sheet maps types, operators, strings, files, controls and errors. The agent translates one file at a time and the Lazarus build judges each step. There is no automatic translator: the tools give you clean sources, a map and a checker.",
+  "examples": [
+    "A small inventory program: forms and modules one at a time",
+    "Convert the .frm captions from an old code page to UTF-8",
+    "Map the ADODB database calls to Pascal",
+    "Replace an unavailable ActiveX control"
+  ],
+  "tools": [
+    {
+      "tool": "vb6",
+      "why": "UTF-8 copies of the sources, a round-trip check, the project inventory and port order, the VB6-to-Pascal cheat sheet"
+    },
+    {
+      "tool": "lazarus",
+      "why": "build each ported unit; the compiler is the judge"
+    },
+    {
+      "tool": "fpc",
+      "why": "check a single unit"
+    }
+  ]
+}

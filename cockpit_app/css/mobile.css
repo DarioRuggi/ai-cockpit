@@ -1,0 +1,197 @@
+    /* =========================================================
+       1.3 Lifecycle widgets — START button + BLUE backend-down pulse
+       ========================================================= */
+
+    /* BLUE pulse for the status bar when all tmux sessions are down. Blue is the
+       protanopia-safe complement of amber (which the supplier-card SYNC dot now
+       uses) — so "offline" reads distinctly from "syncing". Meaning is also
+       carried by text (the agent labels read "not running" + the START button). */
+    @keyframes offlinePulse {
+        0%, 100% { background: var(--bg-panel); }
+        50%      { background: rgba(74, 158, 255, 0.20); }
+    }
+    .statusbar.backend-down {
+        animation: offlinePulse 1.4s ease-in-out infinite;
+        border-bottom-color: rgba(74, 158, 255, 0.50);
+    }
+    .statusbar.backend-down .status-label,
+    .statusbar.backend-down .status-item {
+        color: var(--accent-blue);
+    }
+
+    /* START button — visible only when all tmux sessions are down.
+       Blue accent to read as a primary action; matches existing agent-btn shape. */
+    #btn-cockpit-start {
+        color: var(--accent-cyan);
+        border-color: var(--accent-cyan);
+    }
+    #btn-cockpit-start:hover {
+        background: rgba(46,196,182,0.15);
+        border-color: var(--accent-cyan);
+    }
+
+    /* Sessions counter on the Stop button — small, monospaced. */
+    .sessions-count {
+        font-family: var(--font-mono);
+        font-size: 9.5px;
+        color: var(--text-dim);
+        margin-left: 4px;
+        opacity: 0.85;
+    }
+
+    /* =========================================================
+       SCROLLBAR STYLING
+       ========================================================= */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border-mid); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--border-bright); }
+    /* =========================================================
+       MOBILE / RESPONSIVE
+       ========================================================= */
+
+    @keyframes rotateHint {
+        0%, 100% { transform: rotate(0deg); }
+        25%      { transform: rotate(-45deg); }
+        75%      { transform: rotate(45deg); }
+    }
+
+    /* (2026-10-17) The portrait "rotate" gate is gone: js/core/viewport.js shows a friendlier first screen on a small touch device,
+       and "Open it anyway" shows the WHOLE app at full size to pinch and drag. */
+
+    /* Hamburger toggle — hidden on desktop */
+    .mobile-hamburger {
+        display: none;
+        background: none;
+        border: none;
+        color: var(--text-base);
+        cursor: pointer;
+        padding: 8px;
+        line-height: 1;
+        z-index: 100;
+    }
+
+    /* Topbar controls panel (Start/Stop/Restart, Mode, Theme, etc.) */
+    .topbar-controls-panel { /* no change on desktop */ }
+
+    @media (max-width: 900px) {
+        html.ck-compact { min-width: unset !important; }
+        html.ck-compact body { min-width: unset !important; overflow-x: hidden !important; }
+
+        /* Supplier strip: smaller cards */
+        html.ck-compact .sup-card { flex: 0 0 80px !important; width: 80px !important; height: 80px !important; }
+        html.ck-compact .sup-card.sup-active { flex: 0 0 325px !important; width: 325px !important; height: 80px !important; }
+
+        /* Topbar flex: allow wrapping */
+        html.ck-compact .topbar-flex { min-width: unset; flex-wrap: wrap; }
+
+        /* Brand block: smaller */
+        html.ck-compact .topbar-brand-block svg { width: 32px; height: 32px; }
+        html.ck-compact .cockpit-brand-text { display: none; }
+
+        /* Hide topbar controls behind hamburger */
+        html.ck-compact .mobile-hamburger { display: inline-flex; }
+        html.ck-compact .topbar-controls-panel {
+            display: none !important;
+            position: fixed;
+            top: 0; right: 0;
+            width: 280px;
+            height: 100vh;
+            background: var(--bg-panel);
+            border-left: 1px solid var(--border-dim);
+            z-index: 99999;
+            overflow-y: auto;
+            padding: 12px;
+            box-shadow: -4px 0 24px rgba(0,0,0,0.4);
+            flex-direction: column;
+            gap: 8px;
+        }
+        html.ck-compact .topbar-controls-panel.mobile-open {
+            display: flex !important;
+        }
+        html.ck-compact .mobile-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.4);
+            z-index: 99998;
+        }
+        html.ck-compact .mobile-overlay.active { display: block; }
+
+        /* Sidebars: collapsed by default, overlay mode */
+        html.ck-compact .sidebar-left,
+        html.ck-compact .sidebar-right {
+            position: fixed !important;
+            top: 0;
+            height: 100vh !important;
+            z-index: 9999;
+            transition: transform 0.2s ease;
+            box-shadow: 4px 0 24px rgba(0,0,0,0.4);
+        }
+        html.ck-compact .sidebar-left {
+            left: 0;
+            transform: translateX(-100%);
+            width: 280px !important; min-width: 280px !important;
+        }
+        html.ck-compact .sidebar-right {
+            right: 0;
+            transform: translateX(100%);
+            width: 300px !important; min-width: 300px !important;
+        }
+        html.ck-compact .sidebar-left.mobile-show { transform: translateX(0); }
+        html.ck-compact .sidebar-right.mobile-show { transform: translateX(0); }
+
+        /* Statusbar: hide non-essential */
+        html.ck-compact #cost-tiers { display: none !important; }
+        html.ck-compact #statusbar-path { display: none !important; }
+        html.ck-compact #statusbar-viewport { display: none !important; }
+        html.ck-compact .statusbar { gap: 8px; padding: 0 6px; overflow-x: auto; }
+
+        /* Footer: auto height */
+        html.ck-compact .footer { height: auto !important; padding: 6px 8px 0; }
+        html.ck-compact textarea#prompt-in { height: 48px; font-size: 14px; }
+
+        /* Console: tighter padding */
+        html.ck-compact .console { padding: 10px 8px; }
+
+        /* Topbar info: wrap */
+        html.ck-compact .topbar-info { flex-wrap: wrap; white-space: normal; }
+        html.ck-compact .topbar-rig { display: none; }
+
+        /* Touch targets */
+        html.ck-compact .action-btn { min-height: 36px; padding: 8px 12px; }
+        html.ck-compact .topbar-settings-grid .topbar-ctrl-btn { width: 100%; justify-content: center; }
+    html.ck-compact .count-badge { position: absolute; top: -5px; right: -4px; padding: 0 4px; font-size: 8.5px; line-height: 1.4; }
+    html.ck-compact .topbar-ctrl-btn { min-height: 36px; height: auto !important; }
+        html.ck-compact .sidebar-vtab { min-height: 36px; }
+        html.ck-compact .mini-ctrl { min-width: 32px; min-height: 32px; display: inline-flex; align-items: center; justify-content: center; }
+
+        /* Mode strip: wrap */
+        html.ck-compact #ma-strip { flex-wrap: wrap; }
+        /* on a phone the Mode and Style rows wrap (the fixed one-line rows of css/console.css are for the desktop footer) */
+        html.ck-compact #ma-strip,
+        html.ck-compact #style-strip { height: auto !important; flex: 0 0 auto !important; overflow: visible !important; white-space: normal !important; }
+        html.ck-compact #ma-strip > *,
+        html.ck-compact #style-strip > * { flex-shrink: 1; }
+    }
+
+    @media (max-width: 480px) {
+        html.ck-compact .sup-card { flex: 0 0 60px !important; width: 60px !important; height: 64px !important; }
+        html.ck-compact .sup-card.sup-active { flex: 0 0 250px !important; width: 250px !important; height: 64px !important; }
+        html.ck-compact .sup-label-top { font-size: 8px; }
+        html.ck-compact .sup-icon { width: 16px; height: 16px; }
+        html.ck-compact .sup-icon .material-symbols-rounded { font-size: 14px !important; }
+        html.ck-compact .topbar-flex { padding: 2px 4px; gap: 3px; min-height: 48px; }
+        html.ck-compact .footer { padding: 4px 6px 0; }
+        html.ck-compact textarea#prompt-in { height: 44px; font-size: 15px; }
+        html.ck-compact .console { padding: 6px 4px; font-size: 13px; }
+        html.ck-compact .statusbar { height: 20px; font-size: 9px; }
+    }
+
+    /* Edition muting: hide SaaS-only UI in v1 + demo (v2 shows everything). */
+    :root[data-edition="v1"]   .saas-only,
+    :root[data-edition="demo"] .saas-only { display: none !important; }
+    /* Demo-only UI (e.g. the DEMO badge): shown ONLY in the demo edition. */
+    :root:not([data-edition="demo"]) .demo-only { display: none !important; }
+    /* v1-only UI (e.g. the STAND-ALONE badge): shown ONLY in the v1 edition. */
+    :root:not([data-edition="v1"]) .v1-only { display: none !important; }

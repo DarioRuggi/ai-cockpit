@@ -1,0 +1,70 @@
+{
+    "id": "hugo",
+    "name": "Hugo sites",
+    "binary": "hugo",
+    "version_args": "version",
+    "website": "https://gohugo.io",
+    "install_note": "Fetch the official extended release (github.com/gohugoio/hugo, hugo_extended_X_linux-amd64.tar.gz, about 22 MB) into ~/.local/share/cockpit/tools/hugo/ and link it from ~/.local/bin (no root). Debian's own package is an old version that pulls in 117 MB.",
+    "description": "Build and check Hugo static sites. Check builds the site (nothing is kept) and reports template and content errors as file(line,col), deprecation and path warnings and how many pages were made; Build makes the site, minified, in one zip to unzip anywhere; Pages lists every content page with its title, date and draft flag; New site starts a small working site with its own plain layouts, so there is no theme to download. SAFETY: a Hugo site can read files and fetch from the network (resources.GetRemote, modules, themes), so every run happens inside bubblewrap: no network, no home folder, a read-only system, only a scratch copy of the site writable; without bwrap the tool refuses to run Hugo. The site itself is never changed. For a plain folder of markdown pages with no Hugo, see Documentation site.",
+    "packages": {
+        "apt": "bubblewrap php-cli php-zip",
+        "dnf": "bubblewrap php-cli",
+        "pacman": "bubblewrap php",
+        "zypper": "bubblewrap php8 php8-zip",
+        "brew": "hugo php"
+    },
+    "presets": [
+        {
+            "id": "check",
+            "label": "Check (build and read the messages)",
+            "description": "Builds the site in a sandbox and keeps nothing: template errors (the template file and line), content errors, deprecations, path warnings, and the number of pages made. Give the site's root folder (the one with hugo.toml).",
+            "input_kinds": [
+                "folder"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_hugo_check",
+            "command": "php {WEBROOT}/hugo_tool check {INPUT} {OUTPUT}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "build",
+            "label": "Build the site (zip)",
+            "description": "Builds the site minified, in a sandbox, and puts the result in one zip: unzip it on any web server or open index.html.",
+            "input_kinds": [
+                "folder"
+            ],
+            "output_kind": "document",
+            "output_ext": "zip",
+            "output_stem": "{NAME}_site",
+            "command": "php {WEBROOT}/hugo_tool build {INPUT} {OUTPUT}",
+            "timeout_seconds": 900
+        },
+        {
+            "id": "list",
+            "label": "Pages: title, date, draft",
+            "description": "Every content page with its path, title, date, draft flag, expiry and section, and how many are drafts (drafts are not built).",
+            "input_kinds": [
+                "folder"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_pages",
+            "command": "php {WEBROOT}/hugo_tool list {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "new-site",
+            "label": "New site (no theme needed)",
+            "description": "Creates NAME/ in the folder you give: hugo.toml, a home page, two posts, plain layouts and a stylesheet. Type the name in the extra arguments. Never overwrites.",
+            "input_kinds": [
+                "folder"
+            ],
+            "output_kind": "text",
+            "output_ext": "txt",
+            "output_stem": "hugo_new",
+            "command": "php {WEBROOT}/hugo_tool new {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 60
+        }
+    ]
+}

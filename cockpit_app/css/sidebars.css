@@ -1,0 +1,1061 @@
+    /* =========================================================
+       MAIN LAYOUT — sidebar-left | content | sidebar-right
+       ========================================================= */
+    .main-layout {
+        flex: 1;
+        display: flex;
+        overflow: hidden;
+        min-height: 400px;   /* prevents chat area collapsing on very short windows */
+    }
+
+    /* =========================================================
+       SIDEBARS
+       ========================================================= */
+    .sidebar {
+        background: var(--bg-sidebar);
+        display: flex;
+        flex-direction: column;
+        flex-shrink: 0;
+        overflow: hidden;
+        transition: width 0.2s ease;
+    }
+    .sidebar-left  { border-right: 1px solid var(--border-dim); width: 268px; min-width: 268px; max-width: 370px; }
+    /* The left column stacks a scrolling Chats list above two FIXED-height
+       sections (Hive 200px, Toolbar 243px). Any viewport shorter than ~720px
+       clipped the bottom of the Toolbar and nothing could reach it -- measured
+       at 1366x620: toolbar bottom at 700px, viewport at 620, no scrollable
+       ancestor. The clipping happens in .sidebar-panels (the flex column the
+       sections actually live in; .sidebar-inner and .sidebar are wrappers
+       around it), so that is what scrolls now, and the Chats list keeps a
+       floor instead of shrinking to a sliver to make room. At normal heights
+       nothing changes: no overflow, no scrollbar. */
+    #sidebar-left .sidebar-panels { overflow-y: auto; overflow-x: hidden; }
+    #left-chats    { min-height: 120px; }
+    .sidebar-right { border-left:  1px solid var(--border-dim); width: 334px; min-width: 334px; max-width: 370px; }
+    .sidebar.collapsed { width: 0 !important; min-width: 0; }
+
+    /* Resize handle — 5px draggable strip on the inner edge of each sidebar */
+    .resize-handle {
+        position: absolute;
+        top: 0; bottom: 0;
+        width: 5px;
+        cursor: col-resize;
+        z-index: 20;
+        background: transparent;
+        transition: background 0.15s;
+    }
+    .resize-handle:hover,
+    .resize-handle.dragging { background: var(--gemini-dim); }
+    .sidebar-left  .resize-handle { right: 0; }
+    .sidebar-right .resize-handle { left: 0; }
+    .sidebar { position: relative; }
+
+    /* ──────────────────────────────────────────────────────────────────────
+       VERTICAL ICON TABS — narrow strip with icon-only buttons.
+       Strip lives on the OUTER edge of each sidebar (left edge of left
+       sidebar, right edge of right sidebar — against the app edge).
+       Selected button gets a solid blue accent. Tooltip on hover via title.
+       ────────────────────────────────────────────────────────────────────── */
+    .sidebar-vtabs {
+        display: flex;
+        flex-direction: column;
+        flex-shrink: 0;
+        width: 32px;
+        background: var(--bg-darker, var(--bg-base));
+        padding: 4px 0;
+        gap: 2px;
+        border-right: 1px solid var(--border-dim);
+    }
+    /* Right sidebar's vtab strip lives on its right edge — flip the border */
+    .sidebar-right .sidebar-vtabs {
+        border-right: none;
+        border-left: 1px solid var(--border-dim);
+    }
+    .sidebar-vtab {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 28px;
+        height: 28px;
+        margin: 0 2px;
+        border-radius: 4px;
+        cursor: pointer;
+        color: var(--text-muted);
+        transition: background 0.12s, color 0.12s;
+        position: relative;
+    }
+    .sidebar-vtab:hover {
+        background: var(--bg-hover);
+        color: var(--text-base);
+    }
+    .sidebar-vtab.active {
+        color: #000;
+    }
+    /* Dark theme: light blue */
+    body[data-theme-mode="dark"] .sidebar-vtab.active,
+    body:not([data-theme-mode]) .sidebar-vtab.active {
+        background: #7ecfff;
+    }
+    body[data-theme-mode="dark"] .sidebar-left .sidebar-vtab.active::after,
+    body:not([data-theme-mode]) .sidebar-left .sidebar-vtab.active::after,
+    body[data-theme-mode="dark"] .sidebar-right .sidebar-vtab.active::after,
+    body:not([data-theme-mode]) .sidebar-right .sidebar-vtab.active::after {
+        background: #7ecfff;
+    }
+    /* Light theme: light yellow */
+    body[data-theme-mode="light"] .sidebar-vtab.active {
+        background: #ffe066;
+    }
+    body[data-theme-mode="light"] .sidebar-left .sidebar-vtab.active::after,
+    body[data-theme-mode="light"] .sidebar-right .sidebar-vtab.active::after {
+        background: #ffe066;
+    }
+    /* Mixed theme: same as dark (sidebars are dark) */
+    body[data-theme-mode="mixed"] .sidebar-vtab.active {
+        background: #7ecfff;
+    }
+    body[data-theme-mode="mixed"] .sidebar-left .sidebar-vtab.active::after,
+    body[data-theme-mode="mixed"] .sidebar-right .sidebar-vtab.active::after {
+        background: #7ecfff;
+    }
+    .sidebar-vtab .material-symbols-rounded {
+        font-size: 18px;
+    }
+    /* Subtle active-indicator line on the inner edge of the strip,
+       so even with the solid bg the relationship to the panel is clear */
+    .sidebar-left .sidebar-vtab.active::after {
+        content: '';
+        position: absolute;
+        right: -3px;
+        top: 4px; bottom: 4px;
+        width: 2px;
+        border-radius: 1px;
+    }
+    .sidebar-right .sidebar-vtab.active::after {
+        content: '';
+        position: absolute;
+        left: -3px;
+        top: 4px; bottom: 4px;
+        width: 2px;
+        border-radius: 1px;
+    }
+    /* The wrapper that holds [vtab strip] + [panels area] side-by-side
+       inside each sidebar. Replaces the old vertical stack. */
+    .sidebar-inner {
+        display: flex;
+        flex: 1;
+        min-height: 0;
+        min-width: 0;
+        overflow: hidden;
+    }
+    /* Panels area takes the remaining horizontal space */
+    .sidebar-panels {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    }
+    /* Old horizontal tabs kept defined but no longer used in markup */
+    .sidebar-tabs {
+        display: flex;
+        border-bottom: 1px solid var(--border-dim);
+        flex-shrink: 0;
+        overflow-x: auto;
+    }
+    .sidebar-tab {
+        padding: 7px 12px;
+        font-size: 10.5px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        color: var(--text-muted);
+        cursor: pointer;
+        border-bottom: 2px solid transparent;
+        white-space: nowrap;
+        transition: all 0.15s;
+        text-transform: uppercase;
+    }
+    .sidebar-tab:hover { color: var(--text-dim); }
+    .sidebar-tab.active { color: var(--text-primary); border-bottom-color: #7ecfff; }
+    body[data-theme-mode="light"] .sidebar-tab.active { border-bottom-color: #ffe066; }
+    body[data-theme-mode="mixed"] .sidebar-tab.active { border-bottom-color: #7ecfff; }
+
+    .sidebar-panel {
+        flex: 1;
+        overflow-y: auto;
+        padding: 10px;
+        display: none;
+        width: 100%;
+        box-sizing: border-box;
+        min-width: 0;
+    }
+    .sidebar-panel.active { display: block; }
+
+    /* Right-sidebar panels with rp-toolbar/rp-list layouts skip the global
+       padding so the toolbar can sit flush against the tabs and the list
+       can use its own internal margins. */
+    #sidebar-right .sidebar-panel { padding: 0; }
+    #sidebar-right .sidebar-panel.active { display: flex; flex-direction: column; }
+
+    .sidebar-empty {
+        color: var(--text-muted);
+        font-size: 11px;
+        text-align: center;
+        padding: 20px 10px;
+        line-height: 1.6;
+        width: 100%;
+        box-sizing: border-box;
+    }
+    /* Sidebar action bar — New/Load buttons at top of panel */
+    .sidebar-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        padding: 6px 8px;
+        border-bottom: 1px solid var(--border-dim);
+        flex-shrink: 0;
+    }
+    .sidebar-action-btn {
+        flex: 1;
+        font-family: var(--font-ui);
+        font-size: 10px;
+        font-weight: 600;
+        padding: 4px 6px;
+        background: var(--bg-active);
+        border: 1px solid var(--border-mid);
+        color: var(--text-base);
+        cursor: pointer;
+        border-radius: 3px;
+        text-align: center;
+        transition: all 0.15s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 3px;
+    }
+    .sidebar-action-btn:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--border-bright); }
+    .sidebar-action-btn .material-symbols-rounded { font-size: 12px; color: inherit; }
+    /* Project / Chat list items */
+    .sb-item {
+        display: flex;
+        align-items: center;
+        padding: 6px 10px;
+        cursor: pointer;
+        border-radius: 3px;
+        margin: 1px 4px;
+        transition: background 0.1s;
+        gap: 6px;
+    }
+    .sb-item:hover { background: var(--bg-hover); }
+    .sb-item.active { background: var(--bg-active); }
+
+    /* ─── Active section visual distinction ─────────────────────────────────
+       When a project or chat is active/expanded, its child items get wrapped
+       in a "section" container that gets a distinctive left border and a very
+       subtle background tint, making it clear which children belong to the
+       currently-selected entry. */
+    .sb-active-section {
+        border-left: 2px solid var(--gemini) !important;
+        background: linear-gradient(90deg,
+                    rgba(80, 130, 200, 0.06) 0%,
+                    rgba(80, 130, 200, 0.02) 50%,
+                    transparent 100%);
+        margin: 2px 4px 4px 16px !important;
+        padding: 2px 0 4px !important;
+        border-radius: 0 3px 3px 0;
+    }
+    .sb-active-section .sb-section-hdr {
+        font-size: 9px !important;
+        color: var(--gemini) !important;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        padding: 4px 8px 2px !important;
+        opacity: 0.85;
+    }
+    /* Inactive (collapsed/expanded but not selected) sections — subtler */
+    .sb-inactive-section {
+        border-left: 1px solid var(--border-dim);
+        margin: 0 4px 0 14px !important;
+        padding-left: 0 !important;
+        opacity: 0.85;
+    }
+    /* The project/chat row that owns the active section gets a left accent too */
+    .sb-item.active.sb-item-with-section {
+        border-left: 2px solid var(--gemini);
+        margin-left: 2px;
+        padding-left: 8px;
+    }
+
+    /* ─── Multi-agent mode strip buttons ──────────────────────────────────── */
+    .ma-mode-btn {
+        font-size: 10px;
+        font-weight: 600;
+        padding: 2px 9px;
+        background: var(--bg-active);
+        border: 1px solid var(--border-mid);
+        color: var(--text-base);
+        cursor: pointer;
+        border-radius: 3px;
+        font-family: var(--font-ui);
+        transition: all 0.15s;
+    }
+    .ma-mode-btn .material-symbols-rounded { color: inherit; font-size: 13px; }
+    .ma-mode-btn:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+        border-color: var(--border-bright);
+    }
+    .ma-mode-btn.ma-active {
+        background: var(--gemini-glow);
+        border-color: var(--gemini);
+        color: var(--gemini);
+    }
+
+    /* ──────────────────────────────────────────────────────────────────────
+       RIGHT-SIDEBAR PANELS — shared toolbar + list + item structure
+       Used by Code / Library / Snippets / Sources / Config panels.
+       ────────────────────────────────────────────────────────────────────── */
+    .rp-toolbar {
+        display: flex;
+        gap: 4px;
+        padding: 4px 6px;
+        border-bottom: 1px solid var(--border-dim);
+        background: var(--bg-base);
+        flex-shrink: 0;
+        flex-wrap: wrap;
+    }
+    .rp-list {
+        flex: 1 1 auto;
+        overflow-y: auto;
+        overflow-x: hidden;
+        padding: 2px 0;
+        min-height: 0;
+        width: 100%;
+    }
+    .rp-item {
+        margin: 4px 6px;
+        padding: 6px 8px;
+        border-radius: 3px;
+        border-left: 2px solid var(--border-dim);
+        background: var(--bg-base);
+        font-size: 11px;
+        color: var(--text-base);
+        cursor: pointer;
+        transition: background 0.1s, border-color 0.15s;
+    }
+    .rp-item:hover { background: var(--bg-hover); }
+    /* Active/expanded item gets the same blue accent as left sidebar */
+    .rp-item.active {
+        border-left-color: var(--gemini);
+        background: linear-gradient(90deg,
+                    rgba(80, 130, 200, 0.06) 0%,
+                    rgba(80, 130, 200, 0.02) 60%,
+                    transparent 100%);
+    }
+
+    /* ─── Usage panel — Phase 2b 2026-05-09 ──────────────────────────────
+       Free-tier quota tracker rows. Each provider gets a card-style row;
+       rows in the FREE TIER section show a quota bar + countdown; rows in
+       the CONSUMPTION section show only call/token counters. ──────── */
+    .usage-section-hdr {
+        margin: 8px 8px 4px;
+        font-size: 9.5px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-muted);
+        opacity: 0.85;
+        border-bottom: 1px solid var(--border-dim);
+        padding-bottom: 3px;
+    }
+    .usage-row {
+        margin: 4px 8px;
+        padding: 6px 8px;
+        border-radius: 3px;
+        border-left: 3px solid var(--border-dim);
+        background: var(--bg-base);
+        font-size: 10.5px;
+        color: var(--text-base);
+        position: relative;
+    }
+    .usage-row.usage-quota   { border-left-color: var(--workers); }
+    .usage-row.usage-consume { border-left-color: var(--text-muted); }
+    .usage-row-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 4px;
+    }
+    .usage-row-name {
+        font-weight: 600;
+        font-family: var(--font-ui);
+    }
+    .usage-row-meta {
+        font-size: 9px;
+        color: var(--text-muted);
+        font-family: var(--font-mono);
+        white-space: nowrap;
+    }
+    .usage-row-meta.stale { color: var(--accent-amber, #e0b84e); }
+    .usage-bar-wrap {
+        position: relative;
+        height: 8px;
+        background: var(--border-dim);
+        border-radius: 2px;
+        overflow: hidden;
+        margin: 4px 0;
+    }
+    .usage-bar-fill {
+        height: 100%;
+        background: var(--workers);
+        transition: width 0.3s ease;
+    }
+    .usage-bar-fill.warn { background: var(--accent-amber, #e0b84e); }
+    .usage-bar-fill.danger { background: var(--ollama); }
+    .usage-row-stats {
+        display: flex;
+        justify-content: space-between;
+        gap: 6px;
+        font-size: 9.5px;
+        color: var(--text-muted);
+        font-family: var(--font-mono);
+    }
+    .usage-row-stats b { color: var(--text-base); font-weight: 600; }
+    .usage-row-actions {
+        display: flex;
+        gap: 4px;
+        margin-top: 4px;
+    }
+    .usage-row-actions button {
+        padding: 2px 6px;
+        font-size: 9px;
+        background: var(--bg-base);
+        border: 1px solid var(--border-dim);
+        color: var(--text-muted);
+        border-radius: 2px;
+        cursor: pointer;
+        transition: border-color 0.1s, color 0.1s;
+    }
+    .usage-row-actions button:hover {
+        border-color: var(--border-bright);
+        color: var(--text-base);
+    }
+
+    /* ─── Plans panel — orchestrator artifacts ─────────────────────────── */
+    .plan-item {
+        margin: 4px 6px;
+        border-radius: 3px;
+        border-left: 2px solid var(--border-dim);
+        background: var(--bg-base);
+        overflow: hidden;
+    }
+    .plan-row {
+        display: flex; align-items: flex-start; gap: 6px;
+        padding: 6px 8px; cursor: pointer;
+        transition: background 0.1s;
+    }
+    .plan-row:hover { background: var(--bg-hover); }
+    .plan-status-icon { font-size: 18px; flex-shrink: 0; }
+    .plan-status-voting,
+    .plan-status-synthesizing { color: var(--gemini); animation: spinSlow 2s linear infinite; }
+    .plan-status-draft        { color: var(--text-muted); }
+    .plan-status-running      { color: var(--gemini); }
+    .plan-status-paused       { color: var(--claude); }
+    .plan-status-complete     { color: var(--accent-green); }
+    .plan-status-failed       { color: #d4873a; }
+    @keyframes spinSlow { to { transform: rotate(360deg); } }
+
+    .plan-meta { flex: 1; min-width: 0; font-size: 11px; }
+    .plan-goal {
+        font-weight: 600; color: var(--text-primary); font-size: 11.5px;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .plan-info {
+        color: var(--text-dim); font-size: 9.5px; margin-top: 2px;
+        text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .plan-detail {
+        padding: 6px;
+        border-top: 1px solid var(--border-dim);
+        background: var(--bg-darker);
+    }
+    .plan-summary {
+        font-size: 11px; color: var(--text-dim); font-style: italic;
+        padding: 6px 4px; border-left: 2px solid var(--gemini); margin-bottom: 6px;
+    }
+    .plan-toolbar {
+        display: flex; gap: 3px; padding: 3px 0; margin-bottom: 6px;
+        border-bottom: 1px solid var(--border-dim);
+    }
+    .plan-tb-btn {
+        background: var(--bg-active); border: 1px solid var(--border-mid); color: var(--text-base);
+        cursor: pointer; padding: 2px 6px; border-radius: 3px; font-size: 10px;
+        font-weight: 600;
+        display: inline-flex; align-items: center; gap: 3px;
+        transition: all 0.15s;
+    }
+    .plan-tb-btn:hover { background: var(--bg-hover); border-color: var(--border-bright); color: var(--text-primary); }
+    .plan-tb-btn .material-symbols-rounded { font-size: 14px; color: inherit; }
+
+    .plan-step {
+        margin-bottom: 4px; padding: 4px;
+        border-left: 2px solid var(--border-dim); background: var(--bg-base);
+        border-radius: 2px;
+    }
+    .plan-step-pending { border-left-color: var(--border-dim); }
+    .plan-step-running { border-left-color: var(--gemini); }
+    .plan-step-done    { border-left-color: var(--accent-green); opacity: 0.85; }
+    .plan-step-skipped { border-left-color: var(--claude); opacity: 0.6; }
+    .plan-step-failed  { border-left-color: var(--ollama); }
+
+    .plan-step-row {
+        display: flex; align-items: center; gap: 4px;
+        font-size: 10px; padding: 2px 0;
+    }
+    .plan-step-icon { font-size: 14px; }
+    .plan-step-icon-pending { color: var(--text-muted); }
+    .plan-step-icon-running { color: var(--gemini); animation: spinSlow 2s linear infinite; }
+    .plan-step-icon-done    { color: var(--accent-green); }
+    .plan-step-icon-skipped { color: var(--claude); }
+    .plan-step-icon-failed  { color: var(--ollama); }
+    .plan-step-num { font-weight: 700; color: var(--text-primary); margin-right: 2px; }
+    .plan-step-destructive { color: var(--claude); font-weight: 700; }
+
+    .plan-step-btn {
+        background: none; border: none; color: var(--text-muted);
+        cursor: pointer; padding: 1px 3px;
+    }
+    .plan-step-btn:hover { color: var(--gemini); }
+    .plan-step-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+    .plan-step-btn .material-symbols-rounded { font-size: 14px; }
+
+    .plan-step-desc {
+        font-size: 10.5px; color: var(--text-base);
+        padding: 3px 4px 3px 22px; line-height: 1.4;
+    }
+    .plan-step-output {
+        margin-top: 3px; padding-left: 22px;
+    }
+    .plan-step-output-hdr {
+        font-size: 9.5px; color: var(--text-muted); cursor: pointer;
+        padding: 2px 4px; border-radius: 2px;
+    }
+    .plan-step-output-hdr:hover { background: var(--bg-hover); }
+    .plan-step-output-body {
+        display: none; max-height: 200px; overflow: auto;
+        font-family: var(--font-mono); font-size: 9.5px;
+        background: var(--bg-base); padding: 4px; border-radius: 2px;
+        white-space: pre-wrap; word-break: break-word; margin: 2px 0 0 0;
+    }
+    .plan-step-output-body.expanded { display: block; }
+    .plan-mode-info {
+        font-size: 9.5px; color: var(--text-muted); padding: 4px; margin-top: 6px;
+        border-top: 1px solid var(--border-dim);
+    }
+    /* ────────────────────────────────────────────────────────────────────── */
+
+    .cap-item {
+        margin: 4px 6px;
+        border-radius: 3px;
+        border-left: 2px solid var(--border-dim);
+        background: var(--bg-base);
+        overflow: hidden;
+    }
+    .cap-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 6px;
+        padding: 6px 8px;
+        cursor: pointer;
+        transition: background 0.1s;
+    }
+    .cap-row:hover { background: var(--bg-hover); }
+    /* The only control on the row, and it used to be an 18px icon with an 8px
+       label and no border -- about 22x28px of target inside a row that expands
+       the card on click. Clicking it and getting the card open instead is what
+       actually happened (2026-09-30), and from the server that is indis-
+       tinguishable from a dead control: no request is made either way.
+       Now a real switch: a bordered box with a 34px minimum target and a hover
+       state, so it reads as something you press and is hard to miss. */
+    .cap-toggle {
+        background: var(--bg-darker, rgba(255,255,255,0.03));
+        border: 1px solid var(--border-dim);
+        border-radius: 4px;
+        color: var(--text-muted);
+        cursor: pointer;
+        padding: 3px 5px;
+        min-width: 34px;
+        min-height: 34px;
+        justify-content: center;
+        flex-shrink: 0;
+        line-height: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1px;
+        transition: border-color 0.15s, background 0.15s;
+    }
+    .cap-toggle:hover { border-color: var(--border-bright); background: var(--bg-base); }
+    .cap-toggle.on  { border-color: var(--gemini); }
+    .cap-toggle .material-symbols-rounded { font-size: 18px; }
+    .cap-toggle-lbl { font-size: 8px; font-weight: 700; letter-spacing: 0.04em; }
+    .cap-toggle.on  { color: var(--gemini); }
+    .cap-toggle.off { color: var(--text-muted); }
+    .cap-meta {
+        flex: 1;
+        min-width: 0;
+        font-size: 11px;
+    }
+    .cap-name {
+        font-weight: 600;
+        color: var(--text-primary);
+        font-size: 11.5px;
+        margin-bottom: 1px;
+    }
+    .cap-desc {
+        color: var(--text-dim);
+        font-size: 10px;
+        line-height: 1.35;
+        margin-bottom: 3px;
+    }
+    .cap-badges {
+        display: flex;
+        gap: 3px;
+        flex-wrap: wrap;
+    }
+    .cap-agent-badge {
+        font-size: 9px;
+        padding: 1px 5px;
+        border-radius: 2px;
+        background: var(--bg-darker);
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        border: 1px solid var(--border-dim);
+    }
+    .cap-agent-badge.cap-claude { color: var(--claude); border-color: rgba(224, 184, 78, 0.4); }
+    .cap-agent-badge.cap-gemini { color: var(--gemini); border-color: rgba(91, 143, 212, 0.4); }
+    .cap-agent-badge.cap-ollama { color: var(--ollama); border-color: rgba(212, 135, 58, 0.4); }
+    .cap-builtin-badge {
+        font-size: 8.5px;
+        padding: 1px 4px;
+        border-radius: 2px;
+        background: var(--bg-darker);
+        color: var(--text-muted);
+        font-weight: 500;
+        margin-left: 4px;
+    }
+    .cap-del {
+        background: none;
+        border: none;
+        color: var(--text-muted);
+        cursor: pointer;
+        padding: 2px;
+        opacity: 0.4;
+    }
+    .cap-row:hover .cap-del { opacity: 1; }
+    .cap-del .material-symbols-rounded { font-size: 14px; }
+    .cap-detail {
+        padding: 8px;
+        border-top: 1px solid var(--border-dim);
+        background: var(--bg-darker);
+        font-size: 10px;
+        color: var(--text-dim);
+        line-height: 1.5;
+    }
+    .cap-readme {
+        margin-bottom: 8px;
+        white-space: pre-wrap;
+    }
+    .cap-impls-title {
+        font-weight: 600;
+        color: var(--text-base);
+        margin-bottom: 3px;
+    }
+    .cap-impl {
+        padding: 2px 0;
+        font-family: var(--font-mono);
+        font-size: 10px;
+    }
+    /* ────────────────────────────────────────────────────────────────────── */
+    .rp-item-hdr {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11px;
+    }
+    .rp-item-title {
+        flex: 1;
+        font-weight: 600;
+        color: var(--text-primary);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .rp-item.active .rp-item-title { color: var(--gemini); }
+    .rp-item-scope {
+        font-size: 9px;
+        padding: 1px 5px;
+        border-radius: 8px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        font-weight: 600;
+        flex-shrink: 0;
+    }
+    .rp-scope-global  { background: rgba(120,120,120,0.2); color: var(--text-muted); }
+    .rp-scope-project { background: rgba(80,130,200,0.2);  color: var(--gemini); }
+    .rp-item-meta {
+        font-size: 9.5px;
+        color: var(--text-muted);
+        margin-top: 3px;
+        font-family: var(--font-mono);
+    }
+    .rp-item-body {
+        margin-top: 6px;
+        padding-top: 6px;
+        border-top: 1px solid var(--border-dim);
+        display: none;
+        font-family: var(--font-mono);
+        font-size: 10.5px;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        color: var(--text-base);
+        max-height: 400px;
+        overflow: auto;
+    }
+    .rp-item.active .rp-item-body { display: block; }
+    .rp-item-actions {
+        display: flex;
+        gap: 4px;
+        margin-top: 6px;
+        opacity: 0;
+        transition: opacity 0.1s;
+    }
+    .rp-item.active .rp-item-actions,
+    .rp-item:hover  .rp-item-actions { opacity: 1; }
+    .rp-action-btn {
+        font-size: 10px;
+        font-weight: 600;
+        padding: 2px 6px;
+        background: var(--bg-active);
+        border: 1px solid var(--border-mid);
+        color: var(--text-base);
+        cursor: pointer;
+        border-radius: 3px;
+        font-family: var(--font-ui);
+        transition: all 0.15s;
+    }
+    .rp-action-btn:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--border-bright); }
+    /* Config panel — sectioned, less interactive */
+    .rp-cfg-group { margin: 6px; }
+    .rp-cfg-group-hdr {
+        font-size: 9.5px;
+        font-weight: 700;
+        color: var(--gemini);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        padding: 4px 6px;
+        border-bottom: 1px solid var(--border-dim);
+        margin-bottom: 4px;
+    }
+    .rp-cfg-file {
+        margin: 3px 0;
+        padding: 4px 8px;
+        background: var(--bg-base);
+        border-left: 2px solid var(--border-dim);
+        border-radius: 0 3px 3px 0;
+        font-size: 10.5px;
+    }
+    .rp-cfg-file.exists  { border-left-color: var(--gemini-dim); }
+    .rp-cfg-file.missing { opacity: 0.45; font-style: italic; }
+    .rp-cfg-file-name {
+        font-weight: 600;
+        color: var(--text-base);
+        font-family: var(--font-mono);
+        font-size: 10.5px;
+    }
+    .rp-cfg-file-meta {
+        font-size: 9px;
+        color: var(--text-muted);
+        font-family: var(--font-mono);
+        margin-top: 2px;
+    }
+    .rp-cfg-file-content {
+        margin-top: 4px;
+        padding: 4px 6px;
+        background: var(--bg-darker, var(--bg-codeblock));
+        border-radius: 2px;
+        font-family: var(--font-mono);
+        font-size: 10px;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        max-height: 250px;
+        overflow: auto;
+        display: none;
+        color: var(--text-base);
+    }
+    .rp-cfg-file.active .rp-cfg-file-content { display: block; }
+    .rp-cfg-file.active { border-left-color: var(--gemini); }
+
+    /* ───── PROPOSALS QUEUE — bottom of right sidebar ─────────────────────── */
+    .rp-proposals-wrap {
+        flex-shrink: 0;
+        border-top: 1px solid var(--border-mid);
+        background: var(--bg-base);
+        display: flex;
+        flex-direction: column;
+        position: relative;
+        min-height: 243px;
+    }
+    .rp-proposals-wrap.collapsed {
+        height: 32px !important;
+        min-height: 32px !important;
+    }
+    .rp-proposals-wrap.collapsed .rp-proposals-list,
+    .rp-proposals-wrap.collapsed .rp-proposals-resize { display: none; }
+
+    .rp-proposals-resize {
+        height: 4px;
+        background: transparent;
+        cursor: ns-resize;
+        flex-shrink: 0;
+        border-top: 1px solid var(--border-dim);
+    }
+    .rp-proposals-resize:hover { background: var(--gemini-dim); }
+
+    /* Global: Material Icons always inherit their parent button/element color */
+    button .material-symbols-rounded,
+    a .material-symbols-rounded {
+        color: inherit;
+    }
+    /* Solo mode (?solo=<panel>): a detached window shows one panel and nothing
+       else. The panel is the same markup as in the sidebar — same loaders, same
+       refreshes — so nothing about it had to be rebuilt to live on its own. */
+    body.solo .topbar, body.solo .statusbar, body.solo .infobar,
+    body.solo .sidebar-tabs, body.solo .sidebar-vtabs, body.solo .resize-handle,
+    body.solo .content-area { display: none !important; }
+    body.solo, body.solo .main-layout { height: 100vh; min-height: 0; overflow: hidden; }
+    /* A detached window is usually narrow, which put the app in its mobile
+       layout: there the sidebars are fixed and translated off-screen until you
+       slide them in, so the panel sat outside the window and it looked blank. */
+    body.solo .sidebar { width: 100% !important; max-width: none !important; min-width: 0 !important;
+                         flex: 1 1 auto !important; border: 0 !important; height: 100vh; display: flex;
+                         position: static !important; transform: none !important; box-shadow: none !important;
+                         top: auto !important; left: auto !important; right: auto !important; bottom: auto !important; }
+    body.solo .mobile-hamburger, body.solo .mobile-overlay, body.solo #portrait-gate { display: none !important; }
+    body.solo .sidebar-panels { flex: 1 1 auto; min-height: 0; height: auto; display: flex; }
+    body.solo .sidebar-panel.active { display: flex !important; flex: 1 1 auto; min-height: 0; height: auto; overflow: auto; }
+    /* the left column's fixed Hive and Toolbar blocks belong to the main window */
+    body.solo #left-hive, body.solo #left-toolbar { display: none !important; }
+    body.solo .sidebar-panel-detach { display: none; }
+    /* A detached window is one panel — the account gate, the exit dialog and
+       every other overlay belong to the main window only. */
+    body.solo [id$="-ov"], body.solo [id$="-overlay"], body.solo [id$="-modal"],
+    body.solo .rp-proposals-wrap { display: none !important; }
+    body.solo #auth-gate { display: flex !important; }
+    .sidebar-panel-detach { margin-left: auto; cursor: pointer; opacity: 0.55; }
+    .sidebar-panel-detach:hover { opacity: 1; }
+
+    .sidebar-panel-title {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 8px;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        font-weight: 700;
+        color: var(--gemini);
+        border-bottom: 1px solid var(--border-dim);
+        background: var(--bg-darker, var(--bg-base));
+        flex-shrink: 0;
+        user-select: none;
+    }
+    .sidebar-panel-title .material-symbols-rounded {
+        font-size: 13px;
+        opacity: 0.8;
+    }
+    .rp-proposals-hdr {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 8px;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        font-weight: 700;
+        color: var(--gemini);
+        border-bottom: 1px solid var(--border-dim);
+        cursor: pointer;
+        background: var(--bg-darker, var(--bg-base));
+        flex-shrink: 0;
+    }
+    .rp-proposals-hdr:hover { background: var(--bg-hover); }
+    .rp-proposals-badge {
+        background: var(--ollama);
+        color: #fff;
+        font-size: 9px;
+        padding: 1px 6px;
+        border-radius: 8px;
+        font-weight: 700;
+    }
+    .rp-proposals-list {
+        overflow-y: auto;
+        flex: 1;
+        padding: 4px 0;
+    }
+
+    .rp-proposal {
+        margin: 4px 6px;
+        padding: 6px 8px;
+        background: var(--bg-base);
+        border-left: 2px solid var(--gemini-dim);
+        border-radius: 0 3px 3px 0;
+        font-size: 11px;
+    }
+    .rp-prop-hdr {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11px;
+    }
+    .rp-prop-kind {
+        font-size: 9px;
+        font-weight: 700;
+        padding: 1px 6px;
+        border-radius: 8px;
+        letter-spacing: 0.05em;
+        flex-shrink: 0;
+    }
+    .rp-prop-kind-snippet { background: rgba(80,130,200,0.2); color: var(--gemini); }
+    .rp-prop-kind-source  { background: rgba(180,120,40,0.2);  color: var(--ollama); }
+    .rp-prop-kind-library { background: rgba(120,120,120,0.2); color: var(--text-muted); }
+    .rp-prop-title {
+        flex: 1;
+        font-weight: 600;
+        color: var(--text-primary);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .rp-prop-lang {
+        font-size: 9.5px;
+        color: var(--text-muted);
+        font-family: var(--font-mono);
+        opacity: 0.7;
+    }
+    .rp-prop-meta {
+        font-size: 9.5px;
+        color: var(--text-muted);
+        margin-top: 4px;
+        font-family: var(--font-mono);
+    }
+    .rp-prop-preview {
+        margin-top: 4px;
+        padding: 4px 6px;
+        background: var(--bg-darker, var(--bg-codeblock));
+        border-radius: 2px;
+        font-family: var(--font-mono);
+        font-size: 10px;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        max-height: 80px;
+        overflow: auto;
+    }
+    .rp-prop-actions {
+        display: flex;
+        gap: 4px;
+        margin-top: 6px;
+        flex-wrap: wrap;
+    }
+    .sb-item-icon { font-size: 13px; color: var(--text-muted); flex-shrink: 0; }
+    .sb-item-body { flex: 1; min-width: 0; }
+    .sb-item-name {
+        font-size: 12px;
+        color: var(--text-primary);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        font-family: var(--font-ui);
+    }
+    .sb-item.active .sb-item-name { color: var(--gemini); }
+    .sb-item-meta {
+        font-size: 10px;
+        color: var(--text-muted);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .sb-filter { margin: 4px 8px 2px; padding: 3px 7px; font-size: 11px; box-sizing: border-box; width: calc(100% - 16px);
+        background: var(--bg-active); color: var(--text-primary); border: 1px solid var(--border-dim); border-radius: 3px; font-family: var(--font-ui); }
+    .sb-item-desc {
+        font-size: 10px; font-style: italic; color: var(--text-dim);
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .sb-item-del {
+        font-size: 12px;
+        color: var(--text-muted);
+        cursor: pointer;
+        padding: 2px;
+        border-radius: 2px;
+        flex-shrink: 0;
+        opacity: 0;
+        transition: opacity 0.15s;
+    }
+    .sb-item:hover .sb-item-del { opacity: 1; }
+    .sb-item-del:hover { color: #c0522a; background: rgba(192,82,42,0.15); }
+    /* File tree */
+    .ft-item {
+        display: flex;
+        align-items: center;
+        padding: 3px 8px;
+        cursor: pointer;
+        gap: 4px;
+        border-radius: 2px;
+        margin: 1px 2px;
+        transition: background 0.1s;
+        font-size: 11.5px;
+        font-family: var(--font-mono);
+        color: var(--text-dim);
+    }
+    .ft-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+    .ft-item .material-symbols-rounded { font-size: 13px; color: var(--text-muted); flex-shrink: 0; }
+    .ft-dir  { color: var(--text-primary); font-weight: 600; }
+    .ft-children { padding-left: 14px; }
+    /* Inline rename input */
+    .sb-rename-input {
+        background: var(--bg-active);
+        border: 1px solid var(--gemini-dim);
+        color: var(--text-primary);
+        font-family: var(--font-ui);
+        font-size: 11.5px;
+        padding: 2px 5px;
+        border-radius: 2px;
+        width: 100%;
+        outline: none;
+    }
+
+    /* Sidebar toggle buttons — on the edge of content area */
+    .sidebar-toggle {
+        position: absolute;
+        top: 50%;
+        transform: translateY(-50%);
+        background: var(--bg-panel);
+        border: 1px solid var(--border-mid);
+        color: var(--text-base);
+        width: 16px;
+        height: 40px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 5;
+        transition: all 0.15s;
+        border-radius: 0 3px 3px 0;
+    }
+    .sidebar-toggle:hover { color: var(--text-primary); border-color: var(--border-bright); }
+    .sidebar-toggle.right { border-radius: 3px 0 0 3px; }
+    .sidebar-toggle .material-symbols-rounded { font-size: 12px; color: inherit; }
+

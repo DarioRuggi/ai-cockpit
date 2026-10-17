@@ -1,0 +1,89 @@
+#!/bin/bash
+# =============================================================================
+# whisper_run — transcription for the tool presets, using the whisper that is
+# actually installed.
+#
+# The shipped presets invoked a binary called "whisper" (OpenAI's Python CLI).
+# This project builds whisper.cpp instead, whose binary is whisper-cli and lives
+# under ~/ai-tools — so every one of those presets failed on a machine that had
+# working transcription. Same class of bug as transcribe.php had: three places
+# disagreeing about where whisper lives.
+#
+# Usage: whisper_run <input> <output.txt> [language] [format]
+#        language: auto | en | he | es …        format: txt | srt
+# =============================================================================
+set -u
+INPUT="${1:-}"; OUTPUT="${2:-/dev/stdout}"; LANG_IN="${3:-auto}"; FORMAT="${4:-txt}"
+[ -f "$INPUT" ] || { echo "whisper_run: no such file: $INPUT" | tee "$OUTPUT" >&2; exit 1; }
+
+BIN=""
+for c in "$HOME/ai-tools/whisper.cpp/build/bin/whisper-cli" "$HOME/whisper.cpp/build/bin/whisper-cli" \
+         "$(command -v whisper-cli 2>/dev/null)" "$(command -v whisper-cpp 2>/dev/null)"; do
+    [ -n "$c" ] && [ -x "$c" ] && { BIN="$c"; break; }
+done
+[ -n "$BIN" ] || { echo "whisper.cpp is not installed (looked for whisper-cli under ~/ai-tools and on PATH)." | tee "$OUTPUT" >&2; exit 1; }
+
+# Largest real model wins; the for-tests-* stubs whisper.cpp ships are a few
+# hundred KB and transcribe into nonsense.
+MODEL=""; BEST=0
+for d in "$HOME/ai-tools/whisper.cpp/models" "$HOME/whisper.cpp/models"; do
+    for m in "$d"/ggml-*.bin; do
+        [ -f "$m" ] || continue
+        case "$(basename "$m")" in for-tests-*) continue ;; esac
+        sz=$(stat -c %s "$m"); [ "$sz" -lt 5000000 ] && continue
+        [ "$sz" -gt "$BEST" ] && { BEST=$sz; MODEL="$m"; }
+    done
+done
+[ -n "$MODEL" ] || { echo "No whisper model found (expected ggml-*.bin under whisper.cpp/models)." | tee "$OUTPUT" >&2; exit 1; }
+
+WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
+# whisper.cpp wants 16 kHz mono PCM.
+ffmpeg -y -i "$INPUT" -ar 16000 -ac 1 -c:a pcm_s16le "$WORK/in.wav" >/dev/null 2>&1 || {
+    echo "ffmpeg could not read that file." | tee "$OUTPUT" >&2; exit 1; }
+
+# Refuse silence rather than transcribing it. Whisper hallucinates on an empty
+# track — this rig's returns "you" for three seconds of digital silence, and
+# "Thank you." is the other classic. A confident wrong transcript is worse than
+# an honest empty one, so check the level first.
+if command -v sox >/dev/null 2>&1; then
+    PEAK=$(sox "$WORK/in.wav" -n stat 2>&1 | grep -i 'Maximum amplitude' | grep -o '[0-9.]\+' | head -1)
+    if [ -n "${PEAK:-}" ] && awk -v p="$PEAK" 'BEGIN{exit !(p < 0.01)}'; then
+        echo "The audio is silent (peak ${PEAK}) — nothing to transcribe." > "$OUTPUT"
+        exit 0
+    fi
+fi
+
+
+# Does this text contain anything that is actually speech? True when, after removing whisper's own
+# non-speech tags ([BLANK_AUDIO], (music), ♪), a letter or digit remains — or any non-ASCII byte,
+# which in a transcript means another script (Hebrew, Cyrillic, CJK…). POSIX only: no grep -P
+# (absent on macOS) and no locale dependence (a C-locale \p{L} rejects Hebrew).
+has_speech() {
+    local t; t=$(sed -e 's/\[[^]]*\]//g' -e 's/([^)]*)//g' -e 's/♪//g' -e 's/♫//g')
+    [ -n "$(printf '%s' "$t" | LC_ALL=C tr -d '\000-\177' | head -c 1)" ] && return 0     # any non-ASCII byte
+    printf '%s' "$t" | LC_ALL=C grep -q '[A-Za-z0-9]'
+}
+
+ARGS=(-m "$MODEL" -f "$WORK/in.wav")
+[ "$LANG_IN" != "auto" ] && ARGS+=(-l "$LANG_IN")
+if [ "$FORMAT" = "srt" ]; then ARGS+=(-osrt -of "$WORK/out"); else ARGS+=(-nt); fi
+
+if [ "$FORMAT" = "srt" ]; then
+    "$BIN" "${ARGS[@]}" >/dev/null 2>&1
+    if [ -f "$WORK/out.srt" ] && sed -e '/-->/d' -e '/^[0-9]*$/d' "$WORK/out.srt" | has_speech; then
+        cp "$WORK/out.srt" "$OUTPUT"
+    else
+        echo "No subtitles were produced — the audio may be silence, or music with no intelligible vocal." > "$OUTPUT"
+    fi
+else
+    "$BIN" "${ARGS[@]}" 2>/dev/null | sed 's/^[[:space:]]*//' | sed '/./,$!d' > "$OUTPUT"      # and no leading blank lines
+    # Only a REGULAR file can be checked for emptiness: /dev/stdout always reports
+    # size 0, and the first version cheerfully appended "nothing was transcribed"
+    # to a perfectly good transcript.
+    # "Empty" also means: only punctuation or whisper's own non-speech tags. A pure tone or
+    # white noise comes back as a lone "." (2026-10-02), which is neither empty nor a transcript.
+    if [ -f "$OUTPUT" ] && ! has_speech < "$OUTPUT"; then
+        echo "Nothing was transcribed — the audio may be silence, or music with no intelligible vocal." > "$OUTPUT"
+    fi
+fi
+exit 0

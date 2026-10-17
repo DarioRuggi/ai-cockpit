@@ -1,0 +1,77 @@
+{
+    "id": "healthlog",
+    "name": "Health and fitness log",
+    "description": "Checks the numbers you keep about training, food, appointments and measurements. Plan check finds weekly volume, rest days, long streaks and week-on-week jumps above 10%; Meal totals adds the diary numbers you wrote; Appointments lists upcoming and overdue; Trend shows first, last, change and recent average of each measure. NOT medical advice and it never diagnoses: it is arithmetic on your own numbers. The original is never changed.",
+    "binary": "php",
+    "version_args": "--version",
+    "website": "https://www.php.net",
+    "packages": {
+        "apt": "php-cli php-mbstring",
+        "dnf": "php-cli php-mbstring",
+        "pacman": "php",
+        "zypper": "php8 php8-mbstring",
+        "brew": "php"
+    },
+    "presets": [
+        {
+            "id": "plan",
+            "label": "Training plan check",
+            "description": "Weekly volume (minutes, distance, load ...: name the column with metric=, or it is found), sessions, training and rest days, the longest run of training days, and rises above the threshold (extra arguments threshold=10 min_rest=1 max_streak=6). The 10% figure is a rule of thumb, not a safe limit.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_plan",
+            "command": "php {WEBROOT}/healthlog_tool plan {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "meals",
+            "label": "Meal diary totals",
+            "description": "Daily and per-meal totals of kcal, protein, carbs and fat from the numbers YOU wrote in the diary (date, meal, item, kcal, protein_g, carbs_g, fat_g); notes items with no kcal and labels whose numbers do not agree. Extra argument target=2000 shows each day against a target you chose. No food is looked up.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_meals",
+            "command": "php {WEBROOT}/healthlog_tool meals {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "appointments",
+            "label": "Appointments: upcoming and overdue",
+            "description": "From a list (date, time, title, who, done): overdue (past and not marked done), coming up within N days, later, and clashes on the same date and time. Extra arguments: today=YYYY-MM-DD within=30.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_appointments",
+            "command": "php {WEBROOT}/healthlog_tool appointments {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "trend",
+            "label": "Weight and measure trend",
+            "description": "For every numeric column (weight, waist, resting pulse ...): readings, first, last, change, percent, change per 30 days, lowest, highest, average of the last three, direction of the last three. A change says nothing by itself about health.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_trend",
+            "command": "php {WEBROOT}/healthlog_tool trend {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        }
+    ]
+}

@@ -1,0 +1,33 @@
+{
+    "id": "pets",
+    "name": "Pets and animals",
+    "icon": "pets",
+    "description": "A care log with reminders, vaccination and treatment checks, weight trends and package feeding amounts.",
+    "detect": [],
+    "note": "This is a pet-care project: a care log (CSV: date, pet, task, interval_days, weight_kg, notes). This is NOT veterinary advice and you never give any: never diagnose, name a dose, a vaccine schedule, a diet or a medicine, and never say an animal is healthy or ill. Intervals and schedules come only from the user's files or their vet; the tools do date arithmetic on what was recorded. A weight change is something to mention to the vet, nothing more. If the user describes a sick or injured animal, tell them to contact a vet now. Never invent a date, weight or amount; the feeding amount is read off the package table the user typed in, never extrapolated. Keep the original log and write new copies. Run the Pet care reminders after every change.",
+    "verify": "petcare due",
+    "group": "Home & life",
+    "details": "A care log in a CSV file. The Pet care tool lists what is due or overdue for every pet (last done plus the interval you recorded), checks vaccinations, worming and flea or tick treatments against the log or against a schedule your vet gave you, shows the weight trend, and works out the daily amount of food from the weight table printed on the package by reading between its rows. It is date and number arithmetic on what you wrote down; it does not know your animal and is not veterinary advice.",
+    "examples": [
+        "What is overdue for the dog and the cats?",
+        "Check the vaccination record against the vet's schedule",
+        "Has the cat's weight changed over the last three months?",
+        "How much food a day from the package table at 12.5 kg?"
+    ],
+    "tools": [
+        {
+            "tool": "petcare",
+            "why": "reminders, vaccination check, weight trend, feeding amount from the package table"
+        },
+        {
+            "tool": "data",
+            "why": "ask the care log free-form questions in SQL"
+        }
+    ],
+    "starter": [
+        {
+            "path": "care_log.csv",
+            "content": "date,pet,task,interval_days,weight_kg,notes\n"
+        }
+    ]
+}

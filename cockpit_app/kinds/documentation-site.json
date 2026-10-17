@@ -1,0 +1,38 @@
+{
+    "id": "documentation-site",
+    "name": "Documentation site",
+    "icon": "menu_book",
+    "description": "A folder of markdown pages turned into checked documentation.",
+    "detect": [
+        "README.md",
+        "docs"
+    ],
+    "note": "This is a documentation project: markdown pages in folders, built into a static site. Give every page one # title as its first heading, keep the heading levels in order, name files with a number prefix when the order matters (01-install.md), link between pages with relative .md links (they are rewritten to .html when the site is built) and to a heading with #anchor, put images beside the pages that use them, and write a README.md or index.md as the home page. Do not change a page's meaning when you tidy its structure, and never invent commands, options or version numbers: copy them from the code or the user. After every change, run the Docs check and fix every error it lists (broken links, missing images, links whose case differs, empty pages), then build the site.",
+    "verify": "docsite check",
+    "group": "Writing & documents",
+    "details": "Documentation from markdown. The Documentation site tool checks the pages for broken links between pages and to headings, missing images, links that differ only in letter case (they break on Linux), empty pages, pages with no title, skipped heading levels, repeated headings and pages nothing links to; writes a contents page in folder and number order; builds a static site in a zip with a sidebar, previous and next links, dark mode and an offline search box, with links rewritten from .md to .html; and makes one self-contained HTML page of everything to print or send. Pandoc reads the pages in its sandbox. Preview the built site with the Web site tools. For sites built with Hugo, the Hugo tool builds and checks them in a sandbox.",
+    "examples": [
+        "Find every broken link in the docs folder",
+        "Build a site from the README and docs/ pages",
+        "A contents page for a manual with numbered chapters",
+        "All the pages as one printable HTML file"
+    ],
+    "tools": [
+        {
+            "tool": "docsite",
+            "why": "check pages, write the contents, build the site, one-page export"
+        },
+        {
+            "tool": "website",
+            "why": "preview the built site in the browser and check it again as HTML"
+        },
+        {
+            "tool": "pandoc",
+            "why": "epub, pdf and Word versions of a page"
+        },
+        {
+            "tool": "hugo",
+            "why": "if the site is built with Hugo: check it, build it, list its pages, start a small site (in a sandbox)"
+        }
+    ]
+}

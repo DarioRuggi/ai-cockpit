@@ -1,0 +1,12 @@
+{
+  "id": "qwen", "display": "Qwen Code", "kind": "agent", "transport": "process",
+  "command": "qwen",
+  "args": ["-p", "{prompt}", {"when": "model", "args": ["--model", "{model}"]}],
+  "parser": "plain",
+  "tiers": {"shell": []},
+  "detect": {"cmd": "qwen", "version_args": ["--version"]},
+  "cwd_policy": "project",
+  "limits": {"timeout_s": 900},
+  "notes": "Qwen Code's free OAuth tier ended; Cockpit points it at local Ollama via ~/.qwen/.env. Flags follow the Gemini-CLI lineage and have not been re-checked against its current help.",
+  "docs_checked": "NOT CHECKED"
+}

@@ -1,0 +1,49 @@
+{
+  "id": "research",
+  "name": "Research",
+  "icon": "travel_explore",
+  "description": "Finding out about a topic: sources, comparison, a written conclusion.",
+  "detect": [],
+  "note": "This is a research project. Separate what the sources say from your own inference, name the source of every factual claim, say when a claim is uncertain or could not be checked, and finish with a short conclusion and open questions.",
+  "verify": "sources named, claims checked",
+  "group": "Research & learning",
+  "details": "Finding out about a topic and writing down what is known. The agent separates what the sources say from its own inference, names the source of every factual claim, says when something is uncertain, and does not invent references. Your Library, the Shelf and PDF text extraction are the sources it can use.",
+  "examples": [
+    "Compare three databases for a small business, with sources",
+    "What do these five papers agree and disagree on?",
+    "Fact-check a claim and say how sure each source is",
+    "Reading notes filed in the Library as you go"
+  ],
+  "tools": [
+    {
+      "tool": "poppler",
+      "why": "the text of PDF papers"
+    },
+    {
+      "tool": "pdfpages",
+      "why": "pages of a PDF as images, for figures and tables"
+    },
+    {
+      "tool": "ytdlp",
+      "why": "subtitles and metadata of talks you may use"
+    },
+    {
+      "tool": "pandoc",
+      "why": "notes to Word or PDF"
+    }
+  ],
+  "starter": [
+    {
+      "path": "question.md",
+      "content": "# The question\n\nWhat exactly do I want to know, and why?\n\nWhat would count as an answer:\n\nWhat I already believe (so I can check it):\n"
+    },
+    {
+      "path": "sources.md",
+      "content": "# Sources\n\n| Source | Author / date | What it says | How far I trust it, and why |\n|---|---|---|---|\n"
+    },
+    {
+      "path": "log.md",
+      "content": "# Research log\n\nDate, what I searched or read, what I found, what to do next.\n"
+    }
+  ]
+}

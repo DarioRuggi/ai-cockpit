@@ -1,0 +1,49 @@
+{
+  "id": "writing",
+  "name": "Creative Writing",
+  "icon": "edit_note",
+  "description": "Stories, scripts, lyrics, articles: voice, plot and revision.",
+  "detect": [],
+  "note": "This is a creative writing project. Keep the established voice, names, facts and timeline consistent across chats, ask before changing a character or plot point, and offer revisions as alternatives rather than silent rewrites.",
+  "verify": "consistency with earlier chapters",
+  "group": "Writing & documents",
+  "details": "For fiction, scripts, lyrics, essays and articles, where voice and continuity matter more than anything else. The agent keeps names, facts and the timeline consistent across all the chats of the project, asks before changing a character or a rule you established, and revises what exists instead of rewriting it. The Creative writing tool reads the manuscript: statistics per chapter, repeated phrases and tics with their lines, and names spelled almost the same (Catherine and Katherine). It points at places to look; you decide.",
+  "examples": [
+    "A novel, one chat per chapter, with a character sheet in the Library",
+    "Song lyrics in a fixed rhyme scheme and meter",
+    "A newsletter series that must sound like one author",
+    "Screenplay scenes that follow an outline"
+  ],
+  "tools": [
+    {
+      "tool": "writing",
+      "why": "statistics, repeated phrases and tics, name and spelling slips across chapters"
+    },
+    {
+      "tool": "pandoc",
+      "why": "chapters to Word, HTML or EPUB"
+    },
+    {
+      "tool": "office",
+      "why": "Word and LibreOffice manuscripts in and out"
+    }
+  ],
+  "starter": [
+    {
+      "path": "outline.md",
+      "content": "# Outline\n\nOne line per chapter: what happens, who is there, what changes.\n\n1. \n2. \n3. \n"
+    },
+    {
+      "path": "characters.md",
+      "content": "# Characters\n\nName, age, look, voice, what they want, what they hide. One block each, spelled the way it is spelled everywhere else.\n\n## Name\n- Wants:\n- Hides:\n- Speaks:\n"
+    },
+    {
+      "path": "style.md",
+      "content": "# Style\n\nPoint of view and tense:\nVoice (three words):\nWords this book does not use:\nSpelling (British/American), numbers, dialogue marks:\n"
+    },
+    {
+      "path": "chapters/01.md",
+      "content": "# Chapter 1\n\n"
+    }
+  ]
+}

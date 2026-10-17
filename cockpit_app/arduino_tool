@@ -1,0 +1,98 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// arduino_tool — the Embedded / Arduino tools' work, for the tool presets (tools_builtins/arduino.json). A command-line program, never reachable over the web.
+//
+//   php arduino_tool lint    SKETCH OUTPUT                 read the sketch (.ino or its folder) and report: no setup()/loop(), Serial used before Serial.begin, digitalWrite with no pinMode,
+//                                                          delay() in an interrupt handler, String concatenation in loop(), big global arrays on a small board ... as file(line)
+//   php arduino_tool info    SKETCH OUTPUT                 libraries included, pins used, baud rate, functions, interrupt handlers, global memory the arrays take
+//   php arduino_tool compile SKETCH OUTPUT fqbn=arduino:avr:uno   compile with arduino-cli: errors as file(line,col), the program and RAM use; if the board's core is not installed it
+//                                                          says which core and the ONE command to add it (nothing is downloaded by this tool)
+//   php arduino_tool cores   ANY OUTPUT                    the cores (board families) and libraries installed, and how to add one
+//   php arduino_tool new     FOLDER OUTPUT NAME            a sketch NAME/NAME.ino (blink + serial); never overwrites
+//
+// arduino-cli keeps its cores and libraries in ~/.local/share/cockpit/arduino/ (not ~/.arduino15). This tool never downloads anything: adding a core or a library is a command you run.
+// The sketch is never changed.
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "arduino_tool: $m\n"); exit($rc); }
+[$sub, $in, $out] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? '']; $args = array_slice($argv, 4);
+if (!in_array($sub, ['lint', 'info', 'compile', 'cores', 'new'], true) || $in === '' || $out === '') fail('usage: arduino_tool lint|info|compile|cores|new SKETCH OUTPUT [fqbn=...]', 2);
+$opt = []; foreach ($args as $a) foreach (preg_split('/[\s;]+(?=\w+=)/', trim($a)) as $p) if (strpos($p, '=') !== false) { [$k, $v] = explode('=', $p, 2); $opt[strtolower(trim($k))] = trim($v); }
+function sh(string $cmd, ?int &$rc = null, int $secs = 240): string { $o = []; exec('timeout ' . $secs . ' ' . $cmd . ' 2>&1', $o, $rc); return implode("\n", $o); }
+function have(string $b): bool { return trim((string)shell_exec('command -v ' . escapeshellarg($b) . ' 2>/dev/null')) !== ''; }
+$home = ''; if (preg_match('/"home"\s*:\s*"([^"]*)"/', (string)@file_get_contents(__DIR__ . '/paths.json'), $pm)) $home = $pm[1]; if ($home === '') $home = getenv('HOME') ?: '';
+$AC = null; foreach ([trim((string)shell_exec('command -v arduino-cli 2>/dev/null')), "$home/.local/bin/arduino-cli", "$home/.local/share/cockpit/tools/arduino-cli/arduino-cli"] as $c) if ($c !== '' && is_executable($c)) { $AC = $c; break; }
+$ACDIR = "$home/.local/share/cockpit/arduino"; $ENV = 'env ARDUINO_DIRECTORIES_DATA=' . escapeshellarg("$ACDIR/data") . ' ARDUINO_DIRECTORIES_USER=' . escapeshellarg("$ACDIR/user") . ' ARDUINO_DIRECTORIES_DOWNLOADS=' . escapeshellarg("$ACDIR/downloads") . ' ARDUINO_UPDATER_ENABLE_NOTIFICATION=false HOME=' . escapeshellarg($home ?: '/tmp') . ' ';
+$need = function () use ($AC) { if ($AC === null) fail('arduino-cli is not installed. Fetch the official release (github.com/arduino/arduino-cli, arduino-cli_X_Linux_64bit.tar.gz) into ~/.local/share/cockpit/tools/arduino-cli/ and link it from ~/.local/bin'); };
+
+if ($sub === 'new') {
+    if (!is_dir($in)) fail('new: give the folder to create the sketch in'); $nm = preg_replace('/[^A-Za-z0-9_]/', '', preg_split('/\s+/', trim($args[0] ?? ''))[0] ?? ''); if ($nm === '' || !preg_match('/^[A-Za-z_]/', $nm)) fail('new: type the sketch\'s name in the extra arguments (letters, digits and _, not starting with a digit)');
+    $d = rtrim($in, '/') . '/' . $nm; if (file_exists($d)) fail("new: $d already exists, nothing was changed"); mkdir($d, 0775, true);
+    file_put_contents("$d/$nm.ino", "// $nm: blinks the built-in LED and reports over the serial port.\n\nconst uint8_t LED_PIN = LED_BUILTIN;      // the board's own LED\nconst unsigned long BLINK_MS = 500;       // half a period\nunsigned long lastToggle = 0;\nbool ledOn = false;\n\nvoid setup() {\n  pinMode(LED_PIN, OUTPUT);\n  Serial.begin(9600);\n  Serial.println(F(\"$nm ready\"));\n}\n\nvoid loop() {\n  unsigned long now = millis();           // no delay(): the loop stays free for other work\n  if (now - lastToggle >= BLINK_MS) {\n    lastToggle = now;\n    ledOn = !ledOn;\n    digitalWrite(LED_PIN, ledOn ? HIGH : LOW);\n    Serial.println(ledOn ? F(\"on\") : F(\"off\"));\n  }\n}\n");
+    file_put_contents($out, "Created $d/$nm.ino. Next: Lint, then Compile with your board (fqbn=arduino:avr:uno ...).\n[exit code 0]\n"); echo "Created $d\n"; exit(0);
+}
+if ($sub === 'cores') {
+    $need(); $c = sh($ENV . escapeshellarg($AC) . ' core list --no-color 2>&1', $rc, 60); $l = sh($ENV . escapeshellarg($AC) . ' lib list --no-color 2>&1', $rc2, 60); $v = trim(sh($ENV . escapeshellarg($AC) . ' version --no-color', $rc3, 20));
+    $o = "# Arduino cores and libraries\n\n- $v\n- Data folder: $ACDIR/ (cores and libraries live here, not in ~/.arduino15)\n\n## Cores installed\n\n```\n" . trim($c) . "\n```\n\n## Libraries installed\n\n```\n" . trim($l) . "\n```\n\n## Adding a board family (a download, so YOU run it)\n\n```\nexport ARDUINO_DIRECTORIES_DATA=$ACDIR/data ARDUINO_DIRECTORIES_USER=$ACDIR/user ARDUINO_DIRECTORIES_DOWNLOADS=$ACDIR/downloads\narduino-cli core update-index\narduino-cli core install arduino:avr      # Uno, Nano, Mega, Pro Mini (the smallest core)\narduino-cli lib install \"Servo\"\n```\n\nThen Compile with the board's name, for example fqbn=arduino:avr:uno.\n";
+    file_put_contents($out, $o . "\n[exit code 0]\n"); echo "Wrote $out\n"; exit(0);
+}
+// ---- the sketch ----------------------------------------------------------------------------------------------------------------------------------
+$ino = null; $dir = null;
+if (is_dir($in)) { $dir = rtrim($in, '/'); $c = glob("$dir/*.ino") ?: []; $same = "$dir/" . basename($dir) . '.ino'; $ino = is_file($same) ? $same : ($c[0] ?? null); if ($ino === null) fail('no .ino file in the folder'); }
+elseif (is_file($in) && strtolower(pathinfo($in, PATHINFO_EXTENSION)) === 'ino') { $ino = $in; $dir = dirname($in); } else fail('give a sketch: a .ino file or its folder');
+$files = [$ino]; foreach (glob("$dir/*.ino") ?: [] as $f) if ($f !== $ino) $files[] = $f; foreach (glob("$dir/*.{h,hpp,c,cpp}", GLOB_BRACE) ?: [] as $f) $files[] = $f;
+$rel = fn($f) => basename($f); $all = ''; $texts = []; foreach ($files as $f) { $t = (string)file_get_contents($f); $texts[$f] = $t; $all .= $t . "\n"; }
+$strip = function (string $t): string { $t = preg_replace_callback('~/\*.*?\*/~s', fn($m) => str_repeat("\n", substr_count($m[0], "\n")), $t); return preg_replace('~//[^\n]*~', '', $t); };
+$code = []; foreach ($texts as $f => $t) $code[$f] = $strip($t); $allCode = implode("\n", $code);
+
+if ($sub === 'compile') {
+    $need(); $fqbn = $opt['fqbn'] ?? ''; if ($fqbn === '' || !preg_match('/^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+(:[A-Za-z0-9_.=,-]+)?$/', $fqbn)) fail('give the board in the extra arguments: fqbn=arduino:avr:uno (vendor:architecture:board)');
+    $tmp = sys_get_temp_dir() . '/arduino_' . getmypid() . '_' . mt_rand(1000, 9999); mkdir("$tmp/sk/" . basename($dir), 0700, true); mkdir("$tmp/build", 0700, true);
+    register_shutdown_function(function () use ($tmp) { if (strpos(basename($tmp), 'arduino_') !== 0 || !is_dir($tmp)) return; $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($tmp, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::CHILD_FIRST); foreach ($it as $f) { $f->isDir() && !$f->isLink() ? @rmdir($f->getPathname()) : @unlink($f->getPathname()); } @rmdir($tmp); });
+    $skname = pathinfo($ino, PATHINFO_FILENAME); $skdir = "$tmp/sk/$skname"; @rename("$tmp/sk/" . basename($dir), $skdir); @mkdir($skdir); foreach (glob("$dir/*") ?: [] as $f) if (is_file($f) && preg_match('/\.(ino|h|hpp|c|cpp|S|txt|json)$/i', $f)) copy($f, "$skdir/" . basename($f));
+    $o = sh($ENV . escapeshellarg($AC) . ' compile --no-color --fqbn ' . escapeshellarg($fqbn) . ' --build-path ' . escapeshellarg("$tmp/build") . ' --warnings default ' . escapeshellarg($skdir), $rc, 280);
+    $msgs = []; $cnt = ['Error' => 0, 'Warning' => 0, 'Note' => 0]; $add = function (string $k, string $f, int $l, int $c, string $m) use (&$msgs, &$cnt) { $msgs[] = "$f($l" . ($c ? ",$c" : '') . ") $k: $m"; $cnt[$k]++; };
+    if (preg_match('/platform not installed|Platform .* is not installed|Error resolving FQBN|Unknown FQBN|Invalid FQBN|core .* not installed/i', $o) || (preg_match('/not installed/i', $o) && $rc !== 0)) { $core = implode(':', array_slice(explode(':', $fqbn), 0, 2));
+        $rep = "# Compile: " . basename($ino) . " for $fqbn\n\nNOT COMPILED: the core for this board is not installed ($core), and this tool never downloads anything.\n\nTo add it, run (a download, from Arduino's servers; the AVR core is among the smaller):\n\n```\nexport ARDUINO_DIRECTORIES_DATA=$ACDIR/data ARDUINO_DIRECTORIES_USER=$ACDIR/user ARDUINO_DIRECTORIES_DOWNLOADS=$ACDIR/downloads\narduino-cli core update-index\narduino-cli core install $core\n```\n\nThen run Compile again. (Lint and Info work without any core.)\n\n" . basename($ino) . "(1) Error: the core $core for $fqbn is not installed\n\n[exit code 1]\n";
+        file_put_contents($out, $rep); echo "Wrote $out (the core $core is not installed)\n"; exit(0); }
+    foreach (explode("\n", $o) as $l) { if (preg_match('~^(?:.*/)?([^/:\s]+\.(?:ino|cpp|c|h|hpp)):(\d+):(?:(\d+):)?\s*(fatal error|error|warning|note):\s*(.*)$~', $l, $m)) { $k = in_array($m[4], ['error', 'fatal error'], true) ? 'Error' : ($m[4] === 'warning' ? 'Warning' : 'Note'); $f = preg_replace('~\.ino\.cpp$~', '.ino', $m[1]); $add($k, $f, (int)$m[2], (int)($m[3] ?? 0), $m[5]); } }
+    $mem = []; if (preg_match('/Sketch uses (\d+) bytes \((\d+)%\) of program storage space\. Maximum is (\d+)/', $o, $m)) $mem[] = "Program: {$m[1]} of {$m[3]} bytes ({$m[2]}%)"; if (preg_match('/Global variables use (\d+) bytes \((\d+)%\) of dynamic memory.*?Maximum is (\d+)/s', $o, $m)) $mem[] = "RAM for globals: {$m[1]} of {$m[3]} bytes ({$m[2]}%)";
+    if ($rc !== 0 && !$cnt['Error']) $add('Error', basename($ino), 1, 0, trim(substr(preg_replace('/\s+/', ' ', $o), 0, 300)));
+    foreach ($mem as $x) if (preg_match('/\((\d+)%\)/', $x, $mm) && (int)$mm[1] >= 90) $add('Warning', basename($ino), 1, 0, "$x: almost full");
+    $rep = "# Compile: " . basename($ino) . " for $fqbn\n\n" . ($mem ? '- ' . implode("\n- ", $mem) . "\n\n" : '') . ($msgs ? "## Messages ({$cnt['Error']} errors, {$cnt['Warning']} warnings)\n\n" . implode("\n", array_slice(array_unique($msgs), 0, 200)) . "\n" : "Compiled without messages.\n") . "\n[exit code " . ($cnt['Error'] > 0 || $rc !== 0 ? 1 : 0) . "]\n";
+    file_put_contents($out, $rep); echo "Wrote $out ({$cnt['Error']} errors, {$cnt['Warning']} warnings)\n"; exit(0);
+}
+
+// ---- reading the sketch: lint, info --------------------------------------------------------------------------------------------------------------------
+$line_of = function (string $f, int $off) use ($code): int { return substr_count(substr($code[$f], 0, $off), "\n") + 1; };
+preg_match_all('/#include\s*[<"]([^>"]+)[>"]/', $allCode, $inc); $incs = array_unique($inc[1]); $STD = ['Arduino.h', 'Wire.h', 'SPI.h', 'Serial.h', 'EEPROM.h', 'avr/pgmspace.h', 'avr/interrupt.h', 'avr/sleep.h', 'avr/wdt.h', 'math.h', 'stdlib.h', 'string.h', 'stdint.h', 'stdio.h', 'util/delay.h', 'SoftwareSerial.h', 'Servo.h', 'LiquidCrystal.h', 'SD.h', 'Stepper.h'];
+$isrs = []; if (preg_match_all('/attachInterrupt(?:Arg)?\s*\([^,]+,\s*&?(\w+)/', $allCode, $m)) $isrs = $m[1]; if (preg_match_all('/\bISR\s*\(\s*(\w+)\s*\)/', $allCode, $m2)) $isrs = array_merge($isrs, array_map(fn($x) => "ISR($x)", $m2[1]));
+$hasSetup = (bool)preg_match('/\bvoid\s+setup\s*\(\s*(?:void)?\s*\)/', $allCode); $hasLoop = (bool)preg_match('/\bvoid\s+loop\s*\(\s*(?:void)?\s*\)/', $allCode);
+$baud = []; if (preg_match_all('/Serial\d?\.begin\s*\(\s*(\d+)/', $allCode, $m)) $baud = array_unique($m[1]); $outPins = []; if (preg_match_all('/pinMode\s*\(\s*(\w+)\s*,\s*(OUTPUT|INPUT_PULLUP|INPUT)/', $allCode, $m, PREG_SET_ORDER)) foreach ($m as $x) $outPins[$x[1]] = $x[2];
+$bytes = 0; $arrays = []; $tsz = ['char' => 1, 'byte' => 1, 'uint8_t' => 1, 'int8_t' => 1, 'bool' => 1, 'boolean' => 1, 'int' => 2, 'uint16_t' => 2, 'int16_t' => 2, 'short' => 2, 'word' => 2, 'long' => 4, 'unsigned long' => 4, 'uint32_t' => 4, 'int32_t' => 4, 'float' => 4, 'double' => 4];
+if (preg_match_all('/^(?:static\s+|volatile\s+)*(unsigned long|char|byte|uint8_t|int8_t|bool|boolean|int|uint16_t|int16_t|short|word|long|uint32_t|int32_t|float|double)\s+(\w+)\s*\[\s*(\d+)\s*\]/m', $allCode, $m, PREG_SET_ORDER)) foreach ($m as $x) { $sz = $tsz[$x[1]] * (int)$x[3]; $bytes += $sz; $arrays[] = "{$x[2]}[{$x[3]}] ($sz bytes)"; }
+if ($sub === 'info') {
+    $o = "# Sketch: " . basename($ino) . "\n\n- Files: " . implode(', ', array_map($rel, $files)) . "\n- setup(): " . ($hasSetup ? 'yes' : 'NO') . "; loop(): " . ($hasLoop ? 'yes' : 'NO') . "\n- Libraries included: " . ($incs ? implode(', ', $incs) : 'none') . "\n- Serial baud rate: " . ($baud ? implode(', ', $baud) : 'Serial not started') . "\n- Pins set with pinMode: " . ($outPins ? implode(', ', array_map(fn($p, $m) => "$p ($m)", array_keys($outPins), $outPins)) : 'none') . "\n- Interrupt handlers: " . ($isrs ? implode(', ', array_unique($isrs)) : 'none') . "\n- Global arrays: " . ($arrays ? implode(', ', $arrays) . "; $bytes bytes of RAM in all" : 'none') . "\n";
+    preg_match_all('/^\s*(?:void|int|bool|float|long|unsigned long|byte|uint8_t|String|char\s*\*)\s+(\w+)\s*\([^;{]*\)\s*\{/m', $allCode, $fn); $o .= "- Functions: " . ($fn[1] ? implode(', ', array_unique($fn[1])) : 'none') . "\n"; $ext = array_filter($incs, fn($i) => !in_array($i, $STD, true)); if ($ext) $o .= "\nNeeds libraries beyond the standard ones: " . implode(', ', $ext) . " (install with arduino-cli lib install \"Name\").\n";
+    file_put_contents($out, $o . "\n[exit code 0]\n"); echo "Wrote $out\n"; exit(0);
+}
+// lint
+$msgs = []; $cnt = ['Error' => 0, 'Warning' => 0, 'Note' => 0]; $add = function (string $k, string $f, int $l, string $m) use (&$msgs, &$cnt, $rel) { $msgs[] = $rel($f) . "($l) $k: $m"; $cnt[$k]++; };
+if (!$hasSetup) $add('Error', $ino, 1, 'no setup() function: the sketch will not compile'); if (!$hasLoop) $add('Error', $ino, 1, 'no loop() function: the sketch will not compile');
+foreach ($code as $f => $t) {
+    $lines = explode("\n", $t); $firstBegin = PHP_INT_MAX; $firstUse = null; foreach ($lines as $i => $l) { if ($firstBegin === PHP_INT_MAX && preg_match('/\bSerial\.begin\b/', $l)) $firstBegin = $i; if ($firstUse === null && preg_match('/\bSerial\.(print|println|write|available|read)\b/', $l)) $firstUse = $i; }
+    if ($firstUse !== null && $firstBegin === PHP_INT_MAX && !preg_match('/Serial\d\.begin/', $t)) $add('Warning', $f, $firstUse + 1, 'Serial is used but Serial.begin() is never called in this file: nothing will come out');
+    foreach ($lines as $i => $l) {
+        if (preg_match_all('/digitalWrite\s*\(\s*(\w+)\s*,/', $l, $m)) foreach ($m[1] as $p) if (!isset($outPins[$p])) $add('Warning', $f, $i + 1, "digitalWrite($p, ...) but pinMode($p, OUTPUT) is never set: the pin stays an input with only its pull-up toggled");
+        if (preg_match('/\bdelay\s*\(\s*(\d+)\s*\)/', $l, $m) && (int)$m[1] >= 1000 && !in_array(basename($f), [], true)) $add('Note', $f, $i + 1, "delay({$m[1]}) blocks everything for {$m[1]} ms: use millis() if the sketch must react meanwhile");
+        if (preg_match('/\b(malloc|calloc|realloc|new\s+\w+)\b/', $l)) $add('Note', $f, $i + 1, 'dynamic memory allocation on a microcontroller can fragment its few kilobytes of RAM');
+        if (preg_match('/\bwhile\s*\(\s*!\s*Serial\s*\)/', $l)) $add('Note', $f, $i + 1, 'while(!Serial) waits forever on boards with a hardware UART (it only ends on USB-serial boards)');
+        if (preg_match('/\bString\s+\w+\s*(=|\+=)/', $l) || preg_match('/\bString\s*\(/', $l)) $add('Note', $f, $i + 1, 'the String class allocates memory as it grows: on a small board prefer char arrays, and F("...") for constant text');
+        if (preg_match('/\bSerial\.print(?:ln)?\s*\(\s*"/', $l)) $add('Note', $f, $i + 1, 'text in Serial.print("...") lives in RAM on AVR boards: wrap it in F("...") to keep it in program memory'); }
+    foreach ($isrs as $h) { $nm = preg_replace('/^ISR\((\w+)\)$/', '$1', $h); $pat = strpos($h, 'ISR(') === 0 ? '/\bISR\s*\(\s*' . preg_quote($nm, '/') . '\s*\)\s*\{/' : '/\bvoid\s+' . preg_quote($nm, '/') . '\s*\([^)]*\)\s*\{/'; if (preg_match($pat, $t, $m, PREG_OFFSET_CAPTURE)) { $body = ''; $d = 0; $st = $m[0][1] + strlen($m[0][0]) - 1; $n = strlen($t); for ($j = $st; $j < $n; $j++) { if ($t[$j] === '{') $d++; elseif ($t[$j] === '}') { $d--; if ($d === 0) { $body = substr($t, $st, $j - $st); break; } } }
+        if (preg_match('/\b(delay|Serial\.(print|println|write)|malloc|new\s)\b/', $body, $b)) $add('Warning', $f, $line_of($f, $m[0][1]), "the interrupt handler $nm calls {$b[1]}: it must be short, with no delay(), no Serial output and no allocation"); if (!preg_match('/\bvolatile\b/', $allCode)) $add('Note', $f, $line_of($f, $m[0][1]), "$nm is an interrupt handler but no variable is declared volatile: a value shared with loop() must be"); } }
+}
+if ($bytes >= 1000) $add('Note', $ino, 1, "the global arrays take $bytes bytes of RAM (" . implode(', ', $arrays) . '): an Uno has 2048 bytes in all'); if (count($baud) > 1) $add('Warning', $ino, 1, 'Serial.begin is called with different baud rates (' . implode(', ', $baud) . ')');
+$rep = "# Sketch lint: " . basename($ino) . "\n\n- Files read: " . count($files) . " (only read: nothing was compiled or uploaded). Pattern-based: it finds common mistakes, not everything the compiler would say; use Compile for that.\n\n" . ($msgs ? "## Findings ({$cnt['Error']} errors, {$cnt['Warning']} warnings, {$cnt['Note']} notes)\n\n" . implode("\n", array_slice(array_unique($msgs), 0, 200)) . "\n" : "No findings.\n") . "\n[exit code " . ($cnt['Error'] > 0 ? 1 : 0) . "]\n";
+file_put_contents($out, $rep); echo "Wrote $out ({$cnt['Error']} errors, {$cnt['Warning']} warnings, {$cnt['Note']} notes)\n";

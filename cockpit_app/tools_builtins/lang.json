@@ -1,0 +1,91 @@
+{
+    "id": "lang",
+    "name": "Language study",
+    "description": "Tools for learning a language (any language: French, German, Japanese, Arabic, ...). Keep a vocabulary list (one entry per line: term and translation separated by a tab, \";\", \",\" or \" - \", an optional example sentence, optional tags). Check lints it (duplicates, empty sides, invisible characters); Anki cards writes a file Anki imports; Frequency lists the most frequent words of a text so you learn the useful ones first (vowel marks ignored); Listen makes an audio file (term, a pause to answer, the translation) with Piper where a voice is installed, otherwise eSpeak-NG; Compare checks a recording of you reading a text against that text through Whisper and lists the words said differently or not heard. Translation of text: the Translate button. The original is never changed.",
+    "binary": "php",
+    "version_args": "--version",
+    "website": "https://apps.ankiweb.net",
+    "packages": {
+        "apt": "php-cli php-mbstring ffmpeg espeak-ng",
+        "dnf": "php-cli php-mbstring ffmpeg espeak-ng",
+        "pacman": "php ffmpeg espeak-ng",
+        "zypper": "php8 php8-mbstring ffmpeg espeak-ng",
+        "brew": "php ffmpeg espeak-ng"
+    },
+    "presets": [
+        {
+            "id": "check",
+            "label": "Check the vocabulary list",
+            "description": "Lints a vocabulary list: a term with no translation or the reverse (error), repeats, the same text on both sides, an invisible character, a very long entry, a term with two translations (note). Problems come back as file(line).",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_check",
+            "command": "php {WEBROOT}/lang_tool check {INPUT} {OUTPUT}",
+            "timeout_seconds": 120
+        },
+        {
+            "id": "cards",
+            "label": "Anki cards (import file)",
+            "description": "Writes a tab-separated file for Anki (File > Import): front, back (translation and the example in italics), tags, with the header lines Anki reads. Type both in the extra arguments to add the reverse cards as well.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "txt",
+            "output_stem": "{NAME}_anki",
+            "command": "php {WEBROOT}/lang_tool cards {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 120
+        },
+        {
+            "id": "freq",
+            "label": "Word frequency (what to learn first)",
+            "description": "The 200 most frequent words of a text with counts and cumulative coverage, how many words cover 80% of it, and how many appear once. Vowel marks are ignored.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_frequency",
+            "command": "php {WEBROOT}/lang_tool freq {INPUT} {OUTPUT}",
+            "timeout_seconds": 120
+        },
+        {
+            "id": "listen",
+            "label": "Listen: the list as audio (MP3)",
+            "description": "Reads the list aloud: the term, a pause to answer, then the translation. Type the languages in the extra arguments: term=fr trans=en pause=2 max=100 (pause in seconds; at most 150 entries). Piper is used where a voice is installed, otherwise eSpeak-NG.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "audio",
+            "output_ext": "mp3",
+            "output_stem": "{NAME}_listen",
+            "command": "php {WEBROOT}/lang_tool speak {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 900
+        },
+        {
+            "id": "compare",
+            "label": "Compare my reading with the text (Whisper)",
+            "description": "Give a recording of you reading a text as the input, and in the extra arguments the text and the language: text=/path/to/expected.txt lang=en. Whisper transcribes it; the report gives the accuracy and lists the words said differently, not heard, or added. It shows what Whisper understood, not a pronunciation score.",
+            "input_kinds": [
+                "audio",
+                "video"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_compare",
+            "command": "php {WEBROOT}/lang_tool compare {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 900
+        }
+    ]
+}

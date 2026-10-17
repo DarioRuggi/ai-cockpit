@@ -1,0 +1,31 @@
+{
+  "id": "image-generation",
+  "name": "Image Generation",
+  "icon": "image",
+  "description": "Making pictures with the image generator: prompts, styles, variations.",
+  "detect": [],
+  "note": "This is an image generation project. Keep a record of the prompts, styles and settings that produced the images worth keeping, change one thing at a time between variations, and describe what each result got right or wrong.",
+  "verify": "visual check of the result",
+  "group": "Media",
+  "details": "Making pictures with the image generator on this machine. The agent keeps a record of the prompts, styles, seeds and settings that produced the pictures worth keeping, changes one thing at a time so you can see what did what, and states the size and model used. ImageMagick presets convert, resize and tidy the results. The Image generation tool makes the pictures from a prompt kept in a text file, writes the prompt, seed, size and model next to every image so it can be made again or changed one thing at a time, and makes 2 to 6 variants of one prompt as a contact sheet.",
+  "examples": [
+    "A set of book-cover concepts in one consistent style",
+    "Character portraits with the prompt and seed recorded beside each",
+    "Product mock-ups, changing one parameter per run",
+    "Converting and thumbnailing a finished batch"
+  ],
+  "tools": [
+    {
+      "tool": "imagegen",
+      "why": "make images from a prompt file with the local stable-diffusion.cpp: make, logo, icon, favicon, variants of several seeds; every image keeps a record of its prompt and seed"
+    },
+    {
+      "tool": "imagemagick",
+      "why": "convert, resize and tidy the generated images"
+    },
+    {
+      "tool": "vision",
+      "why": "describe a picture or read the text in it, to check it against the prompt"
+    }
+  ]
+}

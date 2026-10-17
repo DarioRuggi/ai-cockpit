@@ -1,0 +1,32 @@
+{
+  "id": "fpc",
+  "name": "Free Pascal compile",
+  "description": "Compile or syntax-check one Pascal program or unit (.pas, .pp, .lpr) with the Free Pascal compiler. The messages, with file and line, are saved as a text file with a final '[exit code N]' line, so a failed compile still gives you the errors. Nothing is left behind: units and objects go to a scratch folder.",
+  "binary": "fpc",
+  "version_args": "-iV",
+  "website": "https://www.freepascal.org",
+  "presets": [
+    {
+      "id": "check",
+      "label": "Check (compile, no linking, nothing kept)",
+      "description": "Compile without linking (fpc -Cn) into a scratch folder: finds every syntax and type error, keeps nothing",
+      "input_kinds": ["code", "file"],
+      "output_kind": "text",
+      "output_ext": "txt",
+      "output_stem": "{NAME}_check",
+      "command": "sh -c 'd=$(mktemp -d); fpc -Cn -vewnh -FU\"$d\" -FE\"$d\" \"$1\" > \"$2\" 2>&1; echo \"[exit code $?]\" >> \"$2\"; rm -rf \"$d\"; true' fpc {INPUT} {OUTPUT}",
+      "timeout_seconds": 120
+    },
+    {
+      "id": "compile",
+      "label": "Compile (errors, warnings, hints)",
+      "description": "fpc -vewnh -O2 into a scratch folder; the program or unit is not kept, the messages are",
+      "input_kinds": ["code", "file"],
+      "output_kind": "text",
+      "output_ext": "txt",
+      "output_stem": "{NAME}_compile",
+      "command": "sh -c 'd=$(mktemp -d); fpc -vewnh -O2 -FU\"$d\" -FE\"$d\" \"$1\" > \"$2\" 2>&1; echo \"[exit code $?]\" >> \"$2\"; rm -rf \"$d\"; true' fpc {INPUT} {OUTPUT}",
+      "timeout_seconds": 300
+    }
+  ]
+}

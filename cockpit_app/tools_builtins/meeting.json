@@ -1,0 +1,77 @@
+{
+    "id": "meeting",
+    "name": "Meeting notes",
+    "description": "Turn a meeting transcript into usable notes. Give the transcript as plain text (one utterance per line, optionally \"Name: ...\") or an .srt/.vtt from the Whisper tool (Transcribe to SRT). Clean makes it readable (timestamped paragraphs, fillers and stutters removed); Candidates finds decisions, action items (with the owner when the line names one), deadlines and questions by their wording, in English, Hebrew and Spanish (more can be added), with where each was said; Statistics gives the length, words, pace and who spoke how much; Minutes writes a minutes skeleton in markdown to fill in. These are reading aids: they find candidates by wording, and a person or the agent decides what was really decided. The original is never changed. Word documents: pandoc (Markdown to DOCX) or the Document formats tool.",
+    "binary": "php",
+    "version_args": "--version",
+    "website": "https://pandoc.org",
+    "packages": {
+        "apt": "php-cli php-mbstring pandoc",
+        "dnf": "php-cli php-mbstring pandoc",
+        "pacman": "php pandoc",
+        "zypper": "php8 php8-mbstring pandoc",
+        "brew": "php pandoc"
+    },
+    "presets": [
+        {
+            "id": "clean",
+            "label": "Clean transcript (readable paragraphs)",
+            "description": "An .srt/.vtt becomes timestamped paragraphs (a new one at a pause, a new speaker, or every minute); fillers (um, uh, eh and their equivalents in the supported languages) and stuttered repeats are removed. Plain text keeps its lines.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_clean",
+            "command": "php {WEBROOT}/meeting_tool clean {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "actions",
+            "label": "Candidates: decisions, actions, deadlines, questions",
+            "description": "Finds sentences that look like a decision, an action item, a deadline or a question, in English, Hebrew and Spanish (more can be added), with where each was said (time or line) and who, when the line starts with Name:. By wording only: check each against the recording.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_candidates",
+            "command": "php {WEBROOT}/meeting_tool actions {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "stats",
+            "label": "Statistics (length, words, who spoke)",
+            "description": "Length, words, speaking pace, questions asked, and for lines that start with Name: each speaker's turns, words, share and longest stretch.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_stats",
+            "command": "php {WEBROOT}/meeting_tool stats {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "minutes",
+            "label": "Minutes skeleton (markdown)",
+            "description": "A minutes document to fill in: attendees (from the speaker labels), agenda, decisions, an action table (owner, action, due, where said), open questions, next meeting. Type a title in the extra arguments if you like. Turn it into Word with Markdown to DOCX.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_minutes",
+            "command": "php {WEBROOT}/meeting_tool minutes {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        }
+    ]
+}

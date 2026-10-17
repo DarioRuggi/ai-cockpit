@@ -1,0 +1,118 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// collect_tool — the Collections tools' work, for the tool presets (tools_builtins/collect.json). A command-line program, never reachable over the web.
+//
+//   php collect_tool check     CATALOGUE OUTPUT              missing and inconsistent fields, duplicates (normalised title + year, or catalogue number)
+//   php collect_tool wanted    CATALOGUE OUTPUT with=WANTS   compare with a want-list CSV: what you have, what you miss, what you hold twice
+//   php collect_tool summary   CATALOGUE OUTPUT              counts by category, condition and decade/year
+//   php collect_tool valuation CATALOGUE OUTPUT              insurance sheet: the values YOU wrote, totalled by category and by condition (nothing is ever estimated)
+//
+// CATALOGUE is a CSV (comma, semicolon or tab; UTF-8 or Windows-1252) with a header row and columns of your own. Known column names (any of): title (title, name, titre, titel, titolo, titulo, nombre),
+// year (year, annee, jahr, anno, ano, ano), catalogue number (catalogue, catalog, number, no, ref, numero, nummer, katalog), category (category, type, categorie, kategorie, categoria, series),
+// condition (condition, grade, etat, zustand, condizione, estado), value (value, price, worth, valeur, wert, valore, valor), quantity (quantity, qty, copies, count, quantite, anzahl, quantita, cantidad).
+// Other columns are kept untouched. The original is never changed. Values are only what you supplied: no price is ever looked up or guessed.
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "collect_tool: $m\n"); exit($rc); }
+[$sub, $in, $out] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? ''];
+$args = array_slice($argv, 4);
+if (!in_array($sub, ['check', 'wanted', 'summary', 'valuation'], true) || $in === '' || $out === '') fail('usage: collect_tool check|summary|valuation|wanted CATALOGUE OUTPUT [with=WANTS]', 2);
+$opt = []; foreach ($args as $a) foreach (preg_split('/\s+(?=\w+=)/', trim($a)) as $p) if (strpos($p, '=') !== false) { [$k, $v] = explode('=', $p, 2); $opt[strtolower(trim($k))] = trim($v); }
+
+function read_csv(string $f): array {
+    if (!is_file($f)) fail("no such file: $f");
+    $t = (string)file_get_contents($f); if (strncmp($t, "\xEF\xBB\xBF", 3) === 0) $t = substr($t, 3);
+    if (!mb_check_encoding($t, 'UTF-8')) $t = mb_convert_encoding($t, 'UTF-8', 'CP1252');
+    $t = str_replace(["\r\n", "\r"], "\n", $t); $first = strtok($t, "\n"); if ($first === false || trim($t) === '') fail("$f is empty");
+    $c = ["\t" => substr_count($first, "\t"), ';' => substr_count($first, ';'), ',' => substr_count($first, ',')]; arsort($c); $sep = array_key_first($c);
+    $rows = []; $h = fopen('php://memory', 'r+'); fwrite($h, $t); rewind($h); $ln = 0; $header = null;
+    while (($r = fgetcsv($h, 0, $sep, '"', '')) !== false) { $ln++; if ($r === [null] || (count($r) === 1 && trim((string)$r[0]) === '')) continue; if ($header === null) { $header = array_map(fn($x) => trim((string)$x), $r); continue; } $rows[] = ['line' => $ln, 'cells' => $r]; }
+    if ($header === null) fail("$f has no header row");
+    return [$header, $rows];
+}
+function norm(string $s): string { $s = mb_strtolower(trim($s)); if (function_exists('iconv')) { $t = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $s); if ($t !== false && $t !== '') $s = $t; } $s = preg_replace('/^(the|a|an|le|la|les|der|die|das|il|el|los|las|o|os)\s+/u', '', $s); return trim(preg_replace('/\s+/', ' ', preg_replace('/[^a-z0-9]+/', ' ', $s))); }
+function ncat(string $s): string { return preg_replace('/[^a-z0-9]/', '', norm($s)); }
+function find_col(array $header, array $names): ?int { foreach ($header as $i => $h) { $n = norm($h); foreach ($names as $w) if ($n === $w) return $i; } foreach ($header as $i => $h) { $n = norm($h); foreach ($names as $w) if (strpos($n, $w) !== false) return $i; } return null; }
+function columns(array $header): array {
+    $m = ['title' => ['title', 'name', 'titre', 'titel', 'titolo', 'titulo', 'nombre'], 'year' => ['year', 'annee', 'jahr', 'anno', 'ano', 'date'],
+          'cat' => ['category', 'categorie', 'kategorie', 'categoria', 'series', 'type'], 'cond' => ['condition', 'grade', 'etat', 'zustand', 'condizione', 'estado'],
+          'value' => ['value', 'price', 'worth', 'valeur', 'wert', 'valore', 'valor'], 'qty' => ['quantity', 'qty', 'copies', 'count', 'quantite', 'anzahl', 'quantita', 'cantidad'],
+          'num' => ['catalogue', 'catalog', 'katalog', 'number', 'numero', 'nummer', 'ref', 'no']];
+    $r = []; $used = []; foreach (['title', 'num', 'year', 'cat', 'cond', 'value', 'qty'] as $k) { $c = null; foreach ($header as $i => $h) { if (in_array($i, $used, true)) continue; $n = norm($h); foreach ($m[$k] as $w) if ($n === $w) { $c = $i; break 2; } } if ($c === null) foreach ($header as $i => $h) { if (in_array($i, $used, true)) continue; $n = norm($h); foreach ($m[$k] as $w) if (strlen($w) > 2 && strpos($n, $w) !== false) { $c = $i; break 2; } } $r[$k] = $c; if ($c !== null) $used[] = $c; }
+    return $r;
+}
+function num(string $s): ?float { $s = trim(preg_replace('/[^\d.,\-()]/u', '', $s)); if ($s === '' || !preg_match('/\d/', $s)) return null; $neg = $s[0] === '(' || substr($s, -1) === '-' || $s[0] === '-'; $s = preg_replace('/[^\d.,]/', '', $s);
+    $lc = strrpos($s, ','); $ld = strrpos($s, '.'); if ($lc !== false && $ld !== false) { if ($lc > $ld) $s = str_replace(',', '.', str_replace('.', '', $s)); else $s = str_replace(',', '', $s); } elseif ($lc !== false) { $s = (strlen($s) - $lc - 1 === 3 && substr_count($s, ',') >= 1 && !preg_match('/^0,/', $s)) ? str_replace(',', '', $s) : str_replace(',', '.', $s); } elseif (substr_count($s, '.') > 1) $s = str_replace('.', '', $s);
+    return $neg ? -(float)$s : (float)$s; }
+function cell(array $r, ?int $c): string { return $c === null ? '' : trim((string)($r['cells'][$c] ?? '')); }
+function money(float $v): string { return number_format($v, 2, '.', ','); }
+function key_of(array $r, array $col): string { $t = norm(cell($r, $col['title'])); $y = cell($r, $col['year']); return $t === '' ? '' : $t . '|' . $y; }
+
+[$header, $rows] = read_csv($in); $col = columns($header); $name = basename($in);
+if (!$rows) fail("$name has a header but no rows");
+if ($col['title'] === null && $col['num'] === null) fail("$name has no title or catalogue-number column (found: " . implode(', ', $header) . ')');
+$qty = function (array $r) use ($col): int { $q = num(cell($r, $col['qty'])); return $q !== null && $q >= 1 ? (int)$q : 1; };
+
+if ($sub === 'check') {
+    $o = "# Check of $name\n\n" . count($rows) . ' rows, columns: ' . implode(', ', $header) . "\n\nRecognised: " . implode(', ', array_map(fn($k, $v) => "$k=" . ($v === null ? '(none)' : $header[$v]), array_keys($col), $col)) . "\n\n"; $msgs = []; $curY = (int)date('Y');
+    foreach ($rows as $r) {
+        $l = $r['line'];
+        foreach (['title' => 'title', 'cat' => 'category', 'cond' => 'condition', 'year' => 'year', 'num' => 'catalogue number'] as $k => $lab) if ($col[$k] !== null && cell($r, $col[$k]) === '') $msgs[] = [$l, 'Warning', "missing $lab" . ($col['title'] !== null && cell($r, $col['title']) !== '' ? ' for "' . cell($r, $col['title']) . '"' : '')];
+        $y = cell($r, $col['year']); if ($y !== '' && (!preg_match('/^\d{3,4}$/', $y) || (int)$y > $curY + 1 || (int)$y < 1000)) $msgs[] = [$l, 'Error', "year \"$y\" is not a four-digit year up to " . ($curY + 1) . ' (a range such as 1990-1995 or a circa mark must be typed in a separate column)'];
+        $v = cell($r, $col['value']); if ($col['value'] !== null && $v !== '' && num($v) === null) $msgs[] = [$l, 'Error', "value \"$v\" is not a number"]; elseif ($v !== '' && num($v) < 0) $msgs[] = [$l, 'Error', "negative value \"$v\""];
+        $q = cell($r, $col['qty']); if ($col['qty'] !== null && $q !== '' && (num($q) === null || num($q) < 1 || floor(num($q)) != num($q))) $msgs[] = [$l, 'Error', "quantity \"$q\" is not a whole number of 1 or more"];
+        if (count($r['cells']) !== count($header)) $msgs[] = [$l, 'Warning', 'has ' . count($r['cells']) . ' cells but the header has ' . count($header)];
+    }
+    foreach (['cat' => 'category', 'cond' => 'condition'] as $k => $lab) if ($col[$k] !== null) {                                                                          // spellings that differ only in case/spacing/accents
+        $g = []; foreach ($rows as $r) { $v = cell($r, $col[$k]); if ($v !== '') $g[ncat($v)][$v][] = $r['line']; }
+        foreach ($g as $vs) if (count($vs) > 1) { $msgs[] = [min(array_map('min', $vs)), 'Warning', "inconsistent $lab spelling: " . implode(' / ', array_map(fn($x) => "\"$x\"", array_keys($vs)))]; }
+    }
+    $seen = []; $seenN = [];
+    foreach ($rows as $r) { $k = key_of($r, $col); if ($k !== '') { if (isset($seen[$k])) $msgs[] = [$r['line'], 'Warning', 'possible duplicate of line ' . $seen[$k] . ' (same normalised title and year: "' . cell($r, $col['title']) . '")']; else $seen[$k] = $r['line']; }
+        $n = $col['num'] !== null ? ncat(cell($r, $col['num'])) : ''; if ($n !== '') { if (isset($seenN[$n])) $msgs[] = [$r['line'], 'Warning', 'catalogue number "' . cell($r, $col['num']) . '" already used on line ' . $seenN[$n]]; else $seenN[$n] = $r['line']; } }
+    usort($msgs, fn($a, $b) => $a[0] <=> $b[0]); $e = count(array_filter($msgs, fn($m) => $m[1] === 'Error'));
+    $o .= count($msgs) ? '' : "No problems found.\n"; foreach ($msgs as [$l, $s, $t]) $o .= "$name($l) $s: $t\n";
+    $o .= "\n" . count($msgs) . " finding(s), $e error(s). Duplicates are candidates: two copies you really own are fine (use a quantity column).\n";
+    file_put_contents($out, $o); echo "Wrote $out (" . count($msgs) . " findings)\n"; exit(0);
+}
+if ($sub === 'wanted') {
+    $wf = $opt['with'] ?? ''; if ($wf === '') fail('give the want-list: with=WANTS.csv', 2);
+    [$wh, $wr] = read_csv($wf); $wc = columns($wh); if ($wc['title'] === null && $wc['num'] === null) fail('the want-list has no title or catalogue-number column');
+    $byNum = []; $byKey = []; $byTitle = [];
+    foreach ($rows as $r) { $n = $col['num'] !== null ? ncat(cell($r, $col['num'])) : ''; if ($n !== '') $byNum[$n][] = $r; $k = key_of($r, $col); if ($k !== '') $byKey[$k][] = $r; $t = norm(cell($r, $col['title'])); if ($t !== '') $byTitle[$t][] = $r; }
+    $have = []; $miss = []; $used = [];
+    foreach ($wr as $w) {
+        $n = $wc['num'] !== null ? ncat(cell($w, $wc['num'])) : ''; $k = key_of($w, $wc); $t = norm(cell($w, $wc['title'])); $y = cell($w, $wc['year']); $hit = [];
+        if ($n !== '' && isset($byNum[$n])) $hit = $byNum[$n]; elseif ($k !== '' && $y !== '' && isset($byKey[$k])) $hit = $byKey[$k]; elseif ($t !== '' && $y === '' && isset($byTitle[$t])) $hit = $byTitle[$t];
+        $label = trim(cell($w, $wc['title']) . ' ' . ($y !== '' ? "($y)" : '') . ($n !== '' ? ' #' . cell($w, $wc['num']) : ''));
+        if ($hit) { $c = array_sum(array_map($qty, $hit)); foreach ($hit as $h) $used[$h['line']] = true; $have[] = [$label, $c, implode(',', array_map(fn($h) => $h['line'], $hit))]; } else $miss[] = [$label, $w['line']];
+    }
+    $dups = array_filter($have, fn($h) => $h[1] > 1);
+    $o = "# $name against the want-list " . basename($wf) . "\n\nMatching: by catalogue number when both lists have one, otherwise by normalised title and year (title alone only when the want-list gives no year).\n\n";
+    $o .= '## You have (' . count($have) . " of " . count($wr) . ")\n\n"; foreach ($have as [$l, $c, $ls]) $o .= "- $l (catalogue line $ls" . ($c > 1 ? "; $c copies" : '') . ")\n"; if (!$have) $o .= "None.\n";
+    $o .= "\n## You miss (" . count($miss) . ")\n\n"; foreach ($miss as [$l, $ln]) $o .= "- $l (want-list line $ln)\n"; if (!$miss) $o .= "Nothing: the want-list is complete.\n";
+    $o .= "\n## You hold more than once (" . count($dups) . ")\n\n"; foreach ($dups as [$l, $c, $ls]) $o .= "- $l: $c copies (lines $ls)\n"; if (!$dups) $o .= "None.\n";
+    $extra = count($rows) - count($used); $o .= "\n$extra catalogue row(s) match nothing on the want-list (that is expected for a collection larger than the list).\n";
+    file_put_contents($out, $o); echo "Wrote $out (" . count($have) . ' have, ' . count($miss) . ' missing, ' . count($dups) . " duplicated)\n"; exit(0);
+}
+if ($sub === 'summary') {
+    $tot = array_sum(array_map($qty, $rows)); $o = "# Summary of $name\n\n" . count($rows) . " rows, $tot items (quantity counted where a quantity column exists).\n";
+    foreach (['cat' => 'Category', 'cond' => 'Condition'] as $k => $lab) { $o .= "\n## By " . strtolower($lab) . "\n\n"; if ($col[$k] === null) { $o .= "No $lab column found.\n"; continue; } $g = []; $disp = [];
+        foreach ($rows as $r) { $v = cell($r, $col[$k]); $kk = $v === '' ? '(blank)' : ncat($v); $disp[$kk] ??= ($v === '' ? '(blank)' : $v); $g[$kk] = ($g[$kk] ?? 0) + $qty($r); } arsort($g);
+        $o .= "| $lab | Items |\n|---|---|\n"; foreach ($g as $kk => $c) $o .= "| {$disp[$kk]} | $c |\n"; }
+    $o .= "\n## By decade\n\n"; if ($col['year'] === null) $o .= "No year column found.\n"; else { $g = []; $bad = 0; foreach ($rows as $r) { $y = cell($r, $col['year']); if (preg_match('/^\d{4}$/', $y)) { $d = intdiv((int)$y, 10) * 10; $g[$d] = ($g[$d] ?? 0) + $qty($r); } else $bad += $qty($r); } ksort($g); $o .= "| Decade | Items |\n|---|---|\n"; foreach ($g as $d => $c) $o .= "| {$d}s | $c |\n"; if ($bad) $o .= "\n$bad item(s) have no usable four-digit year.\n"; if ($g) $o .= "\nOldest year " . min(array_map(fn($r) => preg_match('/^\d{4}$/', cell($r, $col['year'])) ? (int)cell($r, $col['year']) : 9999, $rows)) . ".\n"; }
+    file_put_contents($out, $o); echo "Wrote $out\n"; exit(0);
+}
+// valuation
+if ($col['value'] === null) fail("$name has no value column (value, price, worth, valeur, wert, valore, valor): the sheet only totals values you wrote");
+$g = []; $gc = []; $unv = []; $all = 0.0; $items = 0; $cats = []; $conds = [];
+foreach ($rows as $r) { $v = num(cell($r, $col['value'])); $q = $qty($r); if ($v === null) { $unv[] = $r; continue; } $c = cell($r, $col['cat']); $c = $c === '' ? '(no category)' : $c; $d = cell($r, $col['cond']); $d = $d === '' ? '(no condition)' : $d;
+    $perItem = $v; $line = $perItem * $q; $all += $line; $items += $q; $cats[ncat($c)] = $c; $conds[ncat($d)] = $d; $g[ncat($c)][ncat($d)] = ($g[ncat($c)][ncat($d)] ?? 0) + $line; $gc[ncat($c)][ncat($d)] = ($gc[ncat($c)][ncat($d)] ?? 0) + $q; }
+$o = "# Valuation sheet from $name\n\nEvery figure is a value written in the catalogue (value column: \"" . $header[$col['value']] . "\"), multiplied by the quantity when there is one. Nothing has been looked up or estimated. This is a listing for you or an insurer, not an appraisal.\n\n";
+ksort($cats); ksort($conds); $o .= '| Category | ' . implode(' | ', $conds) . " | Total |\n|---|" . str_repeat('---:|', count($conds) + 1) . "\n"; $ctot = [];
+foreach ($cats as $ck => $cn) { $row = 0.0; $cells = []; foreach ($conds as $dk => $dn) { $x = $g[$ck][$dk] ?? 0; $row += $x; $ctot[$dk] = ($ctot[$dk] ?? 0) + $x; $cells[] = $x ? money($x) : '-'; } $o .= "| $cn | " . implode(' | ', $cells) . ' | ' . money($row) . " |\n"; }
+$o .= '| **Total** | ' . implode(' | ', array_map(fn($dk) => money($ctot[$dk] ?? 0), array_keys($conds))) . ' | **' . money($all) . "** |\n\n$items valued item(s), total " . money($all) . ".\n\n## Without a value (" . count($unv) . ")\n\n";
+foreach ($unv as $r) { $o .= '- line ' . $r['line'] . ': ' . (cell($r, $col['title']) ?: cell($r, $col['num']) ?: '(no title)') . "\n"; $unvMsg[] = $name . '(' . $r['line'] . ') Warning: no value supplied'; } if (!$unv) $o .= "None: every row has a value.\n";
+if ($unv) $o .= "\nThese rows are not in the total. Give them a value yourself or have them appraised.\n";
+file_put_contents($out, $o); echo "Wrote $out (total " . money($all) . ', ' . count($unv) . " unvalued)\n"; exit(0);

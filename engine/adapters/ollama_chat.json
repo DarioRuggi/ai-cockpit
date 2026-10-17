@@ -1,0 +1,18 @@
+{
+  "id": "ollama_chat", "display": "Ollama chat (history + system prompt)", "kind": "model-api", "transport": "http",
+  "url": "http://127.0.0.1:11434/api/chat",
+  "detect_url": "http://127.0.0.1:11434/api/tags",
+  "body": {"model": "{model}", "messages": "{messages}", "stream": true},
+  "parser": "ollama_ndjson",
+  "limits": {"timeout_s": 300},
+  "notes": "What Cockpit's agent_loop sends to /api/chat: system + recent history + the user turn. Cockpit also pulls a model that is not installed yet; that is a separate step (ollama pull), not part of a run.",
+  "docs_checked": "2026-10-05",
+  "tests": [
+    {"name": "system prompt and history are honoured",
+     "request": {"prompt": "What is my name?", "model": "qwen2.5-coder:1.5b", "timeout_s": 120,
+                 "system": "Answer in one short sentence.",
+                 "messages": "[{\"role\":\"user\",\"content\":\"My name is Dario.\"},{\"role\":\"assistant\",\"content\":\"Nice to meet you, Dario.\"}]"},
+     "live": true,
+     "expect": {"exit": 0, "error_code": "none", "text_contains": ["Dario"]}}
+  ]
+}

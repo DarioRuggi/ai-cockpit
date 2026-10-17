@@ -1,0 +1,128 @@
+{
+    "id": "scad",
+    "name": "3D models (OpenSCAD)",
+    "binary": "openscad",
+    "version_args": "--version",
+    "website": "https://openscad.org",
+    "description": "Design parametric 3D models in OpenSCAD (text in, STL out) and check they will print. Check compiles the model and reports errors and warnings as file(line), and whether it is a valid solid; Export STL, 3MF and PNG make the outputs; Mesh info analyses any STL in plain arithmetic (triangles, size in mm, volume, surface area, whether it is watertight); Will it print checks the model against your printer bed (bed=220x220x250), watertightness, thin parts and how much overhangs; Parameters lists the numbers the model is built from; New part starts a parametric box. SAFETY: OpenSCAD can read any file the account can (include, import, surface), so every run happens inside bubblewrap: no network, no home folder, a read-only system, only a scratch copy of the model's folder writable; without bwrap the tool refuses to run OpenSCAD. The original is never changed.",
+    "packages": {
+        "apt": "openscad bubblewrap php-cli",
+        "dnf": "openscad bubblewrap php-cli",
+        "pacman": "openscad bubblewrap php",
+        "zypper": "openscad bubblewrap php8",
+        "brew": "openscad php"
+    },
+    "presets": [
+        {
+            "id": "check",
+            "label": "Check (errors, warnings, valid solid)",
+            "description": "Compiles the model in a sandbox: syntax errors and warnings as file(line), whether a solid was made and whether it is a simple (2-manifold) solid that a slicer accepts.",
+            "input_kinds": [
+                "code",
+                "file"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_check",
+            "command": "php {WEBROOT}/scad_tool check {INPUT} {OUTPUT}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "stl",
+            "label": "Export STL",
+            "description": "The model as an STL mesh for a slicer.",
+            "input_kinds": [
+                "code",
+                "file"
+            ],
+            "output_kind": "document",
+            "output_ext": "stl",
+            "output_stem": "{NAME}",
+            "command": "php {WEBROOT}/scad_tool stl {INPUT} {OUTPUT}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "3mf",
+            "label": "Export 3MF",
+            "description": "The model as a 3MF file (units and colours kept, smaller than STL).",
+            "input_kinds": [
+                "code",
+                "file"
+            ],
+            "output_kind": "document",
+            "output_ext": "3mf",
+            "output_stem": "{NAME}",
+            "command": "php {WEBROOT}/scad_tool stl {INPUT} {OUTPUT}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "png",
+            "label": "Picture of the model (PNG)",
+            "description": "A rendered picture of the model, made without a screen.",
+            "input_kinds": [
+                "code",
+                "file"
+            ],
+            "output_kind": "image",
+            "output_ext": "png",
+            "output_stem": "{NAME}",
+            "command": "php {WEBROOT}/scad_tool png {INPUT} {OUTPUT}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "info",
+            "label": "Mesh info (STL or model)",
+            "description": "Triangles, vertices, bounding box in mm, volume, surface area, and whether the mesh is watertight, for an .stl or a .scad (compiled first).",
+            "input_kinds": [
+                "code",
+                "file"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_mesh",
+            "command": "php {WEBROOT}/scad_tool info {INPUT} {OUTPUT}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "print",
+            "label": "Will it print? (bed, watertight, overhangs)",
+            "description": "Checks an .stl or .scad against a printer bed (type bed=220x220x250 in the extra arguments; default 220x220x250 mm): does it fit (and would it if turned), is it watertight, is any part thinner than 0.8 mm, how much overhangs more than 45 degrees. Arithmetic on the mesh, not a slicer.",
+            "input_kinds": [
+                "code",
+                "file"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_printcheck",
+            "command": "php {WEBROOT}/scad_tool print {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "params",
+            "label": "Parameters of the model",
+            "description": "The top-level numbers the model is built from, with their group (from /* [Group] */ comments), value and comment: what to change to resize it.",
+            "input_kinds": [
+                "code",
+                "file"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_params",
+            "command": "php {WEBROOT}/scad_tool params {INPUT} {OUTPUT}",
+            "timeout_seconds": 60
+        },
+        {
+            "id": "new-part",
+            "label": "New part (parametric box)",
+            "description": "Creates NAME.scad in the folder you give: a rounded box with a wall thickness, every size a parameter at the top. Type the name in the extra arguments. Never overwrites.",
+            "input_kinds": [
+                "folder"
+            ],
+            "output_kind": "text",
+            "output_ext": "txt",
+            "output_stem": "scad_new",
+            "command": "php {WEBROOT}/scad_tool new {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 60
+        }
+    ]
+}

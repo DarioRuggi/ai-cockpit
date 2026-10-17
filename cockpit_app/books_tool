@@ -1,0 +1,132 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// books_tool — the Bookkeeping tools' work, for the tool presets (tools_builtins/books.json). A command-line program, never reachable over the web.
+//
+//   php books_tool check     LEDGER OUTPUT                 lint a CSV ledger: unreadable dates or amounts, future dates, duplicates, no category, zero amounts, outliers, gaps in invoice numbers
+//   php books_tool summary   LEDGER OUTPUT [ARGS]          income, expenses, net; by category and by month; the biggest payees
+//   php books_tool reconcile LEDGER OUTPUT with=OTHER      match a bank export against the ledger by amount and date (3 days either way): matched, only in one, only in the other
+//   php books_tool tax       LEDGER OUTPUT                 totals per tax rate (or tax amount) and per period, for a VAT / IVA / מע"מ return
+//
+// LEDGER is a CSV (comma, semicolon or tab; UTF-8 or Windows-1252/1255) with a header row. Columns are found by name in English, Spanish and Hebrew: date (date, fecha, תאריך), description
+// (description, memo, payee, vendor, concepto, תיאור), amount (amount, importe, סכום) or debit/credit (debit, credit, חובה, זכות), category, invoice (invoice, factura, חשבונית), tax / VAT,
+// currency. Amounts: 1,234.56 and 1.234,56 are both read; (12.50) and 12.50- are negative. ARGS: positive=expense (a positive amount is money spent; default: negative is money spent).
+// The original is never changed. Plain bookkeeping arithmetic, not accounting or tax advice.
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "books_tool: $m\n"); exit($rc); }
+[$sub, $in, $out] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? ''];
+$args = array_slice($argv, 4);
+if (!in_array($sub, ['check', 'summary', 'reconcile', 'tax'], true) || $in === '' || $out === '') fail('usage: books_tool check|summary|reconcile|tax LEDGER OUTPUT [ARGS]', 2);
+$opt = []; foreach ($args as $a) foreach (preg_split('/\s+(?=\w+=)/', trim($a)) as $p) if (strpos($p, '=') !== false) { [$k, $v] = explode('=', $p, 2); $opt[strtolower(trim($k))] = trim($v); }
+$posExpense = ($opt['positive'] ?? '') === 'expense';
+
+function read_csv(string $f): array {
+    if (!is_file($f)) fail("no such file: $f");
+    $t = (string)file_get_contents($f); if (strncmp($t, "\xEF\xBB\xBF", 3) === 0) $t = substr($t, 3);
+    if (!mb_check_encoding($t, 'UTF-8')) { $c = preg_match('/[\xE0-\xFA]{3,}/', $t) ? 'CP1255' : 'CP1252'; $t = mb_convert_encoding($t, 'UTF-8', $c); }
+    $t = str_replace(["\r\n", "\r"], "\n", $t); $first = strtok($t, "\n"); $c = ["\t" => substr_count($first, "\t"), ';' => substr_count($first, ';'), ',' => substr_count($first, ',')]; arsort($c); $sep = array_key_first($c);
+    $rows = []; $h = fopen('php://memory', 'r+'); fwrite($h, $t); rewind($h); $ln = 0; $header = null;
+    while (($r = fgetcsv($h, 0, $sep, '"', '')) !== false) { $ln++; if ($r === [null] || (count($r) === 1 && trim((string)$r[0]) === '')) continue; if ($header === null) { $header = array_map(fn($x) => trim((string)$x), $r); continue; } $rows[] = ['line' => $ln, 'cells' => $r]; }
+    fclose($h); if ($header === null) fail('the file is empty'); return [$header, $rows];
+}
+function find_col(array $header, array $names): ?int { foreach ($header as $i => $h) { $x = mb_strtolower(trim(preg_replace('/[\s_\-.]+/u', ' ', $h))); $words = explode(' ', $x); foreach ($names as $n) if ($x === $n || (strpos($n, ' ') === false && in_array($n, $words, true)) || (mb_strlen($n) > 4 && mb_strpos($x, $n) !== false) || (strpos($n, ' ') !== false && mb_strpos($x, $n) !== false)) return $i; } return null; }
+function parse_num(?string $s): ?float {
+    $s = trim((string)$s); if ($s === '') return null; $neg = false;
+    if (preg_match('/^\((.+)\)$/', $s, $m)) { $neg = true; $s = $m[1]; } if (substr($s, -1) === '-') { $neg = true; $s = substr($s, 0, -1); } if (substr($s, 0, 1) === '-' || substr($s, 0, 1) === '−') { $neg = !$neg; $s = substr($s, 1); }
+    $s = preg_replace('/[^\d.,]/u', '', $s); if ($s === '' || !preg_match('/\d/', $s)) return null;
+    $lc = strrpos($s, ','); $ld = strrpos($s, '.');
+    if ($lc !== false && $ld !== false) { if ($lc > $ld) $s = str_replace('.', '', $s); else $s = str_replace(',', '', $s); $s = str_replace(',', '.', $s); }
+    elseif ($lc !== false) { if (strlen($s) - $lc - 1 <= 2 && substr_count($s, ',') === 1) $s = str_replace(',', '.', $s); else $s = str_replace(',', '', $s); }
+    elseif ($ld !== false && substr_count($s, '.') > 1) $s = str_replace('.', '', $s);
+    $v = (float)$s; return $neg ? -$v : $v;
+}
+/** a date in Y-m-d, or null; $dmy tells how to read ambiguous d/m/y */
+function parse_date(?string $s, bool $dmy = true): ?string {
+    $s = trim((string)$s); if ($s === '') return null;
+    if (preg_match('/^(\d{4})-(\d{1,2})-(\d{1,2})/', $s, $m)) return checkdate((int)$m[2], (int)$m[3], (int)$m[1]) ? sprintf('%04d-%02d-%02d', $m[1], $m[2], $m[3]) : null;
+    if (preg_match('/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})/', $s, $m)) { [$a, $b, $y] = [(int)$m[1], (int)$m[2], (int)$m[3]]; if ($y < 100) $y += 2000; [$d, $mo] = $dmy ? [$a, $b] : [$b, $a]; if (!checkdate($mo, $d, $y)) { [$d, $mo] = [$mo, $d]; if (!checkdate($mo, $d, $y)) return null; } return sprintf('%04d-%02d-%02d', $y, $mo, $d); }
+    $t = strtotime($s); return $t === false ? null : date('Y-m-d', $t);
+}
+function dmy_guess(array $rows, ?int $c): bool { if ($c === null) return true; $a1 = 0; $a2 = 0; foreach ($rows as $r) if (preg_match('/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-]\d{2,4}/', trim($r['cells'][$c] ?? ''), $m)) { if ((int)$m[1] > 12) $a1++; if ((int)$m[2] > 12) $a2++; } return !($a2 > 0 && $a1 === 0); }
+function money(float $v): string { return number_format($v, 2, '.', ','); }
+
+[$H, $R] = read_csv($in); $name = basename($in); if (!$R) fail('the ledger has no rows under the header');
+$cDate = find_col($H, ['date', 'fecha', 'תאריך', 'datum', 'booking date']); $cDesc = find_col($H, ['description', 'memo', 'payee', 'vendor', 'merchant', 'details', 'concepto', 'descripcion', 'descripción', 'תיאור', 'פרטים', 'narrative', 'name']);
+$cAmt = find_col($H, ['amount', 'importe', 'monto', 'סכום', 'total', 'value', 'betrag']); $cDeb = find_col($H, ['debit', 'withdrawal', 'cargo', 'חובה', 'out']); $cCred = find_col($H, ['credit', 'deposit', 'abono', 'זכות', 'in']);
+$cCat = find_col($H, ['category', 'categoría', 'categoria', 'קטגוריה', 'account', 'cuenta', 'type']); $cInv = find_col($H, ['invoice', 'factura', 'חשבונית', 'receipt', 'ref', 'reference']); $cTax = find_col($H, ['tax rate', 'vat rate', 'tax', 'vat', 'iva', 'מע"מ', 'מעמ']); $cCur = find_col($H, ['currency', 'moneda', 'מטבע', 'ccy']);
+if ($cDate === null) fail('no date column found (a header like date, fecha or תאריך)'); if ($cAmt === null && $cDeb === null && $cCred === null) fail('no amount column found (amount, importe, סכום, or debit and credit)');
+$dmy = dmy_guess($R, $cDate); $tx = []; $bad = [];
+foreach ($R as $r) {
+    $c = $r['cells']; $date = parse_date($c[$cDate] ?? '', $dmy); $amt = null;
+    if ($cAmt !== null) $amt = parse_num($c[$cAmt] ?? ''); else { $d = parse_num($c[$cDeb] ?? ''); $k = parse_num($c[$cCred] ?? ''); if ($d !== null || $k !== null) $amt = ($k ?? 0) - ($d ?? 0); }
+    if ($posExpense && $amt !== null && $cAmt !== null) $amt = -$amt;       // normalised: negative = money out
+    $tx[] = ['line' => $r['line'], 'date' => $date, 'rawdate' => $c[$cDate] ?? '', 'amt' => $amt, 'rawamt' => $cAmt !== null ? ($c[$cAmt] ?? '') : '', 'desc' => trim($c[$cDesc] ?? ''), 'cat' => trim($c[$cCat] ?? ''), 'inv' => trim($c[$cInv] ?? ''), 'tax' => $cTax !== null ? ($c[$cTax] ?? '') : '', 'cur' => trim($c[$cCur] ?? '')];
+}
+$valid = array_values(array_filter($tx, fn($t) => $t['date'] !== null && $t['amt'] !== null));
+
+if ($sub === 'check') {
+    $msgs = []; $err = 0; $warn = 0; $add = function (string $k, int $l, string $m) use (&$msgs, &$err, &$warn, $name) { $msgs[] = "$name($l) $k: $m"; if ($k === 'Error') $err++; elseif ($k === 'Warning') $warn++; };
+    $today = date('Y-m-d'); $seen = []; $byCat = []; $curs = [];
+    foreach ($tx as $t) { if ($t['date'] !== null && $t['amt'] !== null && $t['cat'] !== '') $byCat[$t['cat']][] = abs($t['amt']); if ($t['cur'] !== '') $curs[strtoupper($t['cur'])] = 1; }
+    $stats = []; foreach ($byCat as $cat => $v) { if (count($v) < 6) continue; sort($v); $n = count($v); $med = $n % 2 ? $v[intdiv($n, 2)] : ($v[$n / 2 - 1] + $v[$n / 2]) / 2; if ($med > 0) $stats[$cat] = $med; }
+    foreach ($tx as $t) {
+        $l = $t['line'];
+        if ($t['date'] === null) { $add('Error', $l, 'the date "' . $t['rawdate'] . '" cannot be read'); continue; } if ($t['amt'] === null) { $add('Error', $l, 'the amount "' . $t['rawamt'] . '" cannot be read'); continue; }
+        if ($t['date'] > $today) $add('Warning', $l, 'the date ' . $t['date'] . ' is in the future'); if (abs($t['amt']) < 0.005) $add('Warning', $l, 'the amount is zero');
+        $k = $t['date'] . '|' . round($t['amt'], 2) . '|' . mb_strtolower($t['desc']); if (isset($seen[$k])) $add('Warning', $l, 'looks like a duplicate of line ' . $seen[$k] . ' (same date, amount and description)'); else $seen[$k] = $l;
+        if ($cCat !== null && $t['cat'] === '') $add('Note', $l, 'no category'); if ($t['desc'] === '' && $cDesc !== null) $add('Note', $l, 'no description');
+        if (isset($stats[$t['cat']]) && abs($t['amt']) > 8 * $stats[$t['cat']]) $add('Warning', $l, 'an unusually large amount for "' . $t['cat'] . '": ' . money(abs($t['amt'])) . ' (the usual is about ' . money($stats[$t['cat']]) . ')');
+    }
+    if (count($curs) > 1) $add('Warning', 1, 'several currencies in one ledger (' . implode(', ', array_keys($curs)) . '): totals add them together');
+    if ($cInv !== null) { $nums = []; foreach ($tx as $t) if ($t['inv'] !== '' && preg_match('/^(.*?)(\d+)$/u', $t['inv'], $m)) { $nums[$m[1]][(int)$m[2]] = ($nums[$m[1]][(int)$m[2]] ?? 0) + 1; }
+        foreach ($nums as $pre => $set) { $keys = array_keys($set); sort($keys); $dups = array_keys(array_filter($set, fn($c) => $c > 1)); foreach ($dups as $d) { $line = 1; foreach ($tx as $t) if (preg_match('/(\d+)$/', $t['inv'], $m) && (int)$m[1] === $d && strpos($t['inv'], $pre) === 0) { $line = $t['line']; } $add('Warning', $line, "invoice number $pre$d is used more than once"); }
+            if (count($keys) >= 3) { $gaps = []; for ($i = 1; $i < count($keys); $i++) if ($keys[$i] - $keys[$i - 1] > 1 && $keys[$i] - $keys[$i - 1] <= 20) for ($g = $keys[$i - 1] + 1; $g < $keys[$i]; $g++) $gaps[] = $g; if ($gaps) $add('Note', 1, 'the invoice numbers ' . ($pre !== '' ? "({$pre}…) " : '') . 'skip: ' . implode(', ', array_slice($gaps, 0, 15)) . (count($gaps) > 15 ? '…' : '')); } } }
+    $rep = "# Ledger check: $name\n\n- Rows: " . count($tx) . "; readable: " . count($valid) . "; dates read " . ($dmy ? 'day-first' : 'month-first') . " where ambiguous\n- Columns found: date" . ($cAmt !== null ? ', amount' : ', debit/credit') . ($cDesc !== null ? ', description' : '') . ($cCat !== null ? ', category' : '') . ($cInv !== null ? ', invoice' : '') . ($cTax !== null ? ', tax' : '') . ($cCur !== null ? ', currency' : '') . "\n\n";
+    $rep .= ($msgs ? "## Problems ($err errors, $warn warnings)\n\n" . implode("\n", $msgs) . "\n" : "No problems found.\n") . "\n[exit code " . ($err > 0 ? 1 : 0) . "]\n";
+    file_put_contents($out, $rep); echo "Wrote $out ($err errors, $warn warnings)\n"; exit(0);
+}
+
+if ($sub === 'summary') {
+    if (!$valid) fail('no row has both a readable date and a readable amount');
+    $inc = 0; $exp = 0; $cat = []; $mon = []; $pay = []; foreach ($valid as $t) { if ($t['amt'] >= 0) $inc += $t['amt']; else $exp += -$t['amt']; $k = $t['cat'] !== '' ? $t['cat'] : '(no category)'; $cat[$k] = ($cat[$k] ?? 0) + $t['amt']; $m = substr($t['date'], 0, 7); $mon[$m]['in'] = ($mon[$m]['in'] ?? 0) + max(0, $t['amt']); $mon[$m]['out'] = ($mon[$m]['out'] ?? 0) + max(0, -$t['amt']); if ($t['amt'] < 0 && $t['desc'] !== '') $pay[$t['desc']] = ($pay[$t['desc']] ?? 0) - $t['amt']; }
+    ksort($mon); asort($cat); arsort($pay); $dates = array_column($valid, 'date'); sort($dates);
+    $o = "# Ledger summary: $name\n\n- Period: " . $dates[0] . ' to ' . end($dates) . '; ' . count($valid) . " transactions" . (count($valid) < count($tx) ? ' (' . (count($tx) - count($valid)) . ' unreadable rows left out: run Check)' : '') . "\n- Income: " . money($inc) . "\n- Expenses: " . money($exp) . "\n- Net: " . money($inc - $exp) . "\n\n## By category (negative = spent)\n\n| Category | Total |\n|---|---|\n";
+    foreach ($cat as $k => $v) $o .= "| $k | " . money($v) . " |\n";
+    $o .= "\n## By month\n\n| Month | Income | Expenses | Net |\n|---|---|---|---|\n"; foreach ($mon as $m => $v) $o .= "| $m | " . money($v['in']) . ' | ' . money($v['out']) . ' | ' . money($v['in'] - $v['out']) . " |\n";
+    if ($pay) { $o .= "\n## Biggest payees (spent)\n\n| Payee | Total |\n|---|---|\n"; foreach (array_slice($pay, 0, 10, true) as $k => $v) $o .= "| " . str_replace('|', '/', mb_substr($k, 0, 50)) . ' | ' . money($v) . " |\n"; }
+    file_put_contents($out, $o . "\n[exit code 0]\n"); echo "Wrote $out\n"; exit(0);
+}
+
+if ($sub === 'tax') {
+    if ($cTax === null) fail('no tax column found (tax, VAT, IVA, מע"מ): add one, with the rate (17%: a column called "tax rate", or numbers with a % sign) or the tax amount');
+    $by = []; $period = []; $plainIsRate = (bool)preg_match('/rate|%|שיעור|tasa|tipo/iu', $H[$cTax]);
+    foreach ($valid as $t) { $raw = trim($t['tax']); $v = $raw === '' ? null : parse_num($raw);
+        if ($v === null) { $tax = 0; $key = '(tax not stated)'; }
+        elseif (strpos($raw, '%') !== false || $plainIsRate) { $tax = abs($t['amt']) - abs($t['amt']) / (1 + $v / 100); $key = rtrim(rtrim(number_format($v, 2), '0'), '.') . '%'; }      // amounts are gross: the tax inside them
+        else { $tax = abs($v); $key = '(tax amount column)'; }
+        $dir = $t['amt'] >= 0 ? 'sales' : 'purchases'; $by[$key][$dir]['gross'] = ($by[$key][$dir]['gross'] ?? 0) + abs($t['amt']); $by[$key][$dir]['tax'] = ($by[$key][$dir]['tax'] ?? 0) + $tax; $q = substr($t['date'], 0, 4) . '-Q' . (int)ceil((int)substr($t['date'], 5, 2) / 3); $period[$q][$dir] = ($period[$q][$dir] ?? 0) + $tax; }
+    ksort($period); $o = "# Tax by rate: $name\n\nAmounts are taken as GROSS (the tax is inside them); money in = sales, money out = purchases. Check against your invoices: this is arithmetic, not a tax return.\n\n| Rate | Sales gross | Tax on sales | Purchases gross | Tax on purchases |\n|---|---|---|---|---|\n"; $ts = 0; $tp = 0;
+    foreach ($by as $k => $d) { $o .= "| $k | " . money($d['sales']['gross'] ?? 0) . ' | ' . money($d['sales']['tax'] ?? 0) . ' | ' . money($d['purchases']['gross'] ?? 0) . ' | ' . money($d['purchases']['tax'] ?? 0) . " |\n"; $ts += $d['sales']['tax'] ?? 0; $tp += $d['purchases']['tax'] ?? 0; }
+    $o .= "\n- Tax collected on sales: " . money($ts) . "\n- Tax paid on purchases: " . money($tp) . "\n- Net to pay (collected minus paid): " . money($ts - $tp) . "\n\n## By quarter\n\n| Quarter | Tax on sales | Tax on purchases | Net |\n|---|---|---|---|\n"; foreach ($period as $q => $d) $o .= "| $q | " . money($d['sales'] ?? 0) . ' | ' . money($d['purchases'] ?? 0) . ' | ' . money(($d['sales'] ?? 0) - ($d['purchases'] ?? 0)) . " |\n";
+    file_put_contents($out, $o . "\n[exit code 0]\n"); echo "Wrote $out\n"; exit(0);
+}
+
+// ---- reconcile -----------------------------------------------------------------------------------------------------------------------------------
+$other = $opt['with'] ?? ''; if ($other === '') fail('give the OTHER file (the bank export) in the extra arguments: with=/path/to/bank.csv');
+[$H2, $R2] = read_csv($other); $d2 = find_col($H2, ['date', 'fecha', 'תאריך', 'datum', 'booking date']); $a2 = find_col($H2, ['amount', 'importe', 'monto', 'סכום', 'total', 'value', 'betrag']); $de2 = find_col($H2, ['debit', 'withdrawal', 'cargo', 'חובה']); $cr2 = find_col($H2, ['credit', 'deposit', 'abono', 'זכות']); $ds2 = find_col($H2, ['description', 'memo', 'payee', 'details', 'concepto', 'תיאור', 'פרטים', 'narrative', 'name']);
+if ($d2 === null || ($a2 === null && $de2 === null && $cr2 === null)) fail('the other file needs a date column and an amount (or debit and credit) column');
+$dmy2 = dmy_guess($R2, $d2); $B = [];
+foreach ($R2 as $r) { $c = $r['cells']; $dt = parse_date($c[$d2] ?? '', $dmy2); $am = $a2 !== null ? parse_num($c[$a2] ?? '') : (function () use ($c, $de2, $cr2) { $d = parse_num($c[$de2] ?? ''); $k = parse_num($c[$cr2] ?? ''); return ($d !== null || $k !== null) ? ($k ?? 0) - ($d ?? 0) : null; })(); if ($dt !== null && $am !== null) $B[] = ['line' => $r['line'], 'date' => $dt, 'amt' => $am, 'desc' => trim($c[$ds2] ?? '')]; }
+$used = []; $matched = []; $onlyA = [];
+foreach ($valid as $t) {
+    $best = null; $bd = 99;
+    foreach ($B as $j => $b) { if (isset($used[$j]) || abs($b['amt'] - $t['amt']) > 0.005) continue; $dd = abs((strtotime($b['date']) - strtotime($t['date'])) / 86400); if ($dd <= 3 && $dd < $bd) { $bd = $dd; $best = $j; } }
+    if ($best !== null) { $used[$best] = 1; $matched[] = [$t, $B[$best], $bd]; } else $onlyA[] = $t;
+}
+$onlyB = []; foreach ($B as $j => $b) if (!isset($used[$j])) $onlyB[] = $b;
+$o = "# Reconciliation: $name with " . basename($other) . "\n\n- Ledger rows: " . count($valid) . "; bank rows: " . count($B) . "\n- Matched (same amount, dates within 3 days): " . count($matched) . "\n- Only in the ledger: " . count($onlyA) . " (" . money(array_sum(array_column($onlyA, 'amt'))) . ")\n- Only in the bank file: " . count($onlyB) . " (" . money(array_sum(array_column($onlyB, 'amt'))) . ")\n\n";
+$lines = []; $o .= "## Only in the ledger (not on the bank file)\n\n"; foreach ($onlyA as $t) { $o .= "- $name({$t['line']}) {$t['date']} " . money($t['amt']) . ' ' . $t['desc'] . "\n"; $lines[] = "$name({$t['line']}) Warning: not on the bank file: {$t['date']} " . money($t['amt']) . ' ' . mb_substr($t['desc'], 0, 60); } if (!$onlyA) $o .= "None.\n";
+$o .= "\n## Only in the bank file (not in the ledger)\n\n"; $bn = basename($other); foreach ($onlyB as $b) { $o .= "- $bn({$b['line']}) {$b['date']} " . money($b['amt']) . ' ' . $b['desc'] . "\n"; $lines[] = "$bn({$b['line']}) Warning: not in the ledger: {$b['date']} " . money($b['amt']) . ' ' . mb_substr($b['desc'], 0, 60); } if (!$onlyB) $o .= "None.\n";
+$o .= "\n## Matched with a date difference\n\n"; $dd = 0; foreach ($matched as [$t, $b, $d]) if ($d > 0) { $o .= "- {$t['date']} ledger vs {$b['date']} bank: " . money($t['amt']) . ' ' . $t['desc'] . "\n"; $dd++; } if (!$dd) $o .= "None.\n";
+file_put_contents($out, $o . "\n" . implode("\n", array_slice($lines, 0, 200)) . "\n\n[exit code " . (($onlyA || $onlyB) ? 1 : 0) . "]\n"); echo "Wrote $out (" . count($matched) . " matched, " . count($onlyA) . ' only in the ledger, ' . count($onlyB) . " only in the bank file)\n";

@@ -1,0 +1,43 @@
+services:
+  cockpit:
+    build:
+      context: .
+      args:
+        # v2 (full, SaaS/Marketplace/remote control) or v1 (no-account,
+        # fully local). Change this then `docker compose build` again to
+        # switch editions — see README for staging both editions' web/.
+        COCKPIT_EDITION: v2
+    ports:
+      - "8080:80"
+    volumes:
+      # Ollama models — multi-GB, keep across rebuilds
+      - cockpit-ollama-models:/home/cockpit/ollama/models
+      # LocalAI models — same reasoning, same pattern
+      - cockpit-localai-models:/home/cockpit/localai/models
+      # Cockpit data — library/snippets/sources/code/approvals, chat history,
+      # and the Claude/Gemini CLI auth tokens (~/.claude, ~/.gemini live under
+      # the cockpit user's home, which this volume covers)
+      - cockpit-data:/home/cockpit
+    restart: unless-stopped
+    # Uncomment to give Ollama/LocalAI GPU access (Linux host with NVIDIA
+    # Container Toolkit installed — Docker Desktop on Windows/macOS doesn't
+    # pass through a GPU to containers, CPU-only there):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    #
+    # AMD (ROCm) passthrough isn't set up here — it needs device mappings
+    # (/dev/kfd, /dev/dri), not the `deploy.resources` style above, and
+    # hasn't been tested with this bundle. Native (non-Docker) installs
+    # already get AMD GPU detection via hardware_scan.sh, so this only
+    # matters if you specifically need Cockpit inside a container on an
+    # AMD-GPU Linux host.
+
+volumes:
+  cockpit-ollama-models:
+  cockpit-localai-models:
+  cockpit-data:

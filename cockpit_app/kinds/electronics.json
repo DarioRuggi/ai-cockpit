@@ -1,0 +1,20 @@
+{
+  "id": "electronics",
+  "name": "Electronics (KiCad)",
+  "icon": "memory",
+  "description": "Schematics and boards in KiCad: checked, bills of materials, files for a board house.",
+  "detect": ["*.kicad_sch", "*.kicad_pcb", "*.kicad_pro"],
+  "group": "Hardware & making",
+  "note": "This is an electronics project in KiCad (.kicad_sch schematics, .kicad_pcb boards). The files are s-expressions: you may read them, but never hand-edit a schematic or board file unless the user asks, because a small mistake corrupts it; propose the change for the user to make in KiCad, naming the reference (R12) and the net. Never invent a part number, a footprint or a value: say it is missing. Every part needs a unique reference, a value and a footprint before the board can be made; every net label must connect something; the board needs an outline on the Edge.Cuts layer. Tracks under 0.15 mm and vias with a drill under 0.2 mm are below what most board houses make. The Check here is a lite reading of the file, NOT KiCad's ERC or DRC (KiCad 7's command line has neither): before ordering boards the user must run ERC and DRC in KiCad. Use the BOM and Placement exports for assembly, and Gerbers + drill for the board house.",
+  "verify": "kicad check",
+  "details": "Reading and checking KiCad projects. The Electronics tool counts what is in a schematic or board; checks it by reading the file for the common mistakes (unannotated or duplicate references, parts with no value or footprint, a net label used once, no board outline, parts off the board, tracks and vias too small), clearly labelled as not KiCad's own ERC and DRC, which KiCad 7's command line does not offer; writes the bill of materials grouped by value and footprint as a CSV; and exports the schematic or board as a PDF, the netlist, the Gerber and drill files in one zip for a board house, and the placement file for pick-and-place, through kicad-cli.",
+  "examples": [
+    "Bill of materials for ordering parts",
+    "Gerbers and drill file for a board house",
+    "Which parts have no footprint yet",
+    "A placement file for the assembly service"
+  ],
+  "tools": [
+    {"tool": "kicad", "why": "info, lite check, BOM, PDF, netlist, Gerbers + drill, placement file"}
+  ]
+}

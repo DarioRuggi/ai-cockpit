@@ -1,0 +1,21 @@
+{
+  "id": "bookkeeping",
+  "name": "Bookkeeping",
+  "icon": "receipt_long",
+  "description": "Ledgers, invoices and expenses: checked, summarised, reconciled.",
+  "detect": [],
+  "note": "This is a bookkeeping project: CSV ledgers, bank exports and invoices. The numbers are the user's real money: never guess, round away or invent an amount, a date, a category or a tax rate, and never change a transaction without saying which line and why. Keep the original exports untouched and write corrected copies under new names. Amounts may be written 1,234.56 or 1.234,56, negatives as -12.50, (12.50) or 12.50-; dates may be day-first or month-first: when ambiguous, say which you assumed. Say whether a column of tax numbers is rates or amounts, and whether amounts are gross or net. Run the Bookkeeping Check after every change and fix what it lists; reconcile against the bank export before calling anything final. This is arithmetic on the user's data, not accounting or tax advice.",
+  "verify": "books check",
+  "group": "Data & numbers",
+  "details": "Keeping the books from CSV files. The Bookkeeping tool checks a ledger (unreadable dates and amounts, future dates, duplicates, rows with no category, amounts unusually large for their category, gaps and repeats in invoice numbers, mixed currencies) with the line of each problem; summarises it by category and by month with the biggest payees; reconciles it against a bank export by amount and date; and totals the tax inside gross amounts by rate and by quarter for a VAT, IVA or GST return. Column names are recognised in several languages (more can be added) and both 1,234.56 and 1.234,56 are read. SQL questions on the same file are in the Data analysis tool.",
+  "examples": [
+    "Find the duplicate and missing invoices in this year's ledger",
+    "Reconcile the bank statement with the ledger",
+    "Expenses by category and month for the accountant",
+    "VAT collected and paid this quarter"
+  ],
+  "tools": [
+    {"tool": "books", "why": "check, summarise, reconcile and total the tax of a CSV ledger"},
+    {"tool": "data", "why": "ask the same file free-form questions in SQL, charts"}
+  ]
+}

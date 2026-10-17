@@ -1,0 +1,76 @@
+{
+  "id": "lazarus",
+  "name": "Lazarus",
+  "description": "Create and build Lazarus projects, headless. New: console program, form application, unit (never overwrites). Build a Lazarus project (.lpi) or package (.lpk) with lazbuild, headless. The whole compiler output, warnings and hints included, is saved as a text file, and a line '[exit code N]' is added at the end, so a failed build still gives you the messages to work with (an agent can read them and propose the fix).",
+  "binary": "lazbuild",
+  "version_args": "--version",
+  "website": "https://www.lazarus-ide.org",
+  "presets": [
+    {
+      "id": "new-console",
+      "label": "New console program (in a project folder)",
+      "description": "Writes NAME.lpr and NAME.lpi into the folder. Input: the project folder; name in the extra-arguments box (default project1). Never overwrites.",
+      "input_kinds": ["folder"],
+      "output_kind": "text",
+      "output_ext": "txt",
+      "output_stem": "pascal_new_console",
+      "command": "bash {WEBROOT}/pascal_new console {INPUT} {OUTPUT} {ARGS}",
+      "timeout_seconds": 30
+    },
+    {
+      "id": "new-gui",
+      "label": "New Lazarus form application",
+      "description": "Writes NAME.lpi, NAME.lpr, unit1.pas and unit1.lfm (a form with a label and a button) into the folder. Input: the project folder; name in the extra-arguments box (default project1). Never overwrites.",
+      "input_kinds": ["folder"],
+      "output_kind": "text",
+      "output_ext": "txt",
+      "output_stem": "pascal_new_gui",
+      "command": "bash {WEBROOT}/pascal_new gui {INPUT} {OUTPUT} {ARGS}",
+      "timeout_seconds": 30
+    },
+    {
+      "id": "new-unit",
+      "label": "New unit (class skeleton)",
+      "description": "Writes NAME.pas with a class skeleton into the folder. Input: the project folder; name in the extra-arguments box (default unit1). Never overwrites.",
+      "input_kinds": ["folder"],
+      "output_kind": "text",
+      "output_ext": "txt",
+      "output_stem": "pascal_new_unit",
+      "command": "bash {WEBROOT}/pascal_new unit {INPUT} {OUTPUT} {ARGS}",
+      "timeout_seconds": 30
+    },
+    {
+      "id": "build",
+      "label": "Build project (.lpi)",
+      "description": "lazbuild on the project file, default build mode. Messages are kept even when the build fails.",
+      "input_kinds": ["code", "file"],
+      "output_kind": "text",
+      "output_ext": "txt",
+      "output_stem": "{NAME}_build",
+      "command": "sh -c 'lazbuild \"$1\" > \"$2\" 2>&1; echo \"[exit code $?]\" >> \"$2\"; true' lazbuild {INPUT} {OUTPUT}",
+      "timeout_seconds": 600
+    },
+    {
+      "id": "build-quiet",
+      "label": "Build, errors and warnings only",
+      "description": "Same, with the compiler's hints and notes left out (lazbuild -q), for a short list to act on",
+      "input_kinds": ["code", "file"],
+      "output_kind": "text",
+      "output_ext": "txt",
+      "output_stem": "{NAME}_build",
+      "command": "sh -c 'lazbuild -q \"$1\" > \"$2\" 2>&1; echo \"[exit code $?]\" >> \"$2\"; true' lazbuild {INPUT} {OUTPUT}",
+      "timeout_seconds": 600
+    },
+    {
+      "id": "rebuild",
+      "label": "Rebuild everything (clean)",
+      "description": "lazbuild -B: recompile every unit, not just what changed",
+      "input_kinds": ["code", "file"],
+      "output_kind": "text",
+      "output_ext": "txt",
+      "output_stem": "{NAME}_rebuild",
+      "command": "sh -c 'lazbuild -B \"$1\" > \"$2\" 2>&1; echo \"[exit code $?]\" >> \"$2\"; true' lazbuild {INPUT} {OUTPUT}",
+      "timeout_seconds": 900
+    }
+  ]
+}

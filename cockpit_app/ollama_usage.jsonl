@@ -1,0 +1,16 @@
+{"ts":"2026-05-26T15:16:19","model":"qwen2.5-coder:3b","project":"default","chat":"default","prompt_tokens":1494,"output_tokens":131,"total_ms":1100}
+{"ts":"2026-05-26T15:20:14","model":"qwen2.5-coder:3b","project":"default","chat":"default","prompt_tokens":1499,"output_tokens":139,"total_ms":1200}
+{"ts":"2026-05-29T15:00:11","model":"qwen2.5-coder:3b","project":"default","chat":"default","prompt_tokens":1466,"output_tokens":545,"total_ms":6000}
+{"ts":"2026-05-29T15:04:50","model":"qwen2.5-coder:3b","project":"default","chat":"default","prompt_tokens":1463,"output_tokens":247,"total_ms":2200}
+{"ts":"2026-05-30T13:19:44","model":"qwen2.5-coder:3b","project":"default","chat":"default","prompt_tokens":1497,"output_tokens":448,"total_ms":5100}
+{"ts":"2026-05-30T13:23:26","model":"qwen2.5-coder:3b","project":"\u05e4\u05e8\u05d5\u05d9\u05e7\u05d8","chat":"chat_1","prompt_tokens":587,"output_tokens":60,"total_ms":700}
+{"ts":"2026-05-30T13:23:47","model":"qwen2.5-coder:3b","project":"\u05e4\u05e8\u05d5\u05d9\u05e7\u05d8","chat":"chat_2","prompt_tokens":587,"output_tokens":64,"total_ms":700}
+{"ts":"2026-06-06T07:24:37","model":"qwen2.5-coder:3b","project":"default","chat":"default","prompt_tokens":1608,"output_tokens":484,"total_ms":5400}
+{"ts":"2026-06-09T15:44:49","model":"qwen2.5-coder:3b","project":"default","chat":"default","prompt_tokens":1924,"output_tokens":2601,"total_ms":46800}
+{"ts":"2026-06-09T15:45:07","model":"qwen2.5-coder:3b","project":"default","chat":"default","prompt_tokens":1607,"output_tokens":73,"total_ms":1000}
+{"ts":"2026-06-12T15:13:13","model":"qwen2.5-coder:3b","project":"default","chat":"default","prompt_tokens":1604,"output_tokens":400,"total_ms":4600}
+{"ts":"2026-06-12T15:29:11","model":"qwen2.5-coder:3b","project":"default","chat":"default","prompt_tokens":1607,"output_tokens":948,"total_ms":6900}
+{"ts":"2026-06-13T09:56:49","model":"qwen2.5-coder:1.5b","project":"default","chat":"default","prompt_tokens":1559,"output_tokens":331,"total_ms":3400}
+{"ts":"2026-06-13T10:05:54","model":"gemma4:e2b","project":"default","chat":"default","prompt_tokens":1599,"output_tokens":1796,"total_ms":21600}
+{"ts":"2026-06-13T10:06:33","model":"gemma4:e2b","project":"default","chat":"default","prompt_tokens":1602,"output_tokens":1205,"total_ms":14800}
+{"ts":"2026-06-13T16:24:31","model":"qwen2.5-coder:3b","project":"default","chat":"default","prompt_tokens":1928,"output_tokens":866,"total_ms":7400}

@@ -1,0 +1,53 @@
+{
+    "id": "music-practice",
+    "name": "Music practice and songbook",
+    "icon": "library_music",
+    "description": "Practice logs, set lists, chord charts, lyric sheets and a songbook index.",
+    "detect": [
+        "*.cho",
+        "*.chordpro",
+        "*.crd"
+    ],
+    "note": "This is a music practice and songbook project for a player or band: practice logs, set lists, chord charts in plain text or ChordPro, lyric sheets and the songbook. Notation in LilyPond belongs to the Music scores kind (score tool); this one is for the working musician's paperwork. Never invent lyrics, chords, keys, tempos or song lengths: take them from the files, and mark gaps. Do not reproduce the lyrics or charts of copyrighted songs from memory: work only on text the person gives you or owns. Transposing keeps the chord shapes and spelling: check unusual chords by ear. Warnings about key jumps or repeated tempos are prompts, not rules; a musician can overrule them. Say what you assumed, and run the check after every change.",
+    "verify": "songbook setlist",
+    "group": "Media",
+    "details": "The paperwork of playing. The Songbook tool summarises a practice log CSV (minutes per week and per piece, streaks, progress against a weekly goal), checks a set list CSV (running time against the slot, key jumps, the same tempo three songs in a row), transposes a plain-text chord chart or ChordPro file by semitones or to a key with sharps or flats chosen to suit and a capo suggestion, checks lyric sheets (unlabelled sections, missing verses, songs against the set list) and builds a songbook contents, alphabetical index and index by key in Markdown for Pandoc. It counts and edits text: it does not hear music. Sheet music in LilyPond is the Music scores kind (the Music scores tool); recordings' tempo and loudness are in the Music tool.",
+    "examples": [
+        "Total my practice minutes this week against my goal",
+        "Will this set fit the 45-minute slot, and does it flow",
+        "Transpose the chart to G and suggest a capo",
+        "Build the songbook contents and index for printing"
+    ],
+    "tools": [
+        {
+            "tool": "songbook",
+            "why": "practice log, set list, transpose, lyrics check, songbook index"
+        },
+        {
+            "tool": "score",
+            "why": "sheet music in LilyPond (the Music scores kind)"
+        },
+        {
+            "tool": "music",
+            "why": "tempo and loudness of a recording"
+        },
+        {
+            "tool": "pandoc",
+            "why": "the songbook to PDF or Word"
+        }
+    ],
+    "starter": [
+        {
+            "path": "practice/log.csv",
+            "content": "date,piece,minutes\n2026-01-05,Scales,20\n2026-01-05,Piece one,25\n"
+        },
+        {
+            "path": "sets/setlist.csv",
+            "content": "title,minutes,key,tempo\nSong one,3:30,G,120\nSong two,4:00,D,96\n"
+        },
+        {
+            "path": "songs/songs.md",
+            "content": "# Song title\nKey: G\n\n[Verse 1]\nG        D\nFirst line of the verse\n\n[Chorus]\nC        G\nFirst line of the chorus\n"
+        }
+    ]
+}

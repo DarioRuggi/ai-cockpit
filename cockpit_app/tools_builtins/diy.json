@@ -1,0 +1,50 @@
+{
+    "id": "diy",
+    "name": "Home and DIY",
+    "description": "Calculators and checks for home jobs. Calculate reads a text file of jobs, one per line: paint (litres from the room or wall area, doors, windows, coats and the coverage on the tin), floor or tile (area plus waste %, piece count and boxes), concrete (volume with waste, bags if you give the bag's yield) and lumber (a cutting plan for the lengths you need from the stock lengths you could buy, with the saw cut). Estimate totals a CSV of parts and labour with a contingency percentage and optional tax. Schedule works out the next due date of each maintenance task from its last-done date and interval (6 months, 1 year, 90 days) and lists what is overdue and coming up. Quantities are estimates from your numbers. Electrical, gas, structural, roof, chimney, asbestos and similar work belongs to licensed professionals: the tool flags such words and does arithmetic only. The original is never changed.",
+    "binary": "php",
+    "version_args": "--version",
+    "website": "https://www.php.net",
+    "packages": {
+        "apt": "php-cli php-mbstring",
+        "dnf": "php-cli php-mbstring",
+        "pacman": "php",
+        "zypper": "php8 php8-mbstring",
+        "brew": "php"
+    },
+    "presets": [
+        {
+            "id": "calc",
+            "label": "Material calculators (paint, floor, concrete, lumber)",
+            "description": "The input is a text file, one job per line, for example:  paint: room=4x3x2.5 doors=2 windows=1 coats=2 coverage=10   |   floor: room=4x3 piece=30x30 pack=11 waste=10   |   concrete: length=3 width=2 depth=10cm bag=0.0125   |   lumber: need=2.4,1.8,1.8,0.6 stock=2.4,3.0 kerf=3. Metres unless a unit is written; floor pieces in cm. Defaults are stated in the output. Problems come back as file(line).",
+            "input_kinds": ["text", "file"],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_materials",
+            "command": "php {WEBROOT}/diy_tool calc {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "estimate",
+            "label": "Job estimate sheet",
+            "description": "A CSV with item, type (part or labour), quantity (or hours) and unit price (or hourly rate). Totals parts, labour, contingency (default 10%; contingency=15 in the extra arguments) and optional tax (tax=20, your rate). Unreadable quantities and prices come back as errors with the line.",
+            "input_kinds": ["csv", "file", "spreadsheet", "text"],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_estimate",
+            "command": "php {WEBROOT}/diy_tool estimate {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "schedule",
+            "label": "Maintenance schedule check",
+            "description": "A CSV with task, last done (date) and interval (6 months, 1 year, 90 days, 2 weeks). Next due date for each, what is overdue (warning), what is due within 30 days (within=14 to change it), and tasks never done. today=2026-03-01 in the extra arguments fixes the date to compare with.",
+            "input_kinds": ["csv", "file", "spreadsheet", "text"],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_schedule",
+            "command": "php {WEBROOT}/diy_tool schedule {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        }
+    ]
+}

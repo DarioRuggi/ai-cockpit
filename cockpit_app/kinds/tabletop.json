@@ -1,0 +1,25 @@
+{
+  "id": "tabletop",
+  "name": "Tabletop games and role-play",
+  "icon": "casino",
+  "description": "Dice, odds, initiative, character sheets and campaign notes for tabletop and role-playing games.",
+  "detect": [],
+  "note": "This is a tabletop-games project: campaigns, characters, encounters and house rules for tabletop and role-playing games. The campaign notes and the group's rules are the source of truth: never invent a rule, a stat, a rule-book page, an NPC's past or a decision the players made, and say which edition or house rule you assumed. Dice are fair chance: never fudge a result, and when asked to roll use the Tabletop helper with a seed so the roll can be repeated and shown. The tool knows no game system: required fields, ability limits and point-buy costs are the ones the user passes, so ask for them. Mark clearly what is canon (already played) and what is a draft idea; keep secrets the game master has not revealed out of anything meant for players. Use only rule text the user supplies or the group has permission to use; do not reproduce publisher rule books. Keep notes in markdown, one file per session, and keep the user's originals untouched.",
+  "verify": "tabletop notes",
+  "group": "Home & life",
+  "details": "Running and playing tabletop games from plain files. The Tabletop helper tool rolls dice expressions such as 2d6+3, 4d6kh3 (keep highest), 2d20kl1 or 3d8dl1 (drop lowest) with a seed so the rolls can be repeated; gives the exact probability table of an expression with the chance of reaching a target; turns a combatants CSV into an initiative order and a round tracker (numbered copies for groups); checks a character sheet against the required fields, ability limits and point-buy table and budget that you define; and indexes your campaign notes by NPC and location so you can see where each appears and which never did. No game system or rule text is built in.",
+  "examples": [
+    "What are my chances of rolling 15 or more with advantage?",
+    "Roll initiative for the party and four goblins",
+    "Check this character sheet against our 27-point budget",
+    "Which NPCs have I not used in any session yet?"
+  ],
+  "tools": [
+    {"tool": "tabletop", "why": "roll dice with a seed, probability tables, initiative, sheet check, campaign notes index"},
+    {"tool": "pandoc", "why": "session notes or handouts to Word or PDF"}
+  ],
+  "starter": [
+    {"path": "sessions/TEMPLATE.md", "content": "# Session N: title\n\nDate: \nPlayers: \n\n## Recap\n\n## What happened\n\n## NPCs met\n\n## Locations\n\n## Loose ends\n"},
+    {"path": "entities.csv", "content": "name,type,aliases\n"}
+  ]
+}

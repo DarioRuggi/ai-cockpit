@@ -1,0 +1,61 @@
+{
+    "id": "budget",
+    "name": "Personal finance",
+    "description": "Arithmetic on your own money files. Variance compares a monthly budget CSV (category, budget) with an actual spending CSV (date, description, amount, category) and lists variance by category, what was overspent, spending with no budget line, and the savings rate; Recurring finds payments in a bank export that repeat with the same payee, a similar amount and a regular interval (weekly to yearly) and what they cost per year; Tax documents compares a folder with YOUR list of documents by file name and lists present, missing and unmatched files; Project works out a loan payoff schedule (with an optional extra payment) or a savings projection with compound interest. Amounts such as 1,234.56, 1.234,56, (12.50) and 12.50- are read. This is arithmetic on your data, not financial, investment or tax advice. The original is never changed.",
+    "binary": "php",
+    "version_args": "--version",
+    "website": "https://www.php.net",
+    "packages": {
+        "apt": "php-cli php-mbstring",
+        "dnf": "php-cli php-mbstring",
+        "pacman": "php",
+        "zypper": "php8 php8-mbstring",
+        "brew": "php"
+    },
+    "presets": [
+        {
+            "id": "variance",
+            "label": "Budget against actual",
+            "description": "The input is the budget CSV (category and monthly amount); give the actual file in the extra arguments: with=/path/to/actual.csv, and month=2026-03 to look at one month (otherwise the budget is multiplied by the number of months in the file). Variance by category, overspent categories, spending with no budget line, income, spending and savings rate. Add positive=expense if your bank counts spending as positive.",
+            "input_kinds": ["csv", "file", "spreadsheet", "text"],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_variance",
+            "command": "php {WEBROOT}/budget_tool variance {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "recurring",
+            "label": "Find recurring payments",
+            "description": "In a bank export or ledger: payees that appear at least 3 times (min=2 to lower it) at a regular interval and a similar amount, with the typical amount, the next expected date and about what they cost per year; payees with a regular rhythm but a changing amount are listed apart.",
+            "input_kinds": ["csv", "file", "spreadsheet", "text"],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_recurring",
+            "command": "php {WEBROOT}/budget_tool recurring {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "taxdocs",
+            "label": "Tax documents: present and missing",
+            "description": "The input is the folder; give your own list in the extra arguments: with=/path/to/list.txt (one document per line, optionally \"W-2 | w2, wage statement\" for other words to look for in the file names), and year=2025 to count only paths containing that year. Lists present, missing and unmatched files. File names only: the contents are not read.",
+            "input_kinds": ["folder"],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_taxdocs",
+            "command": "php {WEBROOT}/budget_tool taxdocs {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "project",
+            "label": "Loan payoff or savings projection",
+            "description": "The input is a text file of key=value lines (or give them in the extra arguments, which win): kind=loan with principal=, rate= (yearly %), years= or payment=, extra= (monthly extra payment); or kind=savings with principal= (start), deposit= (monthly), rate=, years= or target=. Optional start=2026-01 labels the months. A yearly summary and the full month-by-month schedule, with compound interest worked out to the cent.",
+            "input_kinds": ["text", "file"],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_projection",
+            "command": "php {WEBROOT}/budget_tool project {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        }
+    ]
+}

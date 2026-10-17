@@ -1,0 +1,50 @@
+{
+  "id": "sheet",
+  "name": "Sheet music",
+  "description": "Turn a melody into notation, and notation back into sound.",
+  "binary": "aubionotes",
+  "version_args": "--help",
+  "website": "https://lilypond.org",
+  "presets": [
+    {
+      "id": "transcribe",
+      "label": "Melody → sheet music (PDF)",
+      "description": "Detects the notes of ONE melodic line and engraves them with LilyPond. Humming, whistling or a solo instrument — a full mix will not transcribe sensibly.",
+      "input_kinds": [
+        "audio",
+        "video"
+      ],
+      "output_kind": "document",
+      "output_ext": "pdf",
+      "command": "bash {WEBROOT}/music_sheet {INPUT} {OUTPUT} transcribe",
+      "timeout_seconds": 300
+    },
+    {
+      "id": "notes",
+      "label": "List the notes",
+      "description": "The detected notes with times — no engraving, useful for checking a transcription before trusting it",
+      "input_kinds": [
+        "audio",
+        "video"
+      ],
+      "output_kind": "text",
+      "output_ext": "txt",
+      "command": "bash {WEBROOT}/music_sheet {INPUT} {OUTPUT} notes",
+      "timeout_seconds": 180
+    },
+    {
+      "id": "play",
+      "label": "Notation → piano audio",
+      "description": "Plays a .mid, .ly or MusicXML file as piano. A photo or scan of sheet music is optical music recognition and is not supported.",
+      "input_kinds": [
+        "document",
+        "text",
+        "other"
+      ],
+      "output_kind": "audio",
+      "output_ext": "wav",
+      "command": "bash {WEBROOT}/music_sheet {INPUT} {OUTPUT} play",
+      "timeout_seconds": 300
+    }
+  ]
+}

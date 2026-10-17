@@ -1,0 +1,29 @@
+{
+  "_comment": "What the splash advertises, per edition. Edit this, run Installs/build_splash.sh, and both splash files are regenerated. The splash is the first thing a new user sees and it used to be one image made long before most of these features existed -- this file is how it stays current without anyone hand-editing a 260 KB HTML file.",
+  "_image_library": "Drop PNG/SVG into Installs/splash/images/ and name it in a card's \"image\" field. Keep each under ~80 KB: the splash is inlined as data: URIs so it works from file:// with no network and no second request. A card with no image renders its icon instead, which is the default and looks deliberate.",
+  "_rotation": "Cards are shown in order. Three fit comfortably; more are fine and simply scroll off on a small window, so keep the strongest first.",
+
+  "v2": {
+    "tagline": "Every AI you use, on your own machine.",
+    "cards": [
+      { "icon": "hive",  "title": "Agents that work together",
+        "text": "Claude, Codex, Gemini, Qwen and local models on one strip — single, pipeline, broadcast, or a plan that runs itself.", "image": "" },
+      { "icon": "book",  "title": "It reads what you give it",
+        "text": "Books become chapters an agent can actually retrieve from. PDFs are read as pages. Answers cite the passage they came from.", "image": "" },
+      { "icon": "globe", "title": "Reach it from anywhere",
+        "text": "Everywhere relay puts your rig in your pocket. Marketplace shares what you build. Your data never leaves unless you say so.", "image": "" }
+    ]
+  },
+
+  "v1": {
+    "tagline": "No account. No cloud. Just your machine.",
+    "cards": [
+      { "icon": "lock",  "title": "Nothing to sign up for",
+        "text": "No account, no licence check, no telemetry. Install it and it works, offline, for as long as you keep it.", "image": "" },
+      { "icon": "chip",  "title": "Your models, your hardware",
+        "text": "Ollama and LocalAI on your own GPU or CPU — or bring a paid CLI if you have one. Nothing is metered.", "image": "" },
+      { "icon": "folder","title": "Your files stay yours",
+        "text": "Projects, chats and library live on your disk in plain files you can read, move and back up yourself.", "image": "" }
+    ]
+  }
+}

@@ -1,0 +1,215 @@
+    /* =========================================================
+       CSS VARIABLES — Refined Dark Palette
+       Protanopia-safe: Blue=Gemini, Amber=Claude, Orange=Ollama
+       No neon — muted, professional, terminal-grade
+       ========================================================= */
+    :root {
+        /* === Backgrounds === */
+        --bg-base:        #0e0e10;
+        --bg-panel:       #141416;
+        --bg-sidebar:     #111113;
+        --bg-console:     #0a0a0c;
+        --bg-hover:       #1c1c20;
+        --bg-active:      #1e1e24;
+        --bg-darker:      #0a0a0c;
+        --bg-codeblock:   #0d1117;
+
+        /* === Borders === */
+        --border-dim:     #222226;
+        --border-mid:     #2a2a32;
+        --border-bright:  #38383f;
+
+        /* === Text ===
+           Values chosen to keep readable contrast against both very dark
+           backgrounds (--bg-base #0d0d10) and brighter active backgrounds
+           (--bg-active #1e1e24). Themes can override these — if a theme
+           overrides a background but not these, text should still be legible. */
+        --text-primary:   #e8e8ec;   /* Headings, hovered text */
+        --text-base:      #d0d0d4;   /* Default body text */
+        --text-dim:       #a0a0aa;   /* Secondary labels, inactive buttons */
+        --text-muted:     #8e8e98;   /* Status bar, hints, captions */
+
+        /* === Agent colors === */
+        --claude:         #e0b84e;   /* Warm amber */
+        --claude-dim:     #7a6430;
+        --claude-glow:    rgba(224, 184, 78, 0.15);
+        --gemini:         #5b8fd4;   /* Steel blue */
+        --gemini-dim:     #324f80;
+        --gemini-glow:    rgba(91, 143, 212, 0.15);
+        --ollama:         #d4873a;   /* Burnt orange */
+        --ollama-dim:     #7a4a20;
+        --ollama-glow:    rgba(212, 135, 58, 0.15);
+        --localai:        #2dd4bf;   /* Teal — distinct from all other card colors */
+        --localai-dim:    #1c7d72;
+        --localai-glow:   rgba(45, 212, 191, 0.15);
+        --workers:        #9d8fe8;   /* Soft violet */
+        --workers-dim:    #5e548e;
+        --workers-glow:   rgba(157, 143, 232, 0.15);
+        --tools:          #7dc4a3;   /* Sage green */
+        --tools-dim:      #4a7a64;
+        --tools-glow:     rgba(125, 196, 163, 0.15);
+
+        /* === User input === */
+        --warm:           #e8a44a;   /* Warm orange accent */
+
+        /* === Semantic accents === */
+        --accent-amber:      #e0b84e;
+        --accent-blue:       #4a9eff;
+        --accent-blue-dim:   rgba(74, 158, 255, 0.45);
+        --accent-blue-glow:  rgba(74, 158, 255, 0.12);
+        --accent-green:      #4caf50;
+        --accent-cyan:       #2ec4b6;   /* Teal-cyan — used by some agent-related accents */
+        --accent-orange:     #e08a3c;   /* Was referenced in ~16 places but never defined
+                                           (silently fell back to inherited colour). Defined
+                                           here; protanopia-safe orange, distinct from amber. */
+
+        /* === UI accent ===
+           ONE canonical interactive/highlight color used for non-agent-specific
+           decoration: active buttons, scope badges, plan steps, active list items,
+           panel header underlines, etc. Each theme defines accents.ui to give
+           the whole UI a consistent visual identity. */
+        --ui-accent:      #5b8fd4;   /* Default = current Gemini blue */
+        --ui-accent-dim:  #324f80;
+        --ui-accent-glow: rgba(91, 143, 212, 0.15);
+
+        /* === Fonts === */
+        --font-ui:        'Tahoma', 'Segoe UI', Geneva, sans-serif;
+        --font-mono:      'MesloLGS NF', 'MesloLGS Nerd Font Mono', 'Cascadia Code',
+                          'Fira Code', 'Consolas', 'Courier New', monospace;
+        --font-size-ui:        13.5px;
+        --font-size-console:   14.5px;
+    }
+
+    /* =========================================================
+       RESET & BASE
+       ========================================================= */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: auto; }
+    /* Height floor: 580, not 700. The layout's true minimum is topbar (143) +
+       statusbar (24) + .main-layout's own min-height (400) = 567. At 700 every
+       1366x768 laptop -- ~620-680px after browser chrome -- got a page that
+       was taller than its window, so the bottom of the app was off-screen and
+       the only way to it was scrolling the whole page, topbar included. Below
+       580 the page still scrolls rather than clips, which is the intent the
+       body rule below states for width. */
+    html { min-height: 580px; min-width: 1100px; }
+    body {
+        background: var(--bg-base);
+        color: var(--text-primary);
+        font-family: var(--font-ui);
+        font-size: var(--font-size-ui);
+        display: flex;
+        flex-direction: column;
+        min-width: 1100px;
+        min-height: 580px;   /* see the html rule above */
+        max-width: 100vw;
+        overflow-x: auto;   /* horizontal scroll rather than cut-off on very narrow windows */
+    }
+
+    /* ─────────────────────────────────────────────────────────────────────
+       Theme-mode text safety overrides
+       Themes can override --bg-* but may forget --text-*. These rules give
+       each mode a sensible default text palette so contrast survives any
+       theme switch. Themes that explicitly override text vars in their
+       JSON still win — these only fill the gaps.
+       ───────────────────────────────────────────────────────────────────── */
+    /* Before any theme is applied (first run: the account/login gate, the boot
+       paint), follow the desktop. Applied themes set these inline on <html>
+       and win over this rule. A light desktop got a dark gate in a light
+       window on the Fedora VM. */
+    @media (prefers-color-scheme: light) {
+        :root {
+            --bg-base: #f3f5f9; --bg-panel: #ffffff; --bg-sidebar: #eceff4; --bg-hover: #e3e7ee; --bg-darker: #ffffff;
+            --border-dim: #dce2ec; --border-mid: #c9d2e0;
+            --text-primary: #1a1a1e; --text-base: #2a2a30; --text-dim: #565660; --text-muted: #707078;
+        }
+    }
+    body[data-theme-mode="light"] {
+        --text-primary: #1a1a1e;
+        --text-base:    #2a2a30;
+        --text-dim:     #565660;
+        --text-muted:   #707078;
+    }
+    body[data-theme-mode="mixed"] {
+        /* Mixed mode = light content, dark chrome. The theme's text colours are dark (for the light
+           content), so the DARK areas get their own light set (--chrome-text-*, from the theme's
+           textChrome group; the fallbacks below suit any dark surface) and the LIGHT surfaces that
+           sit inside them (buttons, inputs, cards) switch back to the content set (--content-text-*).
+           Colours are inherited as values, so each area also sets `color` itself. */
+        --chrome-fallback-primary: #e8eaf0; --chrome-fallback-base: #c9ccd6;
+        --chrome-fallback-dim: #9a9eac;     --chrome-fallback-muted: #8b8f9e;
+    }
+    /* dark areas -> light text */
+    body[data-theme-mode="mixed"] :is(.topbar, .topbar-info, .statusbar, .footer, .sidebar, .console-toolbar,
+        .msg-system-group-toggle, .tps-card, .sidebar-vtabs, .plan-detail, .cap-toggle, .cap-agent-badge,
+        .cap-builtin-badge, .cap-detail, .rp-cfg-file-content, .sidebar-panel-title, .rp-proposals-hdr,
+        .rp-prop-preview, .sidebar-toggle, .count-chip, .custom-select-panel, .ck-dd-panel, .cs-panel-title, .cs-sort-combo,
+        .cs-group-header, .ck-dd-group, option, optgroup, .help-group-letter, .topbar-controls-panel,
+        #auth-gate) {
+        --text-primary: var(--chrome-text-primary, var(--chrome-fallback-primary));
+        --text-base:    var(--chrome-text-base,    var(--chrome-fallback-base));
+        --text-dim:     var(--chrome-text-dim,     var(--chrome-fallback-dim));
+        --text-muted:   var(--chrome-text-muted,   var(--chrome-fallback-muted));
+        color: var(--text-base);
+    }
+    /* An element that sets one of the DARK chrome backgrounds inline (dialogs and the Theme Editor do: style="background:var(--bg-darker)…")
+       gets the light text, whatever the rules for its tag say — otherwise a select or input in such a dialog is dark text on a dark
+       background in a Mixed theme (found 2026-10-05: the Theme Editor's drop-downs, ratio about 1.3:1). In Mixed themes --bg-darker,
+       --bg-panel and --bg-sidebar are the dark ones, so light text is always the right answer there. */
+    body[data-theme-mode="mixed"] :is([style*="background:var(--bg-darker)"], [style*="background: var(--bg-darker)"],
+        [style*="background:var(--bg-panel)"], [style*="background: var(--bg-panel)"],
+        [style*="background:var(--bg-sidebar)"], [style*="background: var(--bg-sidebar)"]) {
+        --text-primary: var(--chrome-text-primary, var(--chrome-fallback-primary));
+        --text-base:    var(--chrome-text-base,    var(--chrome-fallback-base));
+        --text-dim:     var(--chrome-text-dim,     var(--chrome-fallback-dim));
+        --text-muted:   var(--chrome-text-muted,   var(--chrome-fallback-muted));
+        color: var(--chrome-text-base, var(--chrome-fallback-base)) !important;      /* the variables too: children that say color:var(--text-base) inline follow */
+    }
+    /* Mixed themes: the accent colours are LIGHT here, so text on an accent-coloured button must be the dark content text (it was the
+       light page background: "Apply" read 2:1), and a heading drawn in the light "workers" accent on the light content area uses the
+       darker UI accent instead. */
+    body[data-theme-mode="mixed"] :is([style*="background:var(--accent-blue)"], [style*="background: var(--accent-blue)"]) {
+        color: var(--content-text-primary, #1a1a1e) !important;
+    }
+    body[data-theme-mode="mixed"] #theme-editor-modal h2, body[data-theme-mode="mixed"] #theme-editor-modal h2 * { color: var(--content-text-primary, #1a1a1e) !important; }   /* was --ui-accent: light on the light modal in 3 of the 4 Mixed themes (1.4:1) */
+    /* light surfaces (inside the dark areas, and the content itself) -> the theme's own dark text */
+    body[data-theme-mode="mixed"] :is(.console, .console-toolbar input[type="text"], .font-family-select, .font-size-btn,
+        textarea#prompt-in, .action-btn, .sidebar-action-btn, .sb-item.active, .ma-mode-btn, .rp-toolbar, .rp-item,
+        .usage-row, .usage-row-actions button, .sup-card, .plan-item, .plan-tb-btn, .plan-step, .plan-step-output-body, .cap-item,
+        .rp-action-btn, .rp-cfg-file, .rp-proposals-wrap, .rp-proposal, .sb-rename-input, .sb-filter, #desc-ov textarea, .agent-btn, select,
+        .model-select, .custom-select-trigger, .help-toc-item.active, #help-content code, .ck-chip,
+        [style*="var(--bg-base)"], [style*="var(--bg-active)"], [style*="var(--bg-console)"], [style*="var(--bg-codeblock)"]) {
+        --text-primary: var(--content-text-primary, #1a1a1e);
+        --text-base:    var(--content-text-base, #2a2a30);
+        --text-dim:     var(--content-text-dim, #565660);
+        --text-muted:   var(--content-text-muted, #707078);
+        color: var(--text-base);
+    }
+
+
+/* frameless native window: the header is the drag handle */
+/* (header drag removed 2026-09-20) */
+body.frameless .topbar button, body.frameless .topbar input, body.frameless .topbar select { cursor: pointer; }
+
+/* Mixed themes: a few things the theme's agent colours cannot serve. The agent colours are tuned for the LIGHT content, but the
+   clock sits in the dark top bar and the EXECUTE button on the dark footer, where those colours read ~1.1-2.5:1. They get the
+   light chrome text instead (found by the DOM sweep in js/features/theme-guard.js, 2026-10-05). */
+body[data-theme-mode="mixed"] :is(#cockpit-version, #clock-time, #clock-date, #clock-tz, #clock-server, #btn-execute, #btn-execute.agent-claude, #btn-execute.agent-ollama) {
+    color: var(--chrome-text-base, var(--chrome-fallback-base)) !important;
+}
+
+/* Mixed themes, contrast fixes from the 2026-10-17 theme audit (plans/test_v2/FINDINGS.md, slice 8):
+   F1  Hive modal: the title was drawn in the light accent on the light modal, and the log's inline var(--bg-codeblock) made it take the
+       DARK content text on its dark background.
+   F4  Dual-model chips: dark content text on a dark chip, the chip lives in the dark supplier card.
+   F6  Message tags use the agent colours, which are tuned for dark cards, on the light console: darkened a little there.
+   F3  Theme editor name line sits on the light modal. */
+body[data-theme-mode="mixed"] #hive-modal-title { color: var(--content-text-primary, #1a1a1e) !important; }
+body[data-theme-mode="mixed"] #hive-log {
+    --text-dim: var(--chrome-text-dim, var(--chrome-fallback-dim));
+    color: var(--chrome-text-base, var(--chrome-fallback-base)) !important;
+}
+body[data-theme-mode="mixed"] .console :is(.tag-dario, .tag-claude, .tag-gemini, .tag-ollama),
+body[data-theme-mode="mixed"] #tps-chat :is(#tps-dario, #tps-claude-msg) { color: color-mix(in srgb, currentColor 50%, #000); }
+/* F2: the Enabled / Delete buttons of a tool card carry a translucent inline tint and sit on the card's DARK surface, so they take the chrome text. */
+body[data-theme-mode="mixed"] .plan-tb-btn[style*="background:rgba("] { color: var(--chrome-text-primary, var(--chrome-fallback-primary)) !important; }

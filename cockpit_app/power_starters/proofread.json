@@ -1,0 +1,19 @@
+{
+    "id": "proofread",
+    "name": "Proofread",
+    "icon": "spellcheck",
+    "colour": "",
+    "description": "Fix spelling, grammar and punctuation; keep meaning, tone and language.",
+    "prompt": "Proofread the text. Fix spelling, grammar and punctuation. Keep the meaning, the tone and the language of the text; do not translate it. Return only the corrected text, nothing else.",
+    "skill": "",
+    "supplier": {
+        "type": "ollama",
+        "model": ""
+    },
+    "input": "clipboard",
+    "output": "clipboard",
+    "tools": "none",
+    "confirm": "first",
+    "allow_secrets": false,
+    "starter": true
+}

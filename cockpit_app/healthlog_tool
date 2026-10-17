@@ -1,0 +1,150 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// healthlog_tool — the Health and fitness log tools' work, for the tool presets (tools_builtins/healthlog.json). A command-line program, never reachable over the web.
+//
+//   php healthlog_tool plan         PLAN OUTPUT [metric=COLUMN] [threshold=10] [min_rest=1] [max_streak=6]   training plan check: weekly volume, sessions, rest days, week-on-week jumps above threshold %
+//   php healthlog_tool meals        DIARY OUTPUT [target=KCAL]            daily totals (kcal, protein, carbs, fat) from the numbers YOU wrote down; items with no kcal; numbers that do not agree
+//   php healthlog_tool appointments LIST OUTPUT [today=YYYY-MM-DD] [within=30]   upcoming, overdue (not marked done), and same-time clashes
+//   php healthlog_tool trend        MEASURES OUTPUT                       first / last / change / per month / recent average for every numeric column (weight, waist, resting pulse ...)
+//
+// PLAN is a CSV with a header: date (YYYY-MM-DD), activity, and a volume column (minutes, duration, distance, km, volume, load, sets ...; or name it with metric=). A week is Monday to Sunday.
+// DIARY: date, meal, item, kcal, protein_g, carbs_g, fat_g. APPOINTMENTS: date, title (or what), optional time, who, done. MEASURES: date + numeric columns. Column names are also found in
+// French, German, Italian, Portuguese and Spanish.
+// THIS IS NOT MEDICAL ADVICE and nothing here diagnoses anything. It does arithmetic and date checks on numbers you wrote down. The 10% weekly rise is a common rule of thumb, not a safe limit;
+// calories and weight say nothing by themselves about health. Ask a doctor, dietitian or qualified coach about your own body. The original is never changed.
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "healthlog_tool: $m\n"); exit($rc); }
+[$sub, $in, $out] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? ''];
+if (!in_array($sub, ['plan', 'meals', 'appointments', 'trend'], true) || $in === '' || $out === '') fail('usage: healthlog_tool plan|meals|appointments|trend FILE OUTPUT [metric= threshold= min_rest= max_streak= target= today= within=]', 2);
+$opt = []; foreach (array_slice($argv, 4) as $a) foreach (preg_split('/\s+(?=\w+=)/', trim($a)) as $p) if (strpos($p, '=') !== false) { [$k, $v] = explode('=', $p, 2); $opt[strtolower(trim($k))] = trim($v); }
+date_default_timezone_set('UTC');
+
+function read_csv(string $f): array {
+    if (!is_file($f)) fail("no such file: $f");
+    $t = (string)file_get_contents($f); if (strncmp($t, "\xEF\xBB\xBF", 3) === 0) $t = substr($t, 3);
+    if (!mb_check_encoding($t, 'UTF-8')) $t = mb_convert_encoding($t, 'UTF-8', 'CP1252');
+    $t = str_replace(["\r\n", "\r"], "\n", $t); $first = strtok($t, "\n"); if ($first === false || trim($first) === '') fail("$f is empty");
+    $c = ["\t" => substr_count($first, "\t"), ';' => substr_count($first, ';'), ',' => substr_count($first, ',')]; arsort($c); $sep = array_key_first($c);
+    $rows = []; $h = fopen('php://memory', 'r+'); fwrite($h, $t); rewind($h); $ln = 0; $header = null;
+    while (($r = fgetcsv($h, 0, $sep, '"', '')) !== false) { $ln++; if ($r === [null] || (count($r) === 1 && trim((string)$r[0]) === '')) continue; if ($header === null) { $header = array_map(fn($x) => trim((string)$x), $r); continue; } $rows[] = ['line' => $ln, 'cells' => $r]; }
+    fclose($h); if ($header === null) fail('the file is empty'); return [$header, $rows];
+}
+function find_col(array $header, array $names): ?int { foreach ($header as $i => $h) { $x = mb_strtolower(trim(preg_replace('/[\s_\-.]+/u', ' ', $h))); foreach ($names as $n) if ($x === $n) return $i; } foreach ($header as $i => $h) { $x = mb_strtolower(trim(preg_replace('/[\s_\-.]+/u', ' ', $h))); foreach ($names as $n) if (in_array($n, explode(' ', $x), true)) return $i; } return null; }
+function cell(array $r, ?int $i): string { return $i === null ? '' : trim((string)($r['cells'][$i] ?? '')); }
+function num(string $s): ?float { $s = trim(str_replace(',', '.', $s)); return preg_match('/^-?\d+(\.\d+)?$/', $s) ? (float)$s : null; }
+function parse_date(string $s, bool &$amb): ?string {
+    $amb = false; $s = trim($s);
+    if (preg_match('/^(\d{4})-(\d{1,2})-(\d{1,2})/', $s, $m)) return checkdate((int)$m[2], (int)$m[3], (int)$m[1]) ? sprintf('%04d-%02d-%02d', $m[1], $m[2], $m[3]) : null;
+    if (preg_match('/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{4})$/', $s, $m)) { [$a, $b, $y] = [(int)$m[1], (int)$m[2], (int)$m[3]]; if ($a > 12) [$d, $mo] = [$a, $b]; elseif ($b > 12) [$d, $mo] = [$b, $a]; else { $amb = $a !== $b; [$d, $mo] = [$a, $b]; } return checkdate($mo, $d, $y) ? sprintf('%04d-%02d-%02d', $y, $mo, $d) : null; }
+    return null;
+}
+function dd(string $a, string $b): int { return (int)(new DateTime($a))->diff(new DateTime($b))->format('%r%a'); }
+function plus(string $d, int $n): string { return (new DateTime($d))->modify(($n >= 0 ? '+' : '') . $n . ' days')->format('Y-m-d'); }
+function monday(string $d): string { $t = new DateTime($d); $t->modify('-' . ((int)$t->format('N') - 1) . ' days'); return $t->format('Y-m-d'); }
+function nf(float $v, int $dp = 1): string { $s = number_format($v, $dp, '.', ''); return strpos($s, '.') === false ? $s : rtrim(rtrim($s, '0'), '.'); }
+$name = basename($in); $msgs = []; $err = 0; $warn = 0;
+$add = function (string $k, int $l, string $m) use (&$msgs, &$err, &$warn, $name) { $msgs[] = "$name($l) $k: $m"; if ($k === 'Error') $err++; elseif ($k === 'Warning') $warn++; };
+$DISC = "\nNot medical advice: this is arithmetic on numbers you wrote down. It cannot tell what is right or safe for your body; ask a doctor, dietitian or qualified coach.\n";
+$ambNoted = false;
+$date_of = function (array $r, ?int $cd) use (&$ambNoted, $add): ?string { $amb = false; $raw = cell($r, $cd); $d = parse_date($raw, $amb); if ($d === null) { $add('Error', $r['line'], "the date \"$raw\" cannot be read (use YYYY-MM-DD)"); return null; } if ($amb && !$ambNoted) { $add('Note', $r['line'], "the date \"$raw\" could be day-first or month-first: read as day first; use YYYY-MM-DD to be exact"); $ambNoted = true; } return $d; };
+$finish = function (string $body) use (&$msgs, &$err, &$warn, $DISC, $out): void {
+    $o = $body . ($msgs ? "\n## Findings ($err errors, $warn warnings)\n\n" . implode("\n", $msgs) . "\n" : '') . $DISC . "\n[exit code " . ($err > 0 ? 1 : 0) . "]\n";
+    file_put_contents($out, $o); echo "Wrote $out ($err errors, $warn warnings)\n"; exit(0);
+};
+[$h, $rows] = read_csv($in); $cd = find_col($h, ['date', 'fecha', 'datum', 'data']); if ($cd === null) fail('the file needs a date column');
+
+// ---- plan -------------------------------------------------------------------------------------------------------------------------------------------
+if ($sub === 'plan') {
+    $th = (float)($opt['threshold'] ?? 10); $minRest = (int)($opt['min_rest'] ?? 1); $maxStreak = (int)($opt['max_streak'] ?? 6);
+    $cv = isset($opt['metric']) ? find_col($h, [mb_strtolower($opt['metric'])]) : find_col($h, ['minutes', 'duration', 'min', 'distance', 'km', 'volume', 'load', 'sets', 'reps', 'durée', 'dauer', 'durata', 'duração', 'duración', 'minutos', 'minuten', 'minuti']);
+    if ($cv === null) fail(isset($opt['metric']) ? 'no column named "' . $opt['metric'] . '" in the plan' : 'no volume column (minutes, duration, distance, km, volume, load, sets): or name it with metric=COLUMN');
+    $ca = find_col($h, ['activity', 'session', 'workout', 'exercise', 'actividad', 'activité', 'aktivität', 'attività']); $metric = $h[$cv]; $byDay = []; $n = 0;
+    foreach ($rows as $r) {
+        $d = $date_of($r, $cd); if ($d === null) continue; $v = num(cell($r, $cv)); $act = cell($r, $ca);
+        if (cell($r, $cv) === '' && preg_match('/^(rest|off|repos|ruhe|riposo|descanso|descanso)/iu', $act)) { $byDay[$d]['rest'] = true; continue; }
+        if ($v === null || $v < 0) { $add('Error', $r['line'], "$metric \"" . cell($r, $cv) . '" is not a number'); continue; }
+        if ($v == 0 && preg_match('/^(rest|off|repos|ruhe|riposo|descanso)/iu', $act)) { $byDay[$d]['rest'] = true; continue; }
+        $byDay[$d]['v'] = ($byDay[$d]['v'] ?? 0) + $v; $byDay[$d]['n'] = ($byDay[$d]['n'] ?? 0) + 1; $n++;
+    }
+    $train = array_filter($byDay, fn($x) => isset($x['v']) && $x['v'] > 0); if (!$train) fail('no training sessions with a volume in the plan');
+    ksort($train); $days = array_keys($train); $w0 = monday($days[0]); $w1 = monday($days[count($days) - 1]); $weeks = [];
+    for ($w = $w0; $w <= $w1; $w = plus($w, 7)) $weeks[$w] = ['v' => 0.0, 'days' => 0, 'sess' => 0];
+    foreach ($train as $d => $x) { $w = monday($d); $weeks[$w]['v'] += $x['v']; $weeks[$w]['days']++; $weeks[$w]['sess'] += $x['n']; }
+    $o = "# Training plan check: $name\n\nVolume = the sum of the \"$metric\" column. Weeks run Monday to Sunday. Threshold for a week-on-week rise: $th%.\n\n| Week of | Sessions | Training days | Rest days | Volume | Change |\n|---|---|---|---|---|---|\n"; $prev = null; $i = 0; $nw = count($weeks);
+    foreach ($weeks as $w => $x) {
+        $i++; $rest = 7 - $x['days']; $chg = ''; $partial = ($i === 1 || $i === $nw) ? ' (may be partial)' : '';
+        if ($prev !== null && $prev > 0) { $p = ($x['v'] - $prev) / $prev * 100; $chg = ($p >= 0 ? '+' : '') . nf($p, 1) . '%'; if ($p > $th + 1e-9 && $x['v'] > 0) $add('Warning', 1, "week of $w: volume up " . nf($p, 1) . '% on the week before (' . nf($prev) . ' to ' . nf($x['v']) . "), above the $th% rule of thumb" . ($i === 2 ? ' (the week before may be partial)' : '')); if ($i === $nw && $p < 0) $chg = 'partial week'; }
+        elseif ($prev !== null && $prev == 0 && $x['v'] > 0) $chg = 'restart';
+        if ($x['v'] == 0) $add('Note', 1, "week of $w has no sessions at all");
+        elseif ($rest < $minRest && $i !== 1 && $i !== $nw) $add('Warning', 1, "week of $w has $rest rest days (fewer than $minRest)");
+        elseif ($rest < $minRest) $add('Note', 1, "week of $w has $rest rest days, but it is the first or last week and may be partial");
+        $o .= "| $w$partial | {$x['sess']} | {$x['days']} | $rest | " . nf($x['v']) . " | $chg |\n"; $prev = $x['v'];
+    }
+    $streak = 1; $best = 1; $bestEnd = $days[0]; for ($k = 1; $k < count($days); $k++) { if (dd($days[$k - 1], $days[$k]) === 1) { $streak++; if ($streak > $best) { $best = $streak; $bestEnd = $days[$k]; } } else $streak = 1; }
+    if ($best > $maxStreak) $add('Warning', 1, "$best training days in a row, ending $bestEnd (more than $maxStreak)");
+    $o .= "\nLongest run of consecutive training days: $best (ending $bestEnd).\nThe 10% rule is only a common rule of thumb for gradual build-up: it is not a guarantee of safety, and a coach may plan differently on purpose (rest weeks, tapering).\n";
+    $finish($o);
+}
+
+// ---- meals -------------------------------------------------------------------------------------------------------------------------------------------
+if ($sub === 'meals') {
+    $cm = find_col($h, ['meal', 'repas', 'mahlzeit', 'pasto', 'comida', 'refeição']); $ci = find_col($h, ['item', 'food', 'aliment', 'speise', 'alimento', 'comida']); $ck = find_col($h, ['kcal', 'calories', 'cal', 'energy', 'kilocalories']); $cp = find_col($h, ['protein g', 'protein', 'prot']); $cc = find_col($h, ['carbs g', 'carbs', 'carbohydrates', 'carbohydrate', 'carb']); $cf = find_col($h, ['fat g', 'fat', 'fats']);
+    if ($ck === null && $cp === null && $cc === null && $cf === null) fail('the diary needs a kcal column (and optionally protein_g, carbs_g, fat_g)');
+    $tg = isset($opt['target']) ? num($opt['target']) : null; if (isset($opt['target']) && ($tg === null || $tg <= 0)) fail('target= must be a positive number of kcal', 2);
+    $day = []; $meal = [];
+    foreach ($rows as $r) {
+        $d = $date_of($r, $cd); if ($d === null) continue; $l = $r['line']; $item = cell($r, $ci); $m = cell($r, $cm) ?: 'unspecified'; $vals = []; $bad = false;
+        foreach (['kcal' => $ck, 'p' => $cp, 'c' => $cc, 'f' => $cf] as $k => $col) { $raw = cell($r, $col); if ($col === null || $raw === '') { $vals[$k] = null; continue; } $v = num($raw); if ($v === null || $v < 0) { $add('Error', $l, "\"$raw\" in the " . $h[$col] . ' column is not a number'); $bad = true; $vals[$k] = null; } else $vals[$k] = $v; }
+        if ($bad) continue;
+        if ($vals['kcal'] === null) { if ($vals['p'] !== null || $vals['c'] !== null || $vals['f'] !== null) { $est = 4 * ($vals['p'] ?? 0) + 4 * ($vals['c'] ?? 0) + 9 * ($vals['f'] ?? 0); $add('Note', $l, ($item ?: 'this item') . " has macros but no kcal: not counted in kcal (about " . nf($est, 0) . ' kcal if you use 4/4/9 per gram)'); } else $add('Warning', $l, ($item ?: 'this row') . ' has no numbers'); }
+        elseif ($vals['p'] !== null && $vals['c'] !== null && $vals['f'] !== null && $vals['kcal'] > 0) { $est = 4 * $vals['p'] + 4 * $vals['c'] + 9 * $vals['f']; if (abs($est - $vals['kcal']) / $vals['kcal'] > 0.25 && abs($est - $vals['kcal']) > 30) $add('Note', $l, ($item ?: 'this item') . ': ' . nf($vals['kcal'], 0) . ' kcal written, but protein, carbs and fat add up to about ' . nf($est, 0) . ' kcal (4/4/9): check the label (fibre and alcohol explain some gaps)'); }
+        foreach (['kcal', 'p', 'c', 'f'] as $k) if ($vals[$k] !== null) { $day[$d][$k] = ($day[$d][$k] ?? 0) + $vals[$k]; $meal[$d][$m][$k] = ($meal[$d][$m][$k] ?? 0) + $vals[$k]; }
+        $day[$d]['n'] = ($day[$d]['n'] ?? 0) + 1;
+    }
+    if (!$day) fail('no usable rows in the diary'); ksort($day);
+    $o = "# Meal diary totals: $name\n\nTotals add up the numbers written in the diary; nothing is looked up or estimated.\n\n| Date | Items | kcal | Protein g | Carbs g | Fat g |" . ($tg ? ' vs target |' : '') . "\n|---|---|---|---|---|---|" . ($tg ? '---|' : '') . "\n"; $tot = ['kcal' => 0, 'p' => 0, 'c' => 0, 'f' => 0];
+    foreach ($day as $d => $x) { foreach ($tot as $k => $_) $tot[$k] += $x[$k] ?? 0; $o .= "| $d | {$x['n']} | " . nf($x['kcal'] ?? 0, 0) . ' | ' . nf($x['p'] ?? 0) . ' | ' . nf($x['c'] ?? 0) . ' | ' . nf($x['f'] ?? 0) . ' |' . ($tg ? ' ' . (($x['kcal'] ?? 0) - $tg >= 0 ? '+' : '') . nf(($x['kcal'] ?? 0) - $tg, 0) . ' |' : '') . "\n"; }
+    $nd = count($day); $o .= "\n$nd days. Daily average: " . nf($tot['kcal'] / $nd, 0) . ' kcal, protein ' . nf($tot['p'] / $nd) . ' g, carbs ' . nf($tot['c'] / $nd) . ' g, fat ' . nf($tot['f'] / $nd) . " g.\n";
+    if ($tg) $o .= 'The target of ' . nf($tg, 0) . " kcal is the number you gave; this tool does not know what is right for you.\n";
+    $o .= "\n## By meal (all days)\n\n| Meal | kcal |\n|---|---|\n"; $mm = []; foreach ($meal as $d => $ms) foreach ($ms as $m => $x) $mm[$m] = ($mm[$m] ?? 0) + ($x['kcal'] ?? 0); arsort($mm); foreach ($mm as $m => $k) $o .= "| $m | " . nf($k, 0) . " |\n";
+    $finish($o);
+}
+
+// ---- appointments --------------------------------------------------------------------------------------------------------------------------------------------
+if ($sub === 'appointments') {
+    $today = $opt['today'] ?? date('Y-m-d'); $a0 = false; $today = parse_date($today, $a0); if ($today === null) fail('today= must be YYYY-MM-DD', 2); $within = (int)($opt['within'] ?? 30);
+    $ct = find_col($h, ['title', 'what', 'appointment', 'subject', 'titre', 'termin', 'titolo', 'cita', 'compromisso']); $ctm = find_col($h, ['time', 'heure', 'uhrzeit', 'ora', 'hora', 'horário']); $cw = find_col($h, ['who', 'provider', 'doctor', 'with', 'medecin', 'arzt', 'medico', 'médico', 'médico']); $cx = find_col($h, ['done', 'status', 'fait', 'erledigt', 'fatto', 'hecho', 'feito', 'completed']);
+    if ($ct === null) fail('the list needs a title (or what) column'); $items = []; $slots = [];
+    foreach ($rows as $r) {
+        $d = $date_of($r, $cd); if ($d === null) continue; $title = cell($r, $ct); if ($title === '') { $add('Warning', $r['line'], 'an appointment with no title'); continue; }
+        $done = (bool)preg_match('/^(y|yes|x|1|true|done|ok|\x{2713}|\x{2714}|oui|fait|ja|erledigt|si|s\x{ec}|fatto|sim|feito|hecho|completed)$/iu', cell($r, $cx)); $tm = cell($r, $ctm);
+        if ($tm !== '' && !preg_match('/^([01]?\d|2[0-3]):[0-5]\d$/', $tm)) { $add('Warning', $r['line'], "the time \"$tm\" is not HH:MM"); $tm = ''; }
+        $items[] = ['d' => $d, 't' => $tm, 'title' => $title, 'who' => cell($r, $cw), 'done' => $done, 'line' => $r['line']];
+        if ($tm !== '') { $k = "$d $tm"; if (isset($slots[$k])) $add('Warning', $r['line'], "clashes with line {$slots[$k]}: both on $d at $tm"); else $slots[$k] = $r['line']; }
+    }
+    if (!$items) fail('no usable rows'); usort($items, fn($a, $b) => strcmp($a['d'] . $a['t'], $b['d'] . $b['t']));
+    $up = []; $over = []; $later = []; $past = 0;
+    foreach ($items as $x) { $dl = dd($today, $x['d']); if ($x['done']) { $past++; continue; } if ($dl < 0) $over[] = [$dl, $x]; elseif ($dl <= $within) $up[] = [$dl, $x]; else $later[] = [$dl, $x]; }
+    $fmt = fn(array $x) => $x['d'] . ($x['t'] !== '' ? ' ' . $x['t'] : '') . ' ' . $x['title'] . ($x['who'] !== '' ? ' (' . $x['who'] . ')' : '');
+    $o = "# Appointments on $today\n\nSource: $name. $past marked done.\n\n## Overdue (past and not marked done): " . count($over) . "\n\n"; if (!$over) $o .= "None.\n"; foreach ($over as [$dl, $x]) { $o .= '- ' . $fmt($x) . ' (' . (-$dl) . " days ago)\n"; $add('Warning', $x['line'], 'overdue: ' . $x['title'] . ' on ' . $x['d'] . ' is not marked done'); }
+    $o .= "\n## Coming up in the next $within days: " . count($up) . "\n\n"; if (!$up) $o .= "None.\n"; foreach ($up as [$dl, $x]) $o .= '- ' . $fmt($x) . ($dl === 0 ? ' (TODAY)' : " (in $dl days)") . "\n";
+    $o .= "\n## Later: " . count($later) . "\n\n"; if (!$later) $o .= "None.\n"; foreach ($later as [$dl, $x]) $o .= '- ' . $fmt($x) . " (in $dl days)\n";
+    $finish($o);
+}
+
+// ---- trend --------------------------------------------------------------------------------------------------------------------------------------------------------
+$cols = []; foreach ($h as $i => $hn) { if ($i === $cd || $hn === '') continue; $ok = 0; $tot = 0; foreach ($rows as $r) { $c = cell($r, $i); if ($c === '') continue; $tot++; if (num($c) !== null) $ok++; } if ($tot > 0 && $ok >= max(2, 0.6 * $tot)) $cols[$i] = $hn; }
+if (!$cols) fail('no numeric column besides the date (weight, waist, pulse ...)');
+$series = []; foreach ($rows as $r) { $d = $date_of($r, $cd); if ($d === null) continue; foreach ($cols as $i => $hn) { $c = cell($r, $i); if ($c === '') continue; $v = num($c); if ($v === null) { $add('Warning', $r['line'], "\"$c\" in the $hn column is not a number: skipped"); continue; } $series[$i][] = [$d, $v, $r['line']]; } }
+$o = "# Measurement trends: $name\n\nOnly the numbers you wrote down are used. Dates are sorted; no value is guessed.\n";
+foreach ($cols as $i => $hn) {
+    $s = $series[$i] ?? []; if (count($s) < 2) { $o .= "\n## $hn\n\nFewer than two readings: no trend.\n"; continue; } usort($s, fn($a, $b) => strcmp($a[0], $b[0]));
+    $n = count($s); [$d0, $v0] = $s[0]; [$d1, $v1] = $s[$n - 1]; $days = dd($d0, $d1); $vals = array_column($s, 1); $chg = $v1 - $v0; $pct = $v0 != 0 ? $chg / $v0 * 100 : 0; $l3 = array_slice($vals, -3);
+    $o .= "\n## $hn\n\n- $n readings, $d0 to $d1 ($days days)\n- First " . nf($v0, 2) . ", last " . nf($v1, 2) . ': ' . ($chg >= 0 ? '+' : '') . nf($chg, 2) . ' (' . ($pct >= 0 ? '+' : '') . nf($pct, 1) . "%)\n- Lowest " . nf(min($vals), 2) . ', highest ' . nf(max($vals), 2) . "\n";
+    if ($days >= 14) $o .= '- About ' . ($chg >= 0 ? '+' : '') . nf($chg / $days * 30, 2) . " per 30 days\n";
+    $o .= '- Average of the last ' . count($l3) . ' readings: ' . nf(array_sum($l3) / count($l3), 2) . "\n";
+    if ($n >= 3) { $a = $vals[$n - 3]; $b = $vals[$n - 2]; $c = $vals[$n - 1]; $o .= '- Last three readings: ' . (($c > $b && $b > $a) ? 'rising' : (($c < $b && $b < $a) ? 'falling' : 'mixed')) . "\n"; }
+}
+$finish($o . "\nA change in a number can have many causes and says nothing by itself about health.\n");

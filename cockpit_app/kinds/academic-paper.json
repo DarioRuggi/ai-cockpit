@@ -1,0 +1,21 @@
+{
+  "id": "academic-paper",
+  "name": "Academic paper",
+  "icon": "school",
+  "description": "A paper or thesis in LaTeX: written, built, checked.",
+  "detect": ["*.tex", "*.bib"],
+  "note": "This is an academic paper in LaTeX (the main file has \\documentclass; citations come from .bib files). Never invent a reference: every \\cite key must be an entry in a .bib file, and an entry's author, title and year must come from the user or a source you were given, not from memory. Keep \\label and \\ref names stable, put one sentence per line in the source so changes diff well, and keep the preamble minimal (only the packages the paper uses). After every change, run the LaTeX check and fix what it lists; run the bibliography check before submitting. Text in Arabic, Hebrew, CJK or other non-Latin scripts needs lualatex with a Unicode font. The tools build in a scratch copy, so the folder stays clean.",
+  "verify": "latex check",
+  "group": "Writing & documents",
+  "details": "A paper or thesis in LaTeX. The LaTeX tool builds the PDF (engine chosen from the preamble, bibtex, enough passes) in a scratch copy of the project, so no auxiliary files litter the folder, and reads the log for you: errors with file and line, undefined references and citations, lines that run into the margin, and a missing TeX package named with the apt package to install. The bibliography check compares every citation key with the .bib files. It also counts the words, scaffolds a new paper, and converts to Word for co-authors. TeX runs with file access restricted to the project and shell escape off.",
+  "examples": [
+    "Fix the compile errors in a thesis chapter",
+    "Find every citation that has no bibliography entry",
+    "Start a new article with equations and a bibliography",
+    "Count the words per section before a submission limit"
+  ],
+  "tools": [
+    {"tool": "latex", "why": "build the PDF, read the log (errors, undefined references and citations), check the bibliography, count words, scaffold a paper, convert to Word"},
+    {"tool": "poppler", "why": "pull the text out of the built PDF (pdf-to-text) to proofread it"}
+  ]
+}

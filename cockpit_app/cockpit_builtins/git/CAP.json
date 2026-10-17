@@ -1,0 +1,24 @@
+{
+    "id": "git",
+    "name": "Git",
+    "description": "Run git commands (status, diff, log, branch, etc.) on the project repository.",
+    "tags": ["vcs", "git", "essential"],
+    "scopes": ["per-project"],
+    "implementations": {
+        "claude": {
+            "type": "mcp",
+            "command": "uvx",
+            "args": ["mcp-server-git", "--repository", "${PROJECT_DIR}"]
+        },
+        "gemini": {
+            "type": "mcp",
+            "command": "uvx",
+            "args": ["mcp-server-git", "--repository", "${PROJECT_DIR}"]
+        },
+        "ollama": {
+            "type": "tool-shim",
+            "shim": "git_shim.sh",
+            "system_prompt_addition": "GIT:<subcommand> — run a safe git command (status, diff, log, branch, show). Destructive commands (commit, push, reset) require confirmation via approval drawer."
+        }
+    }
+}

@@ -1,0 +1,92 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// score_tool — the Music scores tools' work, for the tool presets (tools_builtins/score.json). A command-line program, never reachable over the web.
+//
+//   php score_tool check        FILE.ly OUTPUT     compile and report: errors and warnings as file(line,col) Error/Warning, bar-check failures first, then [exit code N]
+//   php score_tool build        FILE.ly OUTPUT.pdf the engraved score as a PDF
+//   php score_tool midi         FILE.ly OUTPUT.mid the MIDI file (needs a \midi block in the score)
+//   php score_tool png          FILE.ly OUTPUT.png the first page as a picture
+//   php score_tool wav          FILE.ly OUTPUT.wav|mp3  the score played (MIDI through TiMidity++ and a sound font)
+//   php score_tool update       FILE.ly OUTPUT.ly  the file brought up to the installed LilyPond's syntax (convert-ly)
+//   php score_tool musicxml     FILE.xml OUTPUT.ly MusicXML (MuseScore, Finale, Sibelius export) to LilyPond
+//   php score_tool abc          FILE.abc OUTPUT.ly ABC notation to LilyPond
+//   php score_tool new          FOLDER OUTPUT NAME a new lead sheet NAME.ly in FOLDER; key=d time=3/4 tempo=100 in the arguments; never overwrites
+//
+// SAFETY: a LilyPond file can contain Scheme code, and LilyPond's own safe mode was removed because it could not be made safe: an untrusted .ly can run commands. So every run
+// happens inside bubblewrap (bwrap): no network, no home folder, a read-only system, and only a scratch copy of the project writable. Without bwrap this tool REFUSES to run.
+// The original is never changed.
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "score_tool: $m\n"); exit($rc); }
+[$sub, $in, $out] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? '']; $args = array_slice($argv, 4);
+if (!in_array($sub, ['check', 'build', 'midi', 'png', 'wav', 'update', 'musicxml', 'abc', 'new'], true) || $in === '' || $out === '') fail('usage: score_tool check|build|midi|png|wav|update|musicxml|abc|new INPUT OUTPUT [ARGS]', 2);
+$opt = []; foreach ($args as $a) foreach (preg_split('/[\s;]+(?=\w+=)/', trim($a)) as $p) if (strpos($p, '=') !== false) { [$k, $v] = explode('=', $p, 2); $opt[strtolower(trim($k))] = trim($v); }
+function sh(string $cmd, ?int &$rc = null): string { $o = []; exec($cmd . ' 2>&1', $o, $rc); return implode("\n", $o); }
+function have(string $b): bool { return trim((string)shell_exec('command -v ' . escapeshellarg($b) . ' 2>/dev/null')) !== ''; }
+
+if ($sub === 'new') {
+    if (!is_dir($in)) fail('new: give the folder to create the tune in');
+    $tok = preg_split('/\s+/', trim($args[0] ?? ''))[0] ?? ''; $nm = strpos($tok, '=') === false ? preg_replace('/[^A-Za-z0-9_-]/', '', $tok) : preg_replace('/[^A-Za-z0-9_-]/', '', $opt['name'] ?? ''); if ($nm === '') fail('new: type the tune\'s name in the extra arguments (letters, digits, - and _), then optionally key=d time=3/4 tempo=100');
+    $key = strtolower($opt['key'] ?? 'c'); $time = $opt['time'] ?? '4/4'; $tempo = (int)($opt['tempo'] ?? 100);
+    if (!preg_match('/^[a-g](is|es|s)?$/', $key)) fail("not a key: $key (c, d, bes, fis ...)"); if (!preg_match('/^\d{1,2}\/\d{1,2}$/', $time)) fail("not a time signature: $time (4/4, 3/4, 6/8 ...)"); $tempo = max(30, min(300, $tempo ?: 100));
+    $f = rtrim($in, '/') . '/' . $nm . '.ly'; if (file_exists($f)) fail("new: $f already exists, nothing was changed");
+    $note = $key[0]; [$tn, $td] = array_map('intval', explode('/', $time)); if ($tn < 1 || !in_array($td, [1, 2, 4, 8, 16], true)) fail("not a usable time signature: $time"); $bar = trim(str_repeat("$note'$td ", $tn)); $barChord = "$note'1*$tn/$td"; $ly = "\\version \"2.24.0\"\n\n\\header {\n  title = \"$nm\"\n  composer = \"\"\n  tagline = ##f\n}\n\nglobal = { \\key $key \\major \\time $time \\tempo 4 = $tempo }\n\nmelody = \\relative c' {\n  \\global\n  $bar |\n  $bar \\bar \"|.\"\n}\n\nharmonyChords = \\chordmode {\n  \\global\n  $barChord | $barChord\n}\n\n\\score {\n  <<\n    \\new ChordNames \\harmonyChords\n    \\new Staff { \\melody }\n  >>\n  \\layout { }\n  \\midi { }\n}\n";
+    file_put_contents($f, $ly); file_put_contents($out, "Created $f ($key major, $time, tempo $tempo). Next: Check, then Build PDF.\n[exit code 0]\n"); echo "Created $f\n"; exit(0);
+}
+if (!is_file($in)) fail("no such file: $in");
+$ext = strtolower(pathinfo($in, PATHINFO_EXTENSION)); $oext = strtolower(pathinfo($out, PATHINFO_EXTENSION));
+$want = ['musicxml' => ['xml', 'musicxml', 'mxl'], 'abc' => ['abc']][$sub] ?? ['ly', 'ily'];
+if (!in_array($ext, $want, true)) fail("the input must be a ." . implode(' / .', $want) . " file, not .$ext");
+if (!have('bwrap')) fail("bwrap (bubblewrap) is not installed, and LilyPond is not run without it: a score can contain code that runs commands (LilyPond's own safe mode was removed). Install it: sudo apt install bubblewrap");
+if (!have('lilypond')) fail('LilyPond is not installed (sudo apt install lilypond)');
+
+// ---- a scratch copy of the project, and the sandbox ------------------------------------------------------------------------------------------------
+$tmp = sys_get_temp_dir() . '/score_' . getmypid() . '_' . mt_rand(1000, 9999); mkdir("$tmp/work", 0700, true);
+register_shutdown_function(function () use ($tmp) { if (strpos(basename($tmp), 'score_') !== 0 || !is_dir($tmp)) return; $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($tmp, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::CHILD_FIRST); foreach ($it as $f) { $f->isDir() && !$f->isLink() ? @rmdir($f->getPathname()) : @unlink($f->getPathname()); } @rmdir($tmp); });
+$root = dirname($in); $size = 0; $main = basename($in);
+foreach (new DirectoryIterator($root) as $f) { if ($f->isDot() || $f->isLink() || $f->isDir()) continue; if (!preg_match('/\.(ly|ily|xml|musicxml|abc|png|svg|pdf|txt|scm|midi?)$/i', $f->getFilename())) continue; $size += $f->getSize(); if ($size > 50 * 1048576) fail('the folder holds more than 50 MB of score files'); copy($f->getPathname(), "$tmp/work/" . $f->getFilename()); }
+foreach (['include', 'includes', 'lib', 'fonts'] as $d) if (is_dir("$root/$d") && !is_link("$root/$d")) { @mkdir("$tmp/work/$d"); foreach (new DirectoryIterator("$root/$d") as $f) if (!$f->isDot() && $f->isFile() && !$f->isLink() && $f->getSize() < 5 * 1048576) copy($f->getPathname(), "$tmp/work/$d/" . $f->getFilename()); }
+$bw = 'bwrap --unshare-all --die-with-parent --new-session --ro-bind /usr /usr --symlink usr/lib /lib --symlink usr/lib64 /lib64 --symlink usr/bin /bin --symlink usr/sbin /sbin'
+    . ' --ro-bind-try /etc/fonts /etc/fonts --ro-bind-try /etc/ld.so.cache /etc/ld.so.cache --ro-bind-try /etc/alternatives /etc/alternatives --ro-bind-try /etc/timidity /etc/timidity --ro-bind-try /etc/locale.alias /etc/locale.alias --ro-bind-try /var/cache/fontconfig /var/cache/fontconfig'
+    . ' --proc /proc --dev /dev --tmpfs /tmp --bind ' . escapeshellarg("$tmp/work") . ' /work --chdir /work --setenv HOME /tmp --setenv PATH /usr/bin:/bin --setenv LANG C.UTF-8 ';
+$box = function (string $cmd, int $secs = 180) use ($bw): array { $rc = 0; $o = sh('timeout ' . $secs . ' ' . $bw . $cmd, $rc); return [$rc, $o]; };
+
+if ($sub === 'update') { [$rc, $o] = $box('convert-ly -e ' . escapeshellarg($main) . ' 2>&1 && cat ' . escapeshellarg($main), 120); if (!is_file("$tmp/work/$main")) fail('convert-ly failed'); $c = (string)file_get_contents("$tmp/work/$main"); file_put_contents($out, $c); echo 'Wrote ' . $out . "\n" . trim(substr($o, 0, 300)) . "\n"; exit(0); }
+if ($sub === 'musicxml' || $sub === 'abc') {
+    $tool = $sub === 'musicxml' ? 'musicxml2ly' : 'abc2ly'; if (!have($tool)) fail("$tool is not installed (it comes with LilyPond)");
+    [$rc, $o] = $box($tool . ' -o /work/result.ly ' . escapeshellarg($main) . ' 2>&1', 180); if (!is_file("$tmp/work/result.ly")) fail("$tool failed: " . trim(substr($o, -300)));
+    copy("$tmp/work/result.ly", $out); echo "Wrote $out (" . round(filesize($out) / 1024, 1) . " KB). Open it with Check: converted files often need a bar or a repeat fixed.\n"; exit(0);
+}
+
+// ---- lilypond --------------------------------------------------------------------------------------------------------------------------------
+$flags = '-dno-point-and-click --loglevel=WARNING' . ($sub === 'png' ? ' --png -dresolution=130 -dno-print-pages' : '');
+if ($sub === 'png') $flags = '-dno-point-and-click --loglevel=WARNING --png -dresolution=130';
+[$rc, $log] = $box('lilypond ' . $flags . ' -o /work/result ' . escapeshellarg($main), 240);
+$errs = []; $warns = []; $bar = 0;
+foreach (explode("\n", $log) as $l) {
+    if (preg_match('~^(?:/work/)?(.+?):(\d+):(\d+): (error|warning|programming error|fatal error): (.*)$~', $l, $m)) {
+        $msg = rtrim($m[5], '.'); if (preg_match('/barcheck failed/', $msg)) { $bar++; } if ($m[4] === 'warning') $warns[] = [$m[1], (int)$m[2], (int)$m[3], $msg]; else $errs[] = [$m[1], (int)$m[2], (int)$m[3], $msg];
+    } elseif (preg_match('/^(?:fatal error|error): (.*)$/', $l, $m) && !preg_match('/failed files/', $l)) $errs[] = [$main, 1, 0, $m[1]];
+}
+$pdf = "$tmp/work/result.pdf"; $midi = "$tmp/work/result.midi"; if (!is_file($midi)) $midi = "$tmp/work/result.mid";
+if ($sub === 'check') {
+    $rep = "# LilyPond check: $main\n\n- LilyPond " . trim(explode("\n", sh('lilypond --version'))[0] ?? '') . "; PDF " . (is_file($pdf) ? 'made (' . round(filesize($pdf) / 1024) . ' KB)' : 'NOT made') . '; MIDI ' . (is_file($midi) ? 'made' : 'none (no \\midi block)') . "\n- Run in a sandbox: no network, no home folder, read-only system.\n- Bar-check failures (a bar with the wrong number of beats): $bar\n\n";
+    $lines = []; foreach ($errs as [$f, $l, $c, $m]) $lines[] = "$f($l" . ($c ? ",$c" : '') . ") Error: $m"; $seen = [];
+    foreach ($warns as [$f, $l, $c, $m]) { $k = "$f|$l|$c|$m"; if (isset($seen[$k])) continue; $seen[$k] = 1; $lines[] = "$f($l,$c) Warning: $m"; }
+    $ne = count($errs); $nw = count($seen);
+    if (preg_grep('/barcheck/', $lines)) $rep .= "A bar-check warning means the bar before the position has too many or too few beats: look at the bar just before it.\n\n";
+    $rep .= ($lines ? "## Problems ($ne errors, $nw warnings)\n\n" . implode("\n", $lines) . "\n" : "No problems found.\n") . "\n[exit code " . (($ne > 0 || !is_file($pdf)) ? 1 : 0) . "]\n";
+    file_put_contents($out, $rep); echo "Wrote $out ($ne errors, $nw warnings)\n"; exit(0);
+}
+if ($sub === 'build') { if (!is_file($pdf)) fail("no PDF was made:\n" . implode("\n", array_map(fn($e) => "  $e[0]($e[1],$e[2]) Error: $e[3]", array_slice($errs, 0, 5)))); copy($pdf, $out); echo "Wrote $out" . ($warns ? ' (' . count($warns) . ' warnings: run Check)' : '') . ($errs ? "\nBUILT WITH " . count($errs) . ' ERROR(S): the PDF is only as much of the score as LilyPond could read. Run Check to see them.' : '') . "\n"; exit(0); }
+if ($sub === 'midi') { if (!is_file($midi)) fail('no MIDI file was made: the score needs a \\midi { } block inside \\score { }'); copy($midi, $out); echo "Wrote $out\n"; exit(0); }
+if ($sub === 'png') { $png = glob("$tmp/work/result*.png") ?: []; sort($png); if (!$png) fail('no picture was made: ' . trim(substr($log, -200))); copy($png[0], $out); echo "Wrote $out (page 1 of " . count($png) . ")\n"; exit(0); }
+if ($sub === 'wav') {
+    if (!is_file($midi)) fail('no MIDI file was made: the score needs a \\midi { } block inside \\score { }'); if (!have('timidity')) fail('timidity is not installed (sudo apt install timidity): it plays the MIDI to sound');
+    if (!in_array($oext, ['wav', 'mp3'], true)) fail('the output must be .wav or .mp3');
+    [$rc, $o] = $box('timidity -Ow -o /work/result.wav ' . escapeshellarg('/work/' . basename($midi)), 240);
+    if (!is_file("$tmp/work/result.wav") || filesize("$tmp/work/result.wav") < 5000) fail('TiMidity made no sound (is a sound font installed? sudo apt install fluid-soundfont-gm timidity): ' . trim(substr($o, -200)));
+    if ($oext === 'wav') copy("$tmp/work/result.wav", $out); else { sh('ffmpeg -nostdin -y -loglevel error -i ' . escapeshellarg("$tmp/work/result.wav") . ' -c:a libmp3lame -b:a 128k ' . escapeshellarg($out), $r2); if (!is_file($out)) fail('ffmpeg could not make the mp3'); }
+    echo "Wrote $out\n"; exit(0);
+}

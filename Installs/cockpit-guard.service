@@ -1,0 +1,14 @@
+[Unit]
+Description=AI Cockpit guard — watches shipped files, logs and restores changes
+After=network.target apache2.service httpd.service
+
+[Service]
+Type=simple
+Environment=GUARD_RESTORE=1
+Environment=GUARD_USER=__USER__
+ExecStart=/bin/bash __HOME__/scripts/cockpit_guard.sh
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

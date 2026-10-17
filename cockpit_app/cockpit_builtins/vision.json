@@ -1,0 +1,33 @@
+{
+    "id": "vision",
+    "name": "Vision (local OCR/describe)",
+    "binary": "/usr/local/bin/ollama",
+    "version_args": "--version",
+    "description": "Image description and OCR via local Ollama vision models (gemma3:4b primary, gemma3:12b fallback). Used by the attachment router when an image is dropped and Ollama is the active agent. Claude/Gemini handle images natively; this is the offline alternative.",
+    "presets": [
+        {
+            "id": "describe",
+            "name": "Describe image",
+            "args_template": "run gemma3:4b 'Describe this image in detail, including any visible text. Image: {INPUT}'",
+            "output_ext": ".txt",
+            "output_kind": "text",
+            "description": "Verbose natural-language description of an image's content"
+        },
+        {
+            "id": "ocr",
+            "name": "OCR (extract text)",
+            "args_template": "run gemma3:4b 'Extract ALL text visible in this image, preserving layout where possible. Output only the extracted text. Image: {INPUT}'",
+            "output_ext": ".txt",
+            "output_kind": "text",
+            "description": "Extract printed/handwritten text from an image"
+        },
+        {
+            "id": "describe-12b",
+            "name": "Describe image (12B fallback)",
+            "args_template": "run gemma3:12b 'Describe this image in detail, including any visible text. Image: {INPUT}'",
+            "output_ext": ".txt",
+            "output_kind": "text",
+            "description": "Higher-quality description using gemma3:12b (uses more VRAM)"
+        }
+    ]
+}

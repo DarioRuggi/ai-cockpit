@@ -1,0 +1,87 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// shell_tool — the Shell / DevOps tools' work, for the tool presets (tools_builtins/shell.json). A command-line program, never reachable over the web.
+//
+//   php shell_tool check  FILE|FOLDER OUTPUT [shell=bash|sh|dash|ksh]   ShellCheck on every shell script: file(line,col) Error / Warning / Note with the SC code, then [exit code N]
+//   php shell_tool syntax FILE|FOLDER OUTPUT                           bash -n / sh -n / dash -n (the shell named by the #! line): does it parse at all
+//   php shell_tool scan   FILE|FOLDER OUTPUT                           risky habits found by reading: curl | sh, rm -rf of a variable, chmod 777, eval, curl -k, a fixed /tmp name,
+//                                                                      no "set -e", a hard-coded secret, sudo inside a script
+//   php shell_tool unit   FILE.service|.timer|... OUTPUT               systemd-analyze verify on a unit file: problems as file(line)
+//
+// NOTHING IS RUN: scripts are only read (ShellCheck and "-n" never execute a command). The scripts are never changed. A folder is searched for *.sh, *.bash and files whose first line is a
+// shell #! line; .git, node_modules and vendor are skipped.
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "shell_tool: $m\n"); exit($rc); }
+[$sub, $in, $out] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? '']; $args = array_slice($argv, 4);
+if (!in_array($sub, ['check', 'syntax', 'scan', 'unit'], true) || $in === '' || $out === '') fail('usage: shell_tool check|syntax|scan|unit FILE|FOLDER OUTPUT [shell=bash]', 2);
+if (!file_exists($in)) fail("no such file or folder: $in");
+$opt = []; foreach ($args as $a) foreach (preg_split('/[\s;]+(?=\w+=)/', trim($a)) as $p) if (strpos($p, '=') !== false) { [$k, $v] = explode('=', $p, 2); $opt[strtolower(trim($k))] = trim($v); }
+function sh(string $cmd, ?int &$rc = null, int $secs = 60): string { $o = []; exec('timeout ' . $secs . ' ' . $cmd . ' 2>&1', $o, $rc); return implode("\n", $o); }
+function have(string $b): bool { return trim((string)shell_exec('command -v ' . escapeshellarg($b) . ' 2>/dev/null')) !== ''; }
+$home = ''; if (preg_match('/"home"\s*:\s*"([^"]*)"/', (string)@file_get_contents(__DIR__ . '/paths.json'), $pm)) $home = $pm[1]; if ($home === '') $home = getenv('HOME') ?: '';
+$SC = null; foreach ([trim((string)shell_exec('command -v shellcheck 2>/dev/null')), "$home/.local/bin/shellcheck", "$home/.local/share/cockpit/tools/shellcheck/shellcheck"] as $c) if ($c !== '' && is_executable($c)) { $SC = $c; break; }
+
+if ($sub === 'unit') {
+    if (!is_file($in)) fail('give a unit file'); if (!have('systemd-analyze')) fail('systemd-analyze is not available'); if (!preg_match('/\.(service|timer|socket|mount|path|target|slice)$/', $in)) fail('not a unit file name (.service .timer .socket .mount .path .target .slice)');
+    $abs = realpath($in); $o = sh('systemd-analyze verify --man=no ' . escapeshellarg($abs), $rc, 60); $msgs = []; $err = 0; $warn = 0; $b = basename($in);
+    foreach (explode("\n", $o) as $l) { $l = trim($l); if ($l === '' || preg_match('/^Failed to|^Unit .* not found/', $l) && strpos($l, $b) === false) { if ($l !== '') { $msgs[] = "$b(1) Warning: $l"; $warn++; } continue; }
+        if (preg_match('~^(?:/\S+/)?(\S+?):(\d+):\s*(.*)$~', $l, $m)) { $sev = preg_match('/Unknown|Failed|not found|Invalid|invalid|missing/i', $m[3]) ? 'Error' : 'Warning'; $msgs[] = basename($m[1]) . "({$m[2]}) $sev: {$m[3]}"; $sev === 'Error' ? $err++ : $warn++; }
+        elseif (preg_match('~^(?:/\S+/)?(\S+?):\s*(.*)$~', $l, $m) && preg_match('/\.(service|timer|socket|mount|path|target|slice)$/', $m[1])) { $msgs[] = basename($m[1]) . "(1) Warning: {$m[2]}"; $warn++; } else { $msgs[] = "$b(1) Note: $l"; } }
+    $rep = "# Unit check: $b\n\n- systemd-analyze verify (read only: the unit is not loaded into systemd)\n\n" . ($msgs ? "## Problems ($err errors, $warn warnings)\n\n" . implode("\n", $msgs) . "\n" : "No problems found.\n") . "\n[exit code " . ($err > 0 ? 1 : 0) . "]\n";
+    file_put_contents($out, $rep); echo "Wrote $out ($err errors, $warn warnings)\n"; exit(0);
+}
+
+// ---- the scripts -------------------------------------------------------------------------------------------------------------------------------
+function is_shell(string $f): ?string {
+    $h = (string)@file_get_contents($f, false, null, 0, 200); if (preg_match('/^#!\s*(?:\/usr\/bin\/env\s+(?:-S\s+)?|\/\S*\/)(bash|sh|dash|ksh|ash|zsh)\b/', $h, $m)) return $m[1]; if (preg_match('/\.(bash)$/', $f)) return 'bash'; if (preg_match('/\.sh$/', $f)) return 'sh'; return null;
+}
+$files = [];
+if (is_file($in)) { $s = is_shell($in); $files[$in] = $s ?? 'bash'; }
+else { foreach (new RecursiveIteratorIterator(new RecursiveCallbackFilterIterator(new RecursiveDirectoryIterator($in, FilesystemIterator::SKIP_DOTS), function ($f) { return !in_array($f->getFilename(), ['.git', 'node_modules', 'vendor', '.svn'], true) && !$f->isLink(); })) as $f) { if (!$f->isFile() || $f->getSize() > 2000000) continue; $s = is_shell($f->getPathname()); if ($s !== null) $files[$f->getPathname()] = $s; } ksort($files); }
+if (!$files) fail('no shell scripts found (*.sh, *.bash, or a #! line naming a shell)'); if (count($files) > 300) $files = array_slice($files, 0, 300, true);
+$root = is_dir($in) ? rtrim($in, '/') : dirname($in); $rel = fn($f) => is_dir($in) ? substr($f, strlen($root) + 1) : basename($f);
+$msgs = []; $cnt = ['Error' => 0, 'Warning' => 0, 'Note' => 0];
+$add = function (string $f, int $l, int $c, string $k, string $m) use (&$msgs, &$cnt, $rel) { $msgs[] = $rel($f) . "($l" . ($c ? ",$c" : '') . ") $k: $m"; $cnt[$k]++; };
+
+if ($sub === 'check') {
+    if ($SC === null) fail('ShellCheck is not installed. Fetch the official static binary (github.com/koalaman/shellcheck, releases) into ~/.local/share/cockpit/tools/shellcheck/ and link it from ~/.local/bin, or: sudo apt install shellcheck');
+    $force = $opt['shell'] ?? ''; if ($force !== '' && !in_array($force, ['bash', 'sh', 'dash', 'ksh'], true)) fail("not a shell ShellCheck knows: $force (bash, sh, dash, ksh)");
+    foreach ($files as $f => $sh) { if (!preg_match('/\.(sh|bash|ksh|zsh|dash)$/i', $f) && strncmp((string)@file_get_contents($f, false, null, 0, 2), '#!', 2) !== 0) $add($f, 1, 0, 'Note', 'this does not look like a shell script (no #! line, not .sh/.bash): it was checked as shell anyway'); if ($sh === 'zsh') { $add($f, 1, 0, 'Note', 'a zsh script: ShellCheck does not check zsh'); continue; } $s = $force !== '' ? $force : ($sh === 'ash' ? 'dash' : $sh);
+        $j = json_decode(sh(escapeshellarg($SC) . ' -f json1 -s ' . escapeshellarg($s) . ' ' . escapeshellarg($f), $rc), true);
+        if (!is_array($j) || !isset($j['comments'])) { $add($f, 1, 0, 'Warning', 'ShellCheck gave no readable answer for this file'); continue; }
+        foreach ($j['comments'] as $c) $add($f, (int)$c['line'], (int)$c['column'], $c['level'] === 'error' ? 'Error' : ($c['level'] === 'warning' ? 'Warning' : 'Note'), "[SC{$c['code']}] " . $c['message'] . "  (https://www.shellcheck.net/wiki/SC{$c['code']})"); }
+    $rep = "# ShellCheck: " . basename(rtrim($in, '/')) . "\n\n- Scripts checked: " . count($files) . "; ShellCheck " . trim(preg_replace('/.*version:\s*/s', '', explode("\n", sh(escapeshellarg($SC) . ' --version'))[1] ?? '')) . "\n- Nothing was run: ShellCheck only reads the scripts.\n\n";
+    $rep .= ($msgs ? "## Findings ({$cnt['Error']} errors, {$cnt['Warning']} warnings, {$cnt['Note']} notes)\n\n" . implode("\n", array_slice($msgs, 0, 400)) . "\n" : "No findings.\n") . "\n[exit code " . ($cnt['Error'] > 0 ? 1 : 0) . "]\n";
+    file_put_contents($out, $rep); echo "Wrote $out ({$cnt['Error']} errors, {$cnt['Warning']} warnings)\n"; exit(0);
+}
+if ($sub === 'syntax') {
+    foreach ($files as $f => $sh) { $b = in_array($sh, ['bash', 'sh', 'dash', 'ksh'], true) && have($sh) ? $sh : ($sh === 'ash' && have('dash') ? 'dash' : null); if ($b === null) { $add($f, 1, 0, 'Note', "no $sh here to parse it with"); continue; }
+        $o = sh(escapeshellarg(trim((string)shell_exec('command -v ' . escapeshellarg($b)))) . ' -n ' . escapeshellarg($f), $rc, 20);
+        if ($rc !== 0) { foreach (array_slice(explode("\n", $o), 0, 3) as $l) { if (preg_match('/line (\d+):\s*(.*)$/', $l, $m)) $add($f, (int)$m[1], 0, 'Error', "($b -n) " . trim($m[2])); elseif (trim($l) !== '') $add($f, 1, 0, 'Error', "($b -n) " . trim($l)); } } }
+    $rep = "# Shell syntax: " . basename(rtrim($in, '/')) . "\n\n- Scripts parsed: " . count($files) . " (with the shell named on the #! line; the script is NOT run)\n\n" . ($msgs ? "## Problems ({$cnt['Error']} errors)\n\n" . implode("\n", $msgs) . "\n" : "Every script parses.\n") . "\n[exit code " . ($cnt['Error'] > 0 ? 1 : 0) . "]\n";
+    file_put_contents($out, $rep); echo "Wrote $out ({$cnt['Error']} errors)\n"; exit(0);
+}
+// scan
+$RULES = [
+ ['Error',   'downloads and runs code in one step (curl|sh)',     '/\b(?:curl|wget)\b[^|;\n]*\|\s*(?:sudo\s+)?(?:ba|da|z)?sh\b/'],
+ ['Error',   'rm -rf of a path built from a variable (an empty variable deletes the wrong thing)', '/\brm\s+-[a-zA-Z]*[rR][a-zA-Z]*f?[a-zA-Z]*\s+(?:--\s+)?["\']?(?:\/\$|\$\{?[A-Za-z_]\w*\}?(?:\/|["\'\s]|$))(?!.*:\?)/'],
+ ['Error',   'rm -rf of / or the home folder',                     '/\brm\s+-[a-zA-Z]*r[a-zA-Z]*\s+(?:--\s+)?(?:\/|~|\$HOME)\s*(?:\*|["\']?\s*$|;|&)/'],
+ ['Warning', 'chmod 777 (everyone may write)',                     '/\bchmod\s+(?:-R\s+)?0?777\b/'],
+ ['Warning', 'eval of a variable or command output',               '/(?<![\w-])eval\s+["\']?\$/'],
+ ['Warning', 'TLS certificate checking switched off',              '/\bcurl\b[^;\n]*\s(?:-k|--insecure)\b|--no-check-certificate/'],
+ ['Warning', 'a fixed name in /tmp (another user can plant a file or a link there): use mktemp', '/(?:>|>>|\bcp\b[^;\n]*|\bmv\b[^;\n]*|\btouch\b)\s+["\']?\/tmp\/[A-Za-z0-9_.\-]+["\']?\s*(?:$|;|\|)/'],
+ ['Warning', 'a hard-coded password, key or token',                '/(?:pass(?:word|wd)?|secret|api[_-]?key|token)\s*=\s*[\'"][A-Za-z0-9+\/_\-]{10,}[\'"]/i'],
+ ['Note',    'sudo inside a script (the script then needs, or tries to gain, root)', '/^\s*sudo\s/'],
+ ['Note',    'backticks instead of $( )',                          '/`[^`\n]+`/'],
+ ['Note',    '"which" is not portable: use command -v',            '/\bwhich\s+[A-Za-z]/'],
+];
+foreach ($files as $f => $sh) {
+    $lines = explode("\n", (string)file_get_contents($f)); $hasSet = false; $nonTrivial = 0;
+    foreach ($lines as $i => $l) { $t = ltrim($l); if ($t === '' || $t[0] === '#') continue; $nonTrivial++; if (preg_match('/^\s*set\s+-[a-z]*e|set\s+-o\s+errexit|set\s+-euo|set\s+-eu/', $l)) $hasSet = true;
+        foreach ($RULES as [$sev, $what, $re]) { if (@preg_match($re, $l)) { $add($f, $i + 1, 0, $sev, $what . '   [ ' . trim(mb_substr($l, 0, 110)) . ' ]'); } } }
+    if (!$hasSet && $nonTrivial > 12 && in_array($sh, ['bash', 'sh', 'dash', 'ksh'], true)) $add($f, 1, 0, 'Note', 'no "set -e" (and "set -u", "set -o pipefail"): a failing command does not stop the script');
+}
+$rep = "# Shell habits scan: " . basename(rtrim($in, '/')) . "\n\n- Scripts read: " . count($files) . " (only read, never run). By patterns: some are false alarms, and ShellCheck (Check) finds the quoting and portability faults this does not.\n\n" . ($msgs ? "## Findings ({$cnt['Error']} errors, {$cnt['Warning']} warnings, {$cnt['Note']} notes)\n\n" . implode("\n", array_slice($msgs, 0, 400)) . "\n" : "No findings.\n") . "\n[exit code " . ($cnt['Error'] > 0 ? 1 : 0) . "]\n";
+file_put_contents($out, $rep); echo "Wrote $out ({$cnt['Error']} errors, {$cnt['Warning']} warnings, {$cnt['Note']} notes)\n";

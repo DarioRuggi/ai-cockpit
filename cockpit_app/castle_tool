@@ -1,0 +1,78 @@
+#!/bin/bash
+# =============================================================================
+# castle_tool — the Castle Game Engine tools' work, for the tool presets (tools_builtins/castle.json): create a game project, compile it,
+# clean it, package it, check it.
+#
+#   castle_tool new      IN OUT NAME   a new project NAME (letters, digits, - and _) inside the folder IN, from the engine's empty template
+#   castle_tool compile  IN OUT        castle-engine compile in the project: the compiler's messages, then [exit code N]
+#   castle_tool check    IN OUT        compile into a throw-away copy of the output folders: the project is left exactly as it was
+#                                      (no binary, no castle-engine-output)
+#   castle_tool clean    IN OUT        castle-engine clean: the leftovers of compiling and packaging
+#   castle_tool package  IN OUT        castle-engine package: a Linux .tar.gz/.zip beside the project (can take minutes)
+#   castle_tool version  IN OUT        the engine, the Free Pascal compiler, and the project's manifest
+#
+# IN is a project folder (the one with CastleEngineManifest.xml) or any folder or file inside it ("new" takes the PARENT folder).
+# The messages are Free Pascal's:  file(line,col) Error: ...  so the build summary box and Fix with agent read them.
+# The engine: $CASTLE_ENGINE_PATH, else <home>/.local/share/cockpit/tools/castle/castle_game_engine (<home> from this install's
+# paths.json: the web server's own HOME is not the owner's). Needs fpc.
+# =============================================================================
+set -u
+SUB="${1:-}"; IN="${2:-}"; OUT="${3:-}"; ARG="${4:-}"
+fail() { printf 'castle_tool: %s\n' "$*" > "${OUT:-/dev/stderr}"; printf 'castle_tool: %s\n' "$*" >&2; exit 1; }
+[ -n "$SUB" ] && [ -n "$IN" ] && [ -n "$OUT" ] || { echo "usage: castle_tool new|compile|check|clean|package|version INPUT OUTPUT [NAME]" >&2; exit 2; }
+[ -e "$IN" ] || fail "no such file or folder: $IN"
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+CE_ROOT="${CASTLE_ENGINE_PATH:-}"
+if [ ! -x "$CE_ROOT/bin/castle-engine" ]; then
+    h="$(grep -o '"home": *"[^"]*"' "$HERE/paths.json" 2>/dev/null | head -1 | sed 's/.*: *"\(.*\)"/\1/')"; [ -n "$h" ] || h="${HOME:-}"
+    CE_ROOT="$h/.local/share/cockpit/tools/castle/castle_game_engine"
+fi
+[ -x "$CE_ROOT/bin/castle-engine" ] || fail "the Castle Game Engine is not installed. Fetch castle-engine-7.0-alpha.3-linux-x86_64.zip from https://github.com/castle-engine/castle-engine/releases and unpack it into ~/.local/share/cockpit/tools/castle/ (so that castle_game_engine/bin/castle-engine exists), or set CASTLE_ENGINE_PATH."
+command -v fpc >/dev/null 2>&1 || fail "the Free Pascal compiler (fpc) is not installed: sudo apt install fpc"
+export CASTLE_ENGINE_PATH="$CE_ROOT"
+CE="$CE_ROOT/bin/castle-engine"
+
+if [ "$SUB" = new ]; then
+    [ -d "$IN" ] || fail "new: give the folder to create the project in"
+    NAME="$(printf '%s' "$ARG" | tr -cd 'A-Za-z0-9_-')"
+    [ -n "$NAME" ] || fail "new: type the project's name in the extra arguments (letters, digits, - and _)"
+    [ -e "$IN/$NAME" ] && fail "new: $IN/$NAME already exists, nothing was changed"
+    ( cd "$IN" && "$CE" create "$NAME" ) > "$OUT" 2>&1; rc=$?
+    printf '\nThe project is in %s/%s . Next: Check or Compile on that folder.\n[exit code %s]\n' "$IN" "$NAME" "$rc" >> "$OUT"
+    exit 0
+fi
+
+# the project root: the nearest folder at or above IN that holds CastleEngineManifest.xml
+d="$IN"; [ -d "$d" ] || d="$(dirname "$d")"
+ROOT=""; while [ "$d" != "/" ] && [ -n "$d" ]; do [ -f "$d/CastleEngineManifest.xml" ] && { ROOT="$d"; break; }; d="$(dirname "$d")"; done
+[ -n "$ROOT" ] || fail "no CastleEngineManifest.xml at or above $IN: give the project's folder"
+ROOT="$(cd "$ROOT" && pwd)"
+
+# the messages only: drop the long per-unit "Compiling ..." lines and the compiler banner, keep errors, warnings, hints and the totals
+tidy() { grep -vE '^(Compiling |Free Pascal Compiler version |Copyright \(c\)|Target OS: |User defined: |FPC executing|Assembling |Linking |Writing Resource String Table |Fatal: Compilation aborted)' ; }
+
+case "$SUB" in
+    compile)
+        ( cd "$ROOT" && timeout 1500 "$CE" compile ) 2>&1 | tidy > "$OUT"; rc=${PIPESTATUS[0]}
+        printf '[exit code %s]\n' "$rc" >> "$OUT"; exit 0 ;;
+    check)
+        T="$(mktemp -d)" || fail "no temporary folder"
+        ( cd "$ROOT" && timeout 1500 "$CE" compile --output="$T" ) 2>&1 | tidy > "$OUT"; rc=${PIPESTATUS[0]}
+        rm -rf "${T:?}"
+        printf '[exit code %s]\n' "$rc" >> "$OUT"; exit 0 ;;
+    clean)
+        ( cd "$ROOT" && timeout 300 "$CE" clean ) > "$OUT" 2>&1; rc=$?
+        printf '[exit code %s]\n' "$rc" >> "$OUT"; exit 0 ;;
+    package)
+        ( cd "$ROOT" && timeout 3000 "$CE" package ) 2>&1 | tidy > "$OUT"; rc=${PIPESTATUS[0]}
+        printf '[exit code %s]\n' "$rc" >> "$OUT"; exit 0 ;;
+    version)
+        {
+            echo "Engine:    $("$CE" --version 2>&1 | head -1)  ($CE_ROOT)"
+            echo "Compiler:  Free Pascal $(fpc -iV 2>/dev/null)"
+            echo "Project:   $ROOT"
+            echo; echo "Manifest:"; sed 's/^/    /' "$ROOT/CastleEngineManifest.xml" | head -40
+        } > "$OUT"; exit 0 ;;
+esac
+fail "unknown subcommand: $SUB (new | compile | check | clean | package | version)"

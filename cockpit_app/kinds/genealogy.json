@@ -1,0 +1,24 @@
+{
+  "id": "genealogy",
+  "name": "Genealogy and family history",
+  "icon": "family_history",
+  "description": "A family tree in a CSV or GEDCOM file: dates checked, duplicates found, trees and anniversaries listed.",
+  "detect": ["*.ged", "*.gedcom"],
+  "note": "This is a genealogy project: a family tree kept as a people CSV or a simple GEDCOM text file. Never invent a relative, a date, a place or a source, and never merge two people or add a link without the evidence; where a fact is missing say it is missing. Every fact should cite its source (a register, certificate, census, interview) and the agent says which fact has none. Keep dates as found: a partial or approximate date (1850, ABT 1850, BEF 1900) stays partial. Names are spelled as the sources spell them, with variants noted, not corrected. Living people's details are private: do not publish or share them. Keep the original file untouched and write corrected copies under new names. Run the Family history Check after every change and fix what it lists; a flagged date is a reason to look at the source again, not proof of an error. This is a checking aid for the user's own research, not proof of descent or legal advice (inheritance, citizenship).",
+  "verify": "family check",
+  "group": "Home & life",
+  "details": "Researching a family from a plain file. The Family history tool reads a people CSV (id, name, sex, born, died, father, mother, spouse, married, source, found by name in English, French, German, Italian, Portuguese and Spanish) or a simple GEDCOM file. It checks the tree (death before birth, a child born before a parent or after a mother's death, a parent too young or too old, a marriage before a birth or after a death, unknown parent ids, loops, facts with no source) with the line of each problem; finds people who may be the same person; prints the descendants or ancestors of anyone as an indented tree; and lists ages at death and birthdays, death days and wedding days in calendar order. Partial and approximate dates are never made precise. Nobody is invented: a missing parent stays missing.",
+  "examples": [
+    "Check my family tree for impossible dates",
+    "Find people I entered twice",
+    "Print all the descendants of my great-grandmother",
+    "Which birthdays and wedding days fall this month?"
+  ],
+  "tools": [
+    {"tool": "family", "why": "check dates and links, find duplicates, trees of descendants or ancestors, ages and anniversaries"},
+    {"tool": "data", "why": "ask the same CSV free-form questions in SQL"}
+  ],
+  "starter": [
+    {"path": "people.csv", "content": "id,name,sex,born,died,father,mother,spouse,married,source\n"}
+  ]
+}

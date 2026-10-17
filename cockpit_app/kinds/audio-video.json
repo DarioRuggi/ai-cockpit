@@ -1,0 +1,35 @@
+{
+  "id": "audio-video",
+  "name": "Audio and Video",
+  "icon": "movie",
+  "description": "Transcribing, converting, subtitling and editing sound and video.",
+  "detect": [],
+  "note": "This is an audio and video project. Keep the original files untouched and write results beside them, state the format, codec and length of what you produce, and say what a conversion loses.",
+  "verify": "play the result",
+  "group": "Media",
+  "details": "Sound and video work with ffmpeg, whisper (speech to text), yt-dlp and the music tools. The agent keeps your original files untouched and writes results beside them, and states the format, codec and length of what it produces so you can check it.",
+  "examples": [
+    "Convert a folder of recordings to MP3 and even out the loudness",
+    "Transcribe an interview with Whisper and cut the best minute",
+    "Pull the audio of a lecture to listen to on the move",
+    "Make subtitles for a video and burn them in"
+  ],
+  "tools": [
+    {
+      "tool": "ffmpeg",
+      "why": "convert, trim, extract the sound, make frames, burn subtitles"
+    },
+    {
+      "tool": "whisper",
+      "why": "transcribe speech to text or subtitles"
+    },
+    {
+      "tool": "ytdlp",
+      "why": "fetch audio or video you have the right to download"
+    },
+    {
+      "tool": "subs",
+      "why": "check, convert and re-time subtitle files"
+    }
+  ]
+}

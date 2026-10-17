@@ -1,0 +1,292 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// recipe_tool — the Cooking tools' work, for the tool presets (tools_builtins/recipe.json). A command-line program, never reachable over the web.
+//
+//   php recipe_tool scale    RECIPE OUTPUT servings=N [from=M]   rewrite the recipe for N servings (quantities incl. fractions and ranges; the servings line follows)
+//   php recipe_tool convert  RECIPE OUTPUT [to=metric|grams|us|cups]  convert units (cups, spoons, oz, lb, ml, g ...) with ingredient densities; oven temperatures C <-> F
+//   php recipe_tool shopping RECIPE_OR_FOLDER OUTPUT [skip=a,b]  merge the ingredients of one or several recipes into one shopping list grouped by aisle
+//   php recipe_tool check    RECIPE OUTPUT                       missing servings / quantities / units / steps, temperatures without a unit, and allergen keywords found
+//
+// A recipe is markdown or plain text: a title, a "Serves 4" (or Servings / Makes / Portions / Porciones / Portionen ...) line, an ingredient list ("- 1 1/2 cups flour", "- 200 g sugar",
+// "- 2 eggs", "- ½ tsp salt", "- 2-3 cloves garlic") and numbered or paragraph steps. Headings are recognised in English, French, German, Italian, Portuguese and Spanish.
+// Densities (grams per cup of flour, sugar, butter ...) are COMMON AVERAGES: a conversion between volume and weight is an estimate, and the output says so.
+// Allergen words are found by keyword only: they are a reminder to read the labels, never a guarantee that a dish is free of anything.
+// The original is never changed.
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "recipe_tool: $m\n"); exit($rc); }
+[$sub, $in, $out] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? ''];
+if (!in_array($sub, ['scale', 'convert', 'shopping', 'check'], true) || $in === '' || $out === '') fail('usage: recipe_tool scale|convert|shopping|check RECIPE OUTPUT [servings=N from=M to=metric|grams|us|cups skip=a,b]', 2);
+$opt = []; foreach (array_slice($argv, 4) as $a) foreach (preg_split('/\s+(?=\w+=)/', trim($a)) as $p) if (strpos($p, '=') !== false) { [$k, $v] = explode('=', $p, 2); $opt[strtolower(trim($k))] = trim($v); }
+
+// ---- reading -------------------------------------------------------------------------------------------------------------------------------------
+function read_text(string $f): string {
+    if (!is_file($f)) fail("no such file: $f");
+    $t = (string)file_get_contents($f); if (strncmp($t, "\xEF\xBB\xBF", 3) === 0) $t = substr($t, 3);
+    if (!mb_check_encoding($t, 'UTF-8')) fail("$f is not valid UTF-8: convert it first");
+    if (trim($t) === '') fail("$f is empty");
+    return str_replace(["\r\n", "\r"], "\n", $t);
+}
+const FR = ['½' => 0.5, '⅓' => 1 / 3, '⅔' => 2 / 3, '¼' => 0.25, '¾' => 0.75, '⅕' => 0.2, '⅛' => 0.125, '⅜' => 0.375, '⅝' => 0.625, '⅞' => 0.875];
+/** One number at the start of $s: "1 1/2", "3/4", "2.5", "2,5", "½", "1½". Returns the value and shortens $s, or null. A zero denominator is returned as NAN. */
+function take_num(string &$s): ?float {
+    $u = '[½⅓⅔¼¾⅕⅛⅜⅝⅞]';
+    if (preg_match("/^(\\d+)\\s*($u)/u", $s, $m)) { $s = ltrim(substr($s, strlen($m[0]))); return (float)$m[1] + FR[$m[2]]; }
+    if (preg_match("/^($u)/u", $s, $m)) { $s = ltrim(substr($s, strlen($m[0]))); return FR[$m[1]]; }
+    if (preg_match('/^(\d+)\s+(\d+)\/(\d+)(?!\d)/', $s, $m)) { $s = ltrim(substr($s, strlen($m[0]))); return (int)$m[3] === 0 ? NAN : (float)$m[1] + $m[2] / $m[3]; }
+    if (preg_match('/^(\d+)\/(\d+)(?!\d)/', $s, $m)) { $s = ltrim(substr($s, strlen($m[0]))); return (int)$m[2] === 0 ? NAN : $m[1] / $m[2]; }
+    if (preg_match('/^(\d+(?:[.,]\d+)?)/', $s, $m)) { $s = ltrim(substr($s, strlen($m[0]))); return (float)str_replace(',', '.', $m[1]); }
+    return null;
+}
+/** A quantity, possibly a range ("2-3", "2 to 3"). Returns [lo, hi|null] or null. */
+function take_qty(string &$s): ?array {
+    $lo = take_num($s); if ($lo === null) return null; $hi = null;
+    if (preg_match('/^(?:-|–|—|to|bis|à|a)\s*(?=[\d½⅓⅔¼¾⅕⅛⅜⅝⅞])/iu', $s, $m)) { $t = ltrim(substr($s, strlen($m[0]))); $h = take_num($t); if ($h !== null) { $hi = $h; $s = $t; } }
+    return [$lo, $hi];
+}
+// unit => [kind, base amount (ml for volume, g for weight)]; names are matched whole, case-insensitively
+const UNITS = [
+    'tsp' => ['v', 4.92892], 'teaspoon' => ['v', 4.92892], 'teaspoons' => ['v', 4.92892], 'tbsp' => ['v', 14.7868], 'tablespoon' => ['v', 14.7868], 'tablespoons' => ['v', 14.7868], 'tbs' => ['v', 14.7868],
+    'cup' => ['v', 236.588], 'cups' => ['v', 236.588], 'pint' => ['v', 473.176], 'pints' => ['v', 473.176], 'quart' => ['v', 946.353], 'quarts' => ['v', 946.353], 'floz' => ['v', 29.5735],
+    'ml' => ['v', 1], 'millilitre' => ['v', 1], 'milliliter' => ['v', 1], 'cl' => ['v', 10], 'dl' => ['v', 100], 'l' => ['v', 1000], 'litre' => ['v', 1000], 'litres' => ['v', 1000], 'liter' => ['v', 1000], 'liters' => ['v', 1000],
+    'g' => ['w', 1], 'gr' => ['w', 1], 'gram' => ['w', 1], 'grams' => ['w', 1], 'gramme' => ['w', 1], 'grammes' => ['w', 1], 'kg' => ['w', 1000], 'kilo' => ['w', 1000], 'kilogram' => ['w', 1000], 'kilograms' => ['w', 1000], 'mg' => ['w', 0.001],
+    'oz' => ['w', 28.3495], 'ounce' => ['w', 28.3495], 'ounces' => ['w', 28.3495], 'lb' => ['w', 453.592], 'lbs' => ['w', 453.592], 'pound' => ['w', 453.592], 'pounds' => ['w', 453.592],
+    'clove' => ['c', 0], 'cloves' => ['c', 0], 'can' => ['c', 0], 'cans' => ['c', 0], 'tin' => ['c', 0], 'tins' => ['c', 0], 'slice' => ['c', 0], 'slices' => ['c', 0], 'piece' => ['c', 0], 'pieces' => ['c', 0],
+    'pinch' => ['c', 0], 'dash' => ['c', 0], 'bunch' => ['c', 0], 'stick' => ['c', 0], 'sticks' => ['c', 0], 'sprig' => ['c', 0], 'sprigs' => ['c', 0], 'packet' => ['c', 0], 'package' => ['c', 0], 'jar' => ['c', 0], 'head' => ['c', 0],
+];
+/** Ingredient line -> [qty lo, hi, unit key|null, name text] or null when the line starts with no number. $s has no bullet. */
+function parse_ing(string $s): ?array {
+    $s = trim($s); $q = take_qty($s); if ($q === null) return null;
+    $unit = null;
+    if (preg_match('/^(fl\.?\s*oz|fluid\s+ounces?)\b\.?\s*/i', $s, $m)) { $unit = 'floz'; $s = substr($s, strlen($m[0])); }
+    elseif (preg_match('/^([\p{L}]+)\b\.?\s*/u', $s, $m) && isset(UNITS[mb_strtolower($m[1])])) { $unit = mb_strtolower($m[1]); $s = substr($s, strlen($m[0])); }
+    $s = preg_replace('/^of\s+/i', '', ltrim($s));
+    return [$q[0], $q[1], $unit, trim($s)];
+}
+const ING_H = '/^\s*(?:#+\s*)?(?:\*\*)?(ingredients?|ingr[ée]dients?|zutaten|ingredienti|ingredientes|ingredientes)(?:\*\*)?\s*:?\s*$/iu';
+const STEP_H = '/^\s*(?:#+\s*)?(?:\*\*)?(method|steps?|instructions?|directions?|preparation|pr[ée]paration|zubereitung|preparazione|modo de preparo|preparaci[oó]n|procedure|[ée]tapes)(?:\*\*)?\s*:?\s*$/iu';
+const SERV = '/(serves|servings?|yields?|makes|portions?|porciones|personnes|portionen|porzioni|por[cç][oõ]es|raciones|pour)\s*:?\s*(\d+)|(\d+)\s*(servings|portions|persons|people|personnes|portionen|porzioni|porciones)/iu';
+/** Classify every line: 'head', 'ing', 'step', 'serv', 'text', 'blank'. Returns array of [type, bullet prefix, body]. */
+function classify(string $raw): array {
+    $lines = explode("\n", $raw); $res = []; $sec = ''; $hasIng = (bool)preg_grep(ING_H, $lines);
+    foreach ($lines as $l) {
+        if (trim($l) === '') { $res[] = ['blank', '', $l]; continue; }
+        if (preg_match(ING_H, $l)) { $sec = 'ing'; $res[] = ['head', '', $l]; continue; }
+        if (preg_match(STEP_H, $l)) { $sec = 'step'; $res[] = ['head', '', $l]; continue; }
+        if (preg_match('/^\s*#+\s/', $l) && $sec !== '') { $sec = 'other'; $res[] = ['head', '', $l]; continue; }
+        if (preg_match(SERV, $l) && strlen($l) < 80 && !preg_match('/^\s*\d+[.)]\s/', $l)) { $res[] = ['serv', '', $l]; continue; }
+        $bul = ''; $body = $l;
+        if (preg_match('/^(\s*[-*+•]\s+(?:\[[ xX]\]\s+)?)(.*)$/u', $l, $m)) { $bul = $m[1]; $body = $m[2]; }
+        $isStepMark = preg_match('/^\s*\d+[.)]\s+/', $l);
+        if ($sec === 'ing' && !$isStepMark) { $res[] = ['ing', $bul, $body]; continue; }
+        if ($sec === 'step' || $isStepMark) { $res[] = ['step', '', $l]; continue; }
+        if (!$hasIng && $bul !== '') { $res[] = ['ing', $bul, $body]; continue; }
+        // no "Ingredients" heading and no bullets (a plain list: "2 cups flour"): a line that starts with a quantity and reads as an ingredient is one
+        if (!$hasIng && $sec === '' && preg_match('/^\s*(\d|[¼½¾⅓⅔⅛])/u', $body) && parse_ing($body) !== null) { $res[] = ['ing', '', $body]; continue; }
+        $res[] = ['text', '', $l];
+    }
+    return $res;
+}
+function fmt_frac(float $v): string {
+    $w = (int)floor($v + 1e-9); $f = $v - $w; $best = null; $bd = 9;
+    foreach ([[0, ''], [1 / 8, '1/8'], [1 / 4, '1/4'], [1 / 3, '1/3'], [3 / 8, '3/8'], [1 / 2, '1/2'], [5 / 8, '5/8'], [2 / 3, '2/3'], [3 / 4, '3/4'], [7 / 8, '7/8'], [1, '+1']] as [$x, $t]) if (abs($f - $x) < $bd) { $bd = abs($f - $x); $best = $t; }
+    if ($bd > 0.03) return rtrim(rtrim(number_format($v, 2, '.', ''), '0'), '.');
+    if ($best === '+1') return (string)($w + 1);
+    return $best === '' ? (string)$w : ($w > 0 ? "$w $best" : $best);
+}
+function fmt_metric(float $v): string { if ($v >= 100) $v = round($v / 5) * 5; elseif ($v >= 10) $v = round($v); else $v = round($v, 1); return rtrim(rtrim(number_format($v, 1, '.', ''), '0'), '.'); }
+function fmt_q(float $v, ?string $unit): string { $k = $unit !== null ? UNITS[$unit][0] : 'c'; $b = $unit !== null ? UNITS[$unit][1] : 0; return ($unit !== null && in_array($unit, ['g', 'gr', 'gram', 'grams', 'gramme', 'grammes', 'kg', 'kilo', 'kilogram', 'kilograms', 'ml', 'cl', 'dl', 'l', 'litre', 'litres', 'liter', 'liters', 'mg', 'millilitre', 'milliliter'], true)) ? fmt_metric($v) : fmt_frac($v); }
+function fmt_range(array $q, ?string $unit, float $f = 1.0): string { $a = fmt_q($q[0] * $f, $unit); if ($q[1] === null) return $a; $b = fmt_q($q[1] * $f, $unit); return (strpos($a . $b, ' ') !== false || strpos($a . $b, '/') !== false) ? "$a to $b" : "$a-$b"; }
+function uname(string $u, float $v = 1.0): string { if ($u === 'floz') return 'fl oz'; return ($u === 'cup' && $v > 1.0) ? 'cups' : $u; }
+function norm_unit(string $u): string { $m = ['teaspoon' => 'tsp', 'teaspoons' => 'tsp', 'tablespoon' => 'tbsp', 'tablespoons' => 'tbsp', 'tbs' => 'tbsp']; return $m[$u] ?? $u; }
+
+const DENS = ['all-purpose flour' => 0.53, 'bread flour' => 0.55, 'flour' => 0.53, 'icing sugar' => 0.51, 'powdered sugar' => 0.51, 'confectioners sugar' => 0.51, 'brown sugar' => 0.93, 'sugar' => 0.85, 'butter' => 0.96, 'milk' => 1.03,
+    'water' => 1.0, 'cream' => 1.0, 'yogurt' => 1.03, 'yoghurt' => 1.03, 'olive oil' => 0.91, 'oil' => 0.92, 'honey' => 1.42, 'syrup' => 1.37, 'rice' => 0.85, 'oats' => 0.37, 'cocoa' => 0.42, 'salt' => 1.22, 'cornstarch' => 0.54,
+    'baking powder' => 0.9, 'breadcrumbs' => 0.45, 'parmesan' => 0.42, 'grated cheese' => 0.42, 'almonds' => 0.59, 'raisins' => 0.63, 'peanut butter' => 1.1, 'vinegar' => 1.0, 'wine' => 1.0, 'juice' => 1.04, 'lentils' => 0.85, 'couscous' => 0.72];
+function density(string $name): ?float { static $keys = null; if ($keys === null) { $keys = array_keys(DENS); usort($keys, fn($a, $b) => strlen($b) <=> strlen($a)); } $n = mb_strtolower($name); foreach ($keys as $k) if (strpos($n, $k) !== false) return DENS[$k]; return null; }
+function clean_name(string $s): string {
+    $s = mb_strtolower(trim($s)); $s = preg_replace('/\([^)]*\)/u', '', $s); $s = preg_replace('/[,;].*$/u', '', $s);
+    $s = preg_replace('/\b(large|medium|small|fresh|freshly|finely|roughly|chopped|diced|sliced|minced|grated|peeled|ripe|whole|optional|plus more|extra|to taste|for serving|about|heaped|level)\b/iu', ' ', $s);
+    return trim(preg_replace('/\s+/u', ' ', $s), " \t-.");
+}
+function singular(string $s): string { if (preg_match('/(ss|us|is)$/u', $s)) return $s; if (preg_match('/(.*[^aeiou])ies$/u', $s, $m)) return $m[1] . 'y'; if (preg_match('/(.*(?:o|ch|sh|x))es$/u', $s, $m)) return $m[1]; if (preg_match('/(.{3,})s$/u', $s, $m)) return $m[1]; return $s; }
+function temp_fix(string $l, string $to): string {
+    return preg_replace_callback('/(\d{2,3})\s*(°|º|degrees\s+)?\s*([CcFf])\b(?!\s*\()/u', function ($m) use ($to) {
+        $v = (int)$m[1]; $u = strtoupper($m[3]);
+        if ($m[2] === '' && $v < 100) return $m[0];   // "350 F" / "180 C" without a degree sign: only plausible oven values; a small number plus C may be anything
+        if ($u === 'F' && $to !== 'us') return $m[0] . ' (' . (int)(round(($v - 32) * 5 / 9 / 5) * 5) . '°C)';
+        if ($u === 'C' && $to === 'us') return $m[0] . ' (' . (int)(round(($v * 9 / 5 + 32) / 25) * 25) . '°F)';
+        return $m[0];
+    }, $l);
+}
+
+// ---- scale -------------------------------------------------------------------------------------------------------------------------------------------
+if ($sub === 'scale') {
+    $raw = read_text($in); $cl = classify($raw);
+    // the number may arrive under another name (a model writes targetServings=8, serves=8 or just 8): take the first that is there
+    foreach (['servings', 'serves', 'serving', 'portions', 'targetservings', 'target_servings', 'target', 'to', 'n'] as $alias) if (isset($opt[$alias]) && (float)$opt[$alias] > 0) { $opt['servings'] = $opt[$alias]; break; }
+    if (!isset($opt['servings']) && preg_match('/^\\s*(\\d+(?:[.,]\\d+)?)\\s*$/', (string)($argv[4] ?? ''), $bm)) $opt['servings'] = str_replace(',', '.', $bm[1]);
+    $target = (float)($opt['servings'] ?? 0); if ($target <= 0) fail('give the number of servings wanted: servings=6', 2);
+    $from = isset($opt['from']) ? (float)$opt['from'] : 0.0; $src = null; $servLine = null;
+    foreach ($cl as $i => [$t, $b, $body]) if ($t === 'serv') { preg_match(SERV, $body, $m); $src = (float)($m[2] !== '' ? $m[2] : $m[3]); $servLine = $i; break; }
+    if ($from > 0) $src = $from;
+    if ($src === null || $src <= 0) fail('the recipe has no servings line (Serves 4, Makes 12, Portions: 4 ...): give the original with from=N', 1);
+    $f = $target / $src; $o = []; $changed = 0; $skipped = [];
+    foreach ($cl as $i => [$t, $b, $body]) {
+        if ($t === 'serv' && $i === $servLine) { $o[] = preg_replace('/\d+/', (string)(int)$target, $body, 1); continue; }
+        if ($t !== 'ing') { $o[] = $body; continue; }
+        $p = parse_ing($body); if ($p === null) { $o[] = $b . $body; if (trim($body) !== '') $skipped[] = trim($body); continue; }
+        [$lo, $hi, $u, $name] = $p; if (is_nan($lo) || ($hi !== null && is_nan($hi))) { $o[] = $b . $body; $skipped[] = trim($body) . ' (unreadable quantity)'; continue; }
+        $u = $u !== null ? norm_unit($u) : null; $nl = $lo * $f; $nh = $hi !== null ? $hi * $f : null;
+        if ($u === 'tsp' && $nl >= 3) { $u = 'tbsp'; $nl /= 3; if ($nh !== null) $nh /= 3; }
+        if ($u === 'tbsp' && $nl >= 4 && strpos(fmt_frac($nl / 16), '.') === false) { $u = 'cup'; $nl /= 16; if ($nh !== null) $nh /= 16; }
+        if (in_array($u, ['cups'], true)) $u = 'cup';
+        $o[] = $b . fmt_range([$nl, $nh], $u) . ($u !== null ? ' ' . uname($u, $nh ?? $nl) : '') . ' ' . $name; $changed++;
+    }
+    $txt = implode("\n", $o); $txt = rtrim($txt) . "\n\n---\n\nScaled from " . fmt_frac($src) . ' to ' . fmt_frac($target) . ' servings (x' . fmt_frac($f) . ", $changed ingredient lines).\n"
+        . ($changed === 0 ? "WARNING: no ingredient lines were recognised, so no quantity was changed. Put the ingredients under an \"Ingredients\" heading or start each line with \"- \" (for example \"- 2 cups flour\").\n" : '')
+        . "Salt, spices, raising agents, the pan size and the cooking time do not grow in step with the quantity: taste and adjust.\n";
+    if ($skipped) $txt .= 'Left unchanged (no quantity to scale): ' . implode('; ', array_slice($skipped, 0, 12)) . "\n";
+    file_put_contents($out, $txt); echo "Wrote $out ($changed lines scaled by x" . fmt_frac($f) . ")\n"; exit(0);
+}
+
+// ---- convert -------------------------------------------------------------------------------------------------------------------------------------------
+if ($sub === 'convert') {
+    $to = strtolower($opt['to'] ?? 'metric'); if (!in_array($to, ['metric', 'grams', 'us', 'cups'], true)) fail('to= must be metric, grams, us or cups', 2);
+    $raw = read_text($in); $cl = classify($raw); $o = []; $n = 0; $est = 0;
+    foreach ($cl as [$t, $b, $body]) {
+        if ($t !== 'ing') { $o[] = temp_fix($body, $to); continue; }
+        $p = parse_ing($body); if ($p === null || $p[2] === null || UNITS[$p[2]][0] === 'c' || is_nan($p[0])) { $o[] = $b . $body; continue; }
+        [$lo, $hi, $u, $name] = $p; [$k, $base] = UNITS[$u]; $dn = density($name); $was = trim(fmt_range([$lo, $hi], $u) . ' ' . uname($u));
+        $amt = fn(float $x) => $x * $base; $a = $amt($lo); $a2 = $hi !== null ? $amt($hi) : null; $new = null;
+        $pair = function (float $x, ?float $y, string $unit) { return fmt_range([$x, $y], $unit) . ' ' . uname($unit, $y ?? $x); };
+        $vol_us = function (float $ml, ?float $ml2) use ($pair) { $f = fn($m) => $m; if ($ml >= 59) return $pair($ml / 236.588, $ml2 !== null ? $ml2 / 236.588 : null, 'cup'); if ($ml >= 15) return $pair($ml / 14.7868, $ml2 !== null ? $ml2 / 14.7868 : null, 'tbsp'); return $pair($ml / 4.92892, $ml2 !== null ? $ml2 / 4.92892 : null, 'tsp'); };
+        $wt_us = fn(float $g, ?float $g2) => $g >= 454 ? $pair($g / 453.592, $g2 !== null ? $g2 / 453.592 : null, 'lb') : $pair($g / 28.3495, $g2 !== null ? $g2 / 28.3495 : null, 'oz');
+        $vol_m = function (float $ml, ?float $ml2) use ($pair) { return $ml >= 1000 ? $pair($ml / 1000, $ml2 !== null ? $ml2 / 1000 : null, 'l') : $pair($ml, $ml2, 'ml'); };
+        $wt_m = function (float $g, ?float $g2) use ($pair) { return $g >= 1000 ? $pair($g / 1000, $g2 !== null ? $g2 / 1000 : null, 'kg') : $pair($g, $g2, 'g'); };
+        if ($to === 'metric') {
+            if ($k === 'w') { if (in_array($u, ['g', 'gr', 'gram', 'grams', 'gramme', 'grammes', 'kg', 'kilo', 'kilogram', 'kilograms', 'mg'], true)) { $o[] = $b . $body; continue; } $new = $wt_m($a, $a2); }
+            else { if (in_array($u, ['ml', 'cl', 'dl', 'l', 'litre', 'litres', 'liter', 'liters', 'millilitre', 'milliliter'], true)) { $o[] = $b . $body; continue; } $new = $vol_m($a, $a2); if ($dn) { $new .= ' (about ' . $wt_m($a * $dn, $a2 !== null ? $a2 * $dn : null) . ')'; $est++; } }
+        } elseif ($to === 'grams') {
+            if ($k === 'w') $new = $wt_m($a, $a2); elseif ($dn) { $new = $wt_m($a * $dn, $a2 !== null ? $a2 * $dn : null); $est++; } else $new = $vol_m($a, $a2);
+        } elseif ($to === 'us') {
+            $new = $k === 'w' ? $wt_us($a, $a2) : $vol_us($a, $a2);
+        } else { // cups
+            if ($k === 'v') $new = $vol_us($a, $a2); elseif ($dn) { $new = $vol_us($a / $dn, $a2 !== null ? $a2 / $dn : null); $est++; } else $new = $wt_us($a, $a2);
+        }
+        if ($new === $was) { $o[] = $b . $body; continue; }
+        $o[] = $b . $new . ' ' . $name . " (was $was)"; $n++;
+    }
+    $txt = implode("\n", $o); $txt = rtrim($txt) . "\n\n---\n\nConverted to $to: $n ingredient lines" . ($est ? ", $est between volume and weight" : '') . ".\n"
+        . "A US cup is 236.6 ml, a tablespoon 14.8 ml, a teaspoon 4.9 ml. Weights from volumes use common average densities (about 125 g of flour or 200 g of sugar to the cup): they are ESTIMATES and vary with how the ingredient is packed. Metric amounts are rounded.\n"
+        . "Lines with a count (2 eggs, 3 cloves) are not changed. Oven temperatures show the other scale in brackets, rounded.\n";
+    file_put_contents($out, $txt); echo "Wrote $out ($n lines converted to $to)\n"; exit(0);
+}
+
+// ---- shopping --------------------------------------------------------------------------------------------------------------------------------------------
+if ($sub === 'shopping') {
+    $files = [];
+    if (is_dir($in)) { foreach (scandir($in) as $f) if (preg_match('/\.(md|markdown|txt)$/i', $f) && is_file("$in/$f")) $files[] = "$in/$f"; if (!$files) fail("no .md or .txt recipes in $in"); }
+    else $files[] = $in;
+    $skip = array_filter(array_map(fn($x) => singular(mb_strtolower(trim($x))), explode(',', $opt['skip'] ?? '')));
+    $items = []; $loose = []; $titles = [];
+    foreach ($files as $f) {
+        $cl = classify(read_text($f)); $bn = basename($f);
+        foreach ($cl as [$t, $b, $body]) {
+            if ($t !== 'ing') continue;
+            $p = parse_ing($body);
+            if ($p === null) { $nm = clean_name($body); if ($nm === '' || in_array(singular($nm), $skip, true)) continue; $loose[singular($nm)][$bn] = $nm; continue; }
+            [$lo, $hi, $u, $name] = $p; if (is_nan($lo)) continue; $nm = clean_name($name); if ($nm === '') continue; $key = singular($nm); if (in_array($key, $skip, true)) continue;
+            $q = $hi ?? $lo; $u = $u !== null ? norm_unit($u) : null;
+            $it = &$items[$key]; if (!isset($it)) $it = ['names' => [], 'ml' => 0.0, 'g' => 0.0, 'cnt' => [], 'src' => [], 'us' => false, 'first' => $nm];
+            $it['names'][$nm] = 1; $it['src'][$bn] = 1;
+            if ($u === null) $it['cnt'][''] = ($it['cnt'][''] ?? 0) + $q;
+            elseif (UNITS[$u][0] === 'c') $it['cnt'][$u] = ($it['cnt'][$u] ?? 0) + $q;
+            elseif (UNITS[$u][0] === 'v') { $it['ml'] += $q * UNITS[$u][1]; if (in_array($u, ['cup', 'cups', 'tsp', 'tbsp', 'floz', 'pint', 'pints', 'quart', 'quarts'], true)) $it['us'] = true; }
+            else { $it['g'] += $q * UNITS[$u][1]; if (in_array($u, ['oz', 'ounce', 'ounces', 'lb', 'lbs', 'pound', 'pounds'], true)) $it['us'] = true; }
+            unset($it);
+        }
+    }
+    foreach ($loose as $key => $x) if (isset($items[$key])) { foreach ($x as $bn => $nm) $items[$key]['src'][$bn] = 1; unset($loose[$key]); }
+    if (!$items && !$loose) fail('no ingredients found in the recipe(s)');
+    $AISLE = [
+        ['Pantry', '/\b(peanut butter|coconut milk|almond milk|butter beans?|soy milk|oat milk|tomato paste|tomato sauce|canned|flour|farine|mehl|farina|harina|farinha|sugar|sucre|zucker|zucchero|az[uú]car|a[cç][uú]car|oil|huile|[oö]l|olio|aceite|[oó]leo|vinegar|vinaigre|essig|aceto|vinagre|rice|riz|reis|riso|arroz|pasta|noodles?|lentils?|beans?|chickpeas?|oats?|honey|miel|honig|miele|mel|syrup|stock|broth|cocoa|chocolate|baking (powder|soda)|yeast|cornstarch|breadcrumbs|nuts?|almonds?|raisins?|couscous|lentilles|haricots|nudeln|spaghetti)\b/iu'],
+        ['Spices & herbs', '/\b(salt|sel|salz|sale|sal|pepper|poivre|pfeffer|pepe|pimienta|pimenta|cumin|cinnamon|cannelle|zimt|cannella|canela|paprika|turmeric|oregano|origan|thyme|thym|thymian|timo|tomillo|basil|basilic|basilikum|basilico|manjeric[aã]o|rosemary|romarin|rosmarin|rosmarino|romero|nutmeg|ginger|gingembre|ingwer|zenzero|jengibre|curry|vanilla|vanille|vanilha|vanilla|chili|chilli|bay leaves?|cloves? ground|saffron|safran|mustard seeds?)\b/iu'],
+        ['Dairy & eggs', '/\b(milk|lait|milch|latte|leche|leite|butter|beurre|burro|mantequilla|manteiga|cheese|fromage|k[aä]se|formaggio|queso|queijo|parmesan|mozzarella|cream|cr[eè]me|sahne|panna|nata|yogh?urt|egg|eggs|oeufs?|œufs?|eier|uova|uovo|huevos?|ovos?|ricotta|feta)\b/iu'],
+        ['Meat & fish', '/\b(chicken|poulet|h[aä]hnchen|pollo|frango|beef|boeuf|b[œo]uf|rind|manzo|carne|pork|porc|schwein|maiale|cerdo|porco|lamb|agneau|lamm|agnello|cordero|cordeiro|bacon|sausages?|saucisses?|wurst|salsiccia|ham|jambon|schinken|prosciutto|jam[oó]n|presunto|fish|poisson|fisch|pesce|pescado|peixe|salmon|saumon|lachs|salmone|salm[aã]o|tuna|thon|thunfisch|tonno|at[uú]n|atum|shrimps?|prawns?|crevettes?|garnelen|gamberi|gambas|mince|minced|turkey|dinde|pute|tacchino|pavo|peru)\b/iu'],
+        ['Fruit & vegetables', '/\b(onions?|oignons?|zwiebeln?|cipolla|cebolla|cebola|garlic|ail|knoblauch|aglio|ajo|alho|tomato(es)?|tomates?|pomodor[oi]|carrots?|carottes?|karotten|carote|zanahorias?|cenouras?|potato(es)?|pommes de terre|kartoffeln?|patate|patatas?|batatas?|lemons?|citrons?|zitronen?|limone|lim[oó]n|lim[aã]o|limes?|apples?|pommes?|[aä]pfel|mele|manzanas?|ma[cç][aã]s?|bananas?|spinach|[ée]pinards?|spinat|spinaci|espinacas?|espinafres?|lettuce|laitue|salat|lattuga|lechuga|alface|peppers?|poivrons?|paprika|peperoni|pimientos?|pimentos?|mushrooms?|champignons?|funghi|setas|cogumelos?|cucumbers?|concombres?|gurken?|cetriolo|pepino|zucchini|courgettes?|zucchine|calabac[ií]n|aubergines?|eggplants?|melanzane|berenjena|beringela|celery|c[ée]leri|sellerie|sedano|apio|aipo|cabbage|chou|kohl|cavolo|col|repolho|broccoli|brocoli|brokkoli|brócoli|br[oó]colos|parsley|persil|petersilie|prezzemolo|perejil|salsa|coriander|cilantro|coriandre|koriander|coentro|mint|menthe|minze|menta|hortel[aã]|avocados?|oranges?|berries|strawberr(y|ies)|herbs?|scallions?|spring onions?|leeks?|poireaux?|lauch|porri|puerros?|alho-franc[eê]s)\b/iu'],
+        ['Bakery', '/\b(bread|pain|brot|pane|pan|p[aã]o|baguette|tortillas?|buns?|rolls?|pita|croutons?|wraps?)\b/iu'],
+        ['Frozen', '/\b(frozen|surgel[eé]s?|tiefgek[uü]hlt|surgelat[io]|congelad[oa]s?|ice cream)\b/iu'],
+    ];
+    $aisleOf = function (string $name) use ($AISLE) { foreach ($AISLE as [$a, $re]) if (preg_match($re, $name)) return $a; return 'Other'; };
+    $groups = [];
+    foreach ($items as $key => $it) {
+        $names = array_keys($it['names']); usort($names, fn($a, $b) => strlen($a) <=> strlen($b)); $total = array_sum($it['cnt']) + ($it['ml'] > 0 || $it['g'] > 0 ? 1 : 0);
+        $name = ($total > 1 && count($names) > 1) ? end($names) : $names[0]; if (count($names) === 1 && $total > 1 && !preg_match('/s$/u', $name) && isset($it['cnt'][''])) $name = $name; $parts = []; $dn = density($key); $ml = $it['ml']; $g = $it['g']; $note = '';
+        if ($ml > 0 && $g > 0 && $dn) { $g += $ml * $dn; $ml = 0; $note = ' (volume converted with an average density: an estimate)'; }
+        if ($g > 0) { $parts[] = ($g >= 1000 ? fmt_metric($g / 1000) . ' kg' : fmt_metric($g) . ' g') . ($it['us'] && $g >= 28 ? ' (about ' . ($g >= 454 ? fmt_frac($g / 453.592) . ' lb' : fmt_frac($g / 28.3495) . ' oz') . ')' : ''); }
+        if ($ml > 0) { $v = ($ml >= 1000 ? fmt_metric($ml / 1000) . ' l' : fmt_metric($ml) . ' ml'); if ($it['us']) { $v .= ' (about ' . ($ml >= 59 ? fmt_frac($ml / 236.588) . ($ml / 236.588 > 1.02 ? ' cups' : ' cup') : ($ml >= 15 ? fmt_frac($ml / 14.7868) . ' tbsp' : fmt_frac($ml / 4.92892) . ' tsp')) . ')'; } $parts[] = $v; }
+        foreach ($it['cnt'] as $u => $c) $parts[] = fmt_frac($c) . ($u !== '' ? ' ' . $u : '');
+        $groups[$aisleOf($key)][] = ['name' => $name, 'txt' => implode(' + ', $parts) . ' ' . $name . $note, 'src' => array_keys($it['src'])];
+    }
+    foreach ($loose as $key => $x) $groups[$aisleOf($key)][] = ['name' => reset($x), 'txt' => reset($x) . ' (no quantity given)', 'src' => array_keys($x)];
+    $order = ['Fruit & vegetables', 'Meat & fish', 'Dairy & eggs', 'Bakery', 'Pantry', 'Spices & herbs', 'Frozen', 'Other']; $multi = count($files) > 1;
+    $o = "# Shopping list\n\nFrom " . count($files) . ' recipe' . (count($files) > 1 ? 's' : '') . ': ' . implode(', ', array_map('basename', $files)) . ".\n"; $cnt = 0;
+    foreach ($order as $a) { if (empty($groups[$a])) continue; usort($groups[$a], fn($x, $y) => strcmp($x['name'], $y['name'])); $o .= "\n## $a\n\n"; foreach ($groups[$a] as $g) { $o .= '- [ ] ' . $g['txt'] . ($multi ? ' (' . implode(', ', $g['src']) . ')' : '') . "\n"; $cnt++; } }
+    $o .= "\nQuantities with a range (2-3) use the upper end. Same-name items are added only when their units agree (volumes together, weights together, counts together); volume and weight are joined only when an average density is known. Check what you already have at home. Aisles are guessed from the item's name.\n";
+    file_put_contents($out, $o); echo "Wrote $out ($cnt items from " . count($files) . " recipes)\n"; exit(0);
+}
+
+// ---- check ---------------------------------------------------------------------------------------------------------------------------------------------------
+$raw = read_text($in); $cl = classify($raw); $name = basename($in); $msgs = []; $err = 0; $warn = 0;
+$add = function (string $k, int $l, string $m) use (&$msgs, &$err, &$warn, $name) { $msgs[] = "$name($l) $k: $m"; if ($k === 'Error') $err++; elseif ($k === 'Warning') $warn++; };
+$hasServ = false; $nIng = 0; $nStep = 0; $seen = []; $stepText = ''; $ingList = [];
+foreach ($cl as $i => [$t, $b, $body]) { $l = $i + 1; if ($t === 'serv') $hasServ = true; if ($t === 'step') { $nStep++; $stepText .= ' ' . mb_strtolower($body); } }
+if (!$hasServ) $add('Warning', 1, 'no servings line (Serves 4, Makes 12 ...): scaling needs one');
+$UNC = '/\b(flour|sugar|milk|butter|water|oil|cream|rice|salt|cheese|honey|farine|sucre|lait|beurre|eau|huile|mehl|zucker|milch|wasser|farina|zucchero|latte|burro|acqua|harina|az[uú]car|leche|agua|farinha|leite|manteiga)\b/iu';
+$TASTE = '/(to taste|as needed|a pinch|pinch of|optional|for serving|for garnish|au go[uû]t|nach geschmack|q\.?b\.?|al gusto|a gosto|selon|ad libitum|una pizca|eine prise|un pizzico|uma pitada)/iu';
+foreach ($cl as $i => [$t, $b, $body]) {
+    $l = $i + 1;
+    if ($t === 'ing') {
+        $nIng++; $p = parse_ing($body);
+        if ($p === null) { if (!preg_match($TASTE, $body)) $add('Warning', $l, 'no quantity: "' . trim($body) . '"'); $nm = clean_name($body); }
+        else {
+            [$lo, $hi, $u, $nm0] = $p; $nm = clean_name($nm0);
+            if (is_nan($lo) || ($hi !== null && is_nan($hi))) $add('Error', $l, 'the quantity cannot be read (zero denominator): "' . trim($body) . '"');
+            elseif ($u === null && preg_match($UNC, $nm0) && !preg_match('/^(eggs?|oeufs?)/iu', $nm0)) $add('Warning', $l, 'a quantity but no unit for "' . $nm . '"');
+            elseif ($nm === '') $add('Error', $l, 'a quantity with no ingredient name: "' . trim($body) . '"');
+        }
+        if ($nm !== '') { $k = singular($nm); if (isset($seen[$k])) $add('Warning', $l, "\"$nm\" is listed twice (also line {$seen[$k]})"); else $seen[$k] = $l; $ingList[] = [$l, $nm]; }
+    }
+    if (preg_match('/\b(?:bake|oven|preheat|heat|roast|grill|fry|ofen|four|forno|horno|forno)\w*\s+(?:at|to|[àa]|auf|a|bei)?\s*(\d{3})(?!\s*(?:°|º|degrees|[CcFf]\b)|\d|\s*(?:minutes|min|mins|g|ml))/iu', $body)) $add('Warning', $l, 'an oven temperature without C or F');
+}
+if ($nIng === 0) $add('Error', 1, 'no ingredient list found (a heading "Ingredients" or lines such as "- 200 g flour")');
+if ($nStep === 0) $add('Error', 1, 'no method steps found (a heading "Method" / "Steps", or numbered lines)');
+if ($nStep > 0) foreach ($ingList as [$l, $nm]) { $w = preg_split('/\s+/u', $nm); $key = ''; foreach (array_reverse($w) as $x) if (mb_strlen($x) >= 4) { $key = $x; break; } if ($key !== '' && mb_strpos($stepText, mb_substr($key, 0, max(4, mb_strlen($key) - 2))) === false) $add('Note', $l, "\"$nm\" is not mentioned in the method"); }
+// allergens, by keyword
+$AL = ['gluten' => ['wheat', 'flour', 'barley', 'rye', 'spelt', 'semolina', 'couscous', 'bread', 'pasta', 'noodle', 'farine', 'bl[eé]', 'mehl', 'weizen', 'farina', 'grano', 'harina', 'trigo', 'farinha', 'pain', 'brot', 'pane', 'p[aã]o'],
+    'milk' => ['milk', 'butter', 'cheese', 'cream', 'yogh?urt', 'whey', 'lait', 'beurre', 'fromage', 'cr[eè]me', 'milch', 'k[aä]se', 'sahne', 'latte', 'burro', 'formaggio', 'panna', 'leche', 'mantequilla', 'queso', 'nata', 'leite', 'manteiga', 'queijo'],
+    'eggs' => ['eggs?', 'oeufs?', 'œufs?', 'eier', 'ei', 'uova', 'uovo', 'huevos?', 'ovos?'], 'peanuts' => ['peanut', 'arachide', 'erdnuss', 'erdnüsse', 'cacahu[eè]te', 'amendoim'],
+    'tree nuts' => ['almond', 'walnut', 'hazelnut', 'cashew', 'pecan', 'pistachio', 'amande', 'noix', 'noisette', 'mandel', 'walnuss', 'haselnuss', 'nocciol', 'mandorl', 'almendra', 'nuez', 'avellana', 'am[eê]ndoa', 'castanha'],
+    'soy' => ['soy', 'soja', 'tofu', 'miso', 'edamame', 'tempeh'], 'fish' => ['fish', 'salmon', 'tuna', 'cod', 'anchov', 'sardine', 'poisson', 'saumon', 'thon', 'fisch', 'lachs', 'thunfisch', 'pesce', 'salmone', 'tonno', 'pescado', 'at[uú]n', 'peixe', 'atum'],
+    'shellfish' => ['shrimp', 'prawn', 'crab', 'lobster', 'mussel', 'oyster', 'clam', 'scallop', 'squid', 'crevette', 'moule', 'garnele', 'krabbe', 'gamberi', 'cozze', 'gambas', 'camar[oó]n', 'mejill[oó]n', 'camar[aã]o'],
+    'sesame' => ['sesame', 'tahini', 's[eé]same', 'sesam', 's[eé]samo', 'gergelim'], 'mustard' => ['mustard', 'moutarde', 'senf', 'senape', 'mostaza', 'mostarda'], 'celery' => ['celery', 'c[eé]leri', 'sellerie', 'sedano', 'apio', 'aipo']];
+$EXC = '/\b(peanut butter|butter beans?|coconut milk|almond milk|cocoa butter|nut butter|eggplants?|buckwheat|soy milk|oat milk)\b/iu';
+$listed = ''; $found = [];
+foreach ($cl as $i => [$t, $b, $body]) {
+    if (preg_match('/^\s*(?:\*\*)?(allergens?|allerg[eè]nes?|allergeni|al[eé]rgenos|alerg[eé]nicos|contains)(?:\*\*)?\s*:\s*(.*)$/iu', $body, $m)) { $listed .= ' ' . $m[2]; continue; }
+    if ($t !== 'ing') continue;
+    $txt = preg_replace($EXC, ' ', mb_strtolower($body));
+    foreach ($AL as $a => $words) foreach ($words as $w) if (preg_match('/(?<![\p{L}])' . $w . ($w === 'ei' ? '(?![\p{L}])' : '') . '/iu', $txt, $m)) { $found[$a][] = [$i + 1, trim($m[0])]; break; }
+}
+foreach ($found as $a => $hits) {
+    $isListed = false; if (trim($listed) !== '') { if (stripos($listed, $a) !== false) $isListed = true; else foreach ($AL[$a] as $w) if (preg_match('/(?<![\p{L}])' . $w . '/iu', $listed)) { $isListed = true; break; } }
+    [$l, $kw] = $hits[0];
+    if (trim($listed) !== '' && !$isListed) $add('Warning', $l, "contains \"$kw\" ($a), which the recipe's allergen line does not list");
+    else $add('Note', $l, "allergen keyword \"$kw\" ($a)" . (count($hits) > 1 ? ' and ' . (count($hits) - 1) . ' more line(s)' : ''));
+}
+if (trim($listed) === '' && $found) $add('Note', 1, 'the recipe has no allergen line; the keywords above were found by wording only');
+$rep = '# Recipe check: ' . $name . "\n\n" . ($msgs ? "## Findings ($err errors, $warn warnings)\n\n" . implode("\n", $msgs) . "\n" : "No problems found.\n")
+    . "\nAllergen words are found by keyword in six languages and miss many things (sauces, stock, 'may contain'): read the labels; this is never a guarantee that a dish is free of anything.\n\n[exit code " . ($err > 0 ? 1 : 0) . "]\n";
+file_put_contents($out, $rep); echo "Wrote $out ($err errors, $warn warnings)\n"; exit(0);

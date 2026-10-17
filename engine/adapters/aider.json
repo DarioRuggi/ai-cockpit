@@ -1,0 +1,13 @@
+{
+  "id": "aider", "display": "Aider", "kind": "agent", "transport": "process",
+  "command": "aider",
+  "args": ["--message", "{prompt}", "--no-auto-commits", "--yes", "--no-git", "--no-stream",
+           {"when": "model", "args": ["--model", "{model}"]}],
+  "parser": "plain",
+  "tiers": {"edit": [], "shell": []},
+  "detect": {"cmd": "aider", "version_args": ["--version"]},
+  "cwd_policy": "project",
+  "limits": {"timeout_s": 900},
+  "notes": "Aider edits files by default (--yes), so read_only is not declared. With a local Ollama model set OLLAMA_API_BASE via --env.",
+  "docs_checked": "2026-10-05"
+}

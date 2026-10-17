@@ -1,0 +1,92 @@
+{
+    "id": "legal",
+    "name": "Legal review",
+    "description": "Read contracts and legal documents the way a careful reviewer does. Compare finds what changed between two versions, paragraph by paragraph and word by word, and lists first the changes that matter (a figure or date, shall becoming may, a negation, and/or, any/all) with the clause number; Check finds placeholders left in, references to clauses that do not exist, gaps in the numbering, defined terms never used, capitalised terms never defined, and \"thirty (60)\" mismatches between the words and the figure; Clauses outlines the numbered clauses and who refers to them; Key terms pulls out money, percentages, durations, dates, and the paragraphs on governing law, term and termination, payment, liability, confidentiality and assignment; Text extracts the plain text. Documents may be .docx, .odt, .pdf (with text), .rtf, .txt or older formats; wording in English, Hebrew and Spanish (more can be added) is recognised. A READING AID, NOT LEGAL ADVICE: it finds what to look at, and a lawyer decides. The originals are never changed.",
+    "binary": "php",
+    "version_args": "--version",
+    "website": "https://pandoc.org",
+    "packages": {
+        "apt": "php-cli php-mbstring pandoc poppler-utils libreoffice-writer",
+        "dnf": "php-cli php-mbstring pandoc poppler-utils libreoffice-writer",
+        "pacman": "php pandoc poppler libreoffice-fresh",
+        "zypper": "php8 php8-mbstring pandoc poppler-tools libreoffice-writer",
+        "brew": "php pandoc poppler"
+    },
+    "presets": [
+        {
+            "id": "compare",
+            "label": "Compare two versions (old = input, new = extra argument)",
+            "description": "The input is the OLD version; give the NEW version in the extra arguments: with=/path/to/new_version.docx. The result is a markdown redline (~~removed~~, **added**) with the changed clauses in order, and the points to check first: changed figures and dates, shall/may/must, negations, and/or, any/all, removed and added paragraphs, each with the line in the new document.",
+            "input_kinds": [
+                "document",
+                "file",
+                "text"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_comparison",
+            "command": "php {WEBROOT}/legal_tool compare {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "check",
+            "label": "Check the document",
+            "description": "Placeholders left in ([•], ____, TBD, [insert...]), references to clauses that do not exist (error), gaps in the clause numbering, defined terms never used, capitalised terms that look defined but are not, a number in words that disagrees with the figure (\"sixty (30)\": error), mixed date formats. Problems come back as file(line), with Fix with agent.",
+            "input_kinds": [
+                "document",
+                "file",
+                "text"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_check",
+            "command": "php {WEBROOT}/legal_tool check {INPUT} {OUTPUT}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "clauses",
+            "label": "Clauses: outline and cross-references",
+            "description": "The numbered clauses with their first words, the line, and where each is referred to; and references to clauses that are not found.",
+            "input_kinds": [
+                "document",
+                "file",
+                "text"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_clauses",
+            "command": "php {WEBROOT}/legal_tool clauses {INPUT} {OUTPUT}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "terms",
+            "label": "Key terms (money, durations, dates, topics)",
+            "description": "Money amounts, percentages, durations, dates, and the paragraphs on governing law and disputes, term and termination, payment, liability and indemnity, confidentiality and IP, assignment and notices. \"Nothing found\" for a topic may mean a clause is missing.",
+            "input_kinds": [
+                "document",
+                "file",
+                "text"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_terms",
+            "command": "php {WEBROOT}/legal_tool terms {INPUT} {OUTPUT}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "text",
+            "label": "Plain text of the document",
+            "description": "The document as plain UTF-8 text (docx, odt, pdf, rtf and older formats), for reading or for an agent.",
+            "input_kinds": [
+                "document",
+                "file",
+                "text"
+            ],
+            "output_kind": "text",
+            "output_ext": "txt",
+            "output_stem": "{NAME}",
+            "command": "php {WEBROOT}/legal_tool text {INPUT} {OUTPUT}",
+            "timeout_seconds": 600
+        }
+    ]
+}

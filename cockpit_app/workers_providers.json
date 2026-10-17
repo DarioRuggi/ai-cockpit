@@ -1,0 +1,894 @@
+{
+  "_comment": "AI Cockpit Workers — curated provider catalog. Edit the user-facing copy at ~/scripts/cockpit_data/workers_providers.json (this file is just the seed shipped with cockpit).",
+  "as_of": "2026-10-12",
+  "providers": [
+    {
+      "id": "groq",
+      "name": "Groq",
+      "website": "https://console.groq.com",
+      "free": true,
+      "kinds": [
+        "text",
+        "translate",
+        "summary"
+      ],
+      "limits": {
+        "free_tier": "Generous — see console.groq.com for current rate limits",
+        "rate_window": "per minute and per day, varies by model"
+      },
+      "models": [
+        {
+          "id": "openai/gpt-oss-20b",
+          "label": "GPT-OSS 20B (fast)",
+          "kinds": [
+            "text",
+            "translate",
+            "summary"
+          ],
+          "free": true
+        },
+        {
+          "id": "openai/gpt-oss-120b",
+          "label": "GPT-OSS 120B",
+          "kinds": [
+            "text",
+            "translate",
+            "summary"
+          ],
+          "free": true
+        },
+        {
+          "id": "qwen/qwen3.6-27b",
+          "label": "Qwen 3.6 27B",
+          "kinds": [
+            "text",
+            "translate",
+            "summary"
+          ],
+          "free": true
+        }
+      ],
+      "key_url": "https://console.groq.com/keys",
+      "key_help": "Sign up at console.groq.com, then create an API key. Free tier is generous.",
+      "base_url": "https://api.groq.com/openai/v1"
+    },
+    {
+      "id": "huggingface",
+      "name": "HuggingFace Inference",
+      "website": "https://huggingface.co/inference-api",
+      "free": true,
+      "kinds": [
+        "text",
+        "translate",
+        "summary",
+        "image",
+        "image-gen",
+        "audio"
+      ],
+      "limits": {
+        "free_tier": "Hourly call quota, varies by model",
+        "rate_window": "rolling 1-hour window"
+      },
+      "models": [
+        {
+          "id": "black-forest-labs/FLUX.1-schnell",
+          "label": "FLUX.1 [schnell]",
+          "kinds": [
+            "image",
+            "image-gen"
+          ],
+          "free": true
+        },
+        {
+          "id": "Helsinki-NLP/opus-mt-en-es",
+          "label": "Opus MT — English to Spanish",
+          "kinds": [
+            "translate"
+          ],
+          "free": true
+        },
+        {
+          "id": "Helsinki-NLP/opus-mt-en-he",
+          "label": "Opus MT — English to Hebrew",
+          "kinds": [
+            "translate"
+          ],
+          "free": true
+        },
+        {
+          "id": "facebook/nllb-200-distilled-600M",
+          "label": "NLLB 200 — 200 languages",
+          "kinds": [
+            "translate"
+          ],
+          "free": true
+        },
+        {
+          "id": "openai/whisper-large-v3",
+          "label": "Whisper Large v3 — speech recognition",
+          "kinds": [
+            "audio"
+          ],
+          "free": true
+        },
+        {
+          "id": "facebook/musicgen-small",
+          "label": "MusicGen Small",
+          "kinds": [
+            "audio"
+          ],
+          "free": true
+        }
+      ],
+      "key_url": "https://huggingface.co/settings/tokens",
+      "key_help": "Sign up at huggingface.co, then create a 'Read' access token. Free tier has hourly limits.",
+      "base_url": "https://router.huggingface.co/hf-inference"
+    },
+    {
+      "id": "openrouter",
+      "name": "OpenRouter",
+      "website": "https://openrouter.ai",
+      "free": false,
+      "kinds": [
+        "text",
+        "translate",
+        "summary",
+        "code"
+      ],
+      "limits": {
+        "free_tier": "Some models have :free suffix that's free with rate limits",
+        "rate_window": "per-minute and per-day, varies"
+      },
+      "models": [
+        {
+          "id": "openai/gpt-4o-mini",
+          "label": "GPT-4o Mini",
+          "kinds": [
+            "text",
+            "code"
+          ],
+          "free": false
+        },
+        {
+          "id": "anthropic/claude-3.5-sonnet",
+          "label": "Claude 3.5 Sonnet",
+          "kinds": [
+            "text",
+            "code"
+          ],
+          "free": false
+        },
+        {
+          "id": "meta-llama/llama-3.3-70b-instruct:free",
+          "label": "Llama 3.3 70B (free tier)",
+          "kinds": [
+            "text",
+            "code"
+          ],
+          "free": true
+        },
+        {
+          "id": "google/gemini-flash-1.5",
+          "label": "Gemini Flash 1.5",
+          "kinds": [
+            "text",
+            "code",
+            "translate"
+          ],
+          "free": false
+        }
+      ],
+      "key_url": "https://openrouter.ai/keys",
+      "key_help": "Sign up at openrouter.ai, fund account ($5+) or use :free models. API key starts with sk-or-...",
+      "base_url": "https://openrouter.ai/api/v1"
+    },
+    {
+      "id": "together",
+      "name": "Together AI",
+      "website": "https://api.together.xyz",
+      "free": false,
+      "kinds": [
+        "text",
+        "image",
+        "image-gen",
+        "code"
+      ],
+      "limits": {
+        "free_tier": "$1 free credits at signup; cheap pay-as-you-go after",
+        "rate_window": "concurrent requests, see docs"
+      },
+      "models": [
+        {
+          "id": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+          "label": "Llama 3.3 70B Turbo",
+          "kinds": [
+            "text",
+            "code"
+          ],
+          "free": false
+        },
+        {
+          "id": "deepseek-ai/DeepSeek-V3",
+          "label": "DeepSeek V3",
+          "kinds": [
+            "text",
+            "code"
+          ],
+          "free": false
+        },
+        {
+          "id": "black-forest-labs/FLUX.1-schnell-Free",
+          "label": "FLUX.1 schnell (free)",
+          "kinds": [
+            "image",
+            "image-gen"
+          ],
+          "free": true
+        }
+      ],
+      "key_url": "https://api.together.xyz/settings/api-keys",
+      "key_help": "Sign up at together.ai for $1 free credits. API key starts with a long alphanumeric string.",
+      "base_url": "https://api.together.xyz/v1"
+    },
+    {
+      "id": "deepinfra",
+      "name": "DeepInfra",
+      "website": "https://deepinfra.com",
+      "free": false,
+      "kinds": [
+        "text",
+        "code"
+      ],
+      "limits": {
+        "free_tier": "Pay-per-use, very cheap (~10x cheaper than OpenAI)",
+        "rate_window": "concurrent requests"
+      },
+      "models": [
+        {
+          "id": "meta-llama/Meta-Llama-3.1-70B-Instruct",
+          "label": "Llama 3.1 70B",
+          "kinds": [
+            "text",
+            "code"
+          ],
+          "free": false
+        },
+        {
+          "id": "Qwen/Qwen2.5-Coder-32B-Instruct",
+          "label": "Qwen 2.5 Coder 32B",
+          "kinds": [
+            "text",
+            "code"
+          ],
+          "free": false
+        },
+        {
+          "id": "deepseek-ai/DeepSeek-V3",
+          "label": "DeepSeek V3",
+          "kinds": [
+            "text",
+            "code"
+          ],
+          "free": false
+        }
+      ],
+      "key_url": "https://deepinfra.com/dash/api_keys",
+      "key_help": "Sign up at deepinfra.com. Cheap inference with no minimum spend.",
+      "base_url": "https://api.deepinfra.com/v1/openai"
+    },
+    {
+      "id": "openai",
+      "name": "OpenAI (ChatGPT API)",
+      "website": "https://platform.openai.com",
+      "free": false,
+      "incurs_cost": true,
+      "kinds": [
+        "text",
+        "translate",
+        "summary"
+      ],
+      "limits": {
+        "free_tier": "NONE — every call is billed to your OpenAI account"
+      },
+      "models": [
+        {
+          "id": "gpt-4o-mini",
+          "label": "GPT-4o mini",
+          "kinds": [
+            "text",
+            "translate",
+            "summary"
+          ],
+          "free": false,
+          "pricing": {
+            "input_per_mtok": 0.15,
+            "output_per_mtok": 0.6
+          }
+        },
+        {
+          "id": "gpt-4o",
+          "label": "GPT-4o",
+          "kinds": [
+            "text",
+            "translate",
+            "summary"
+          ],
+          "free": false,
+          "pricing": {
+            "input_per_mtok": 2.5,
+            "output_per_mtok": 10
+          }
+        }
+      ],
+      "key_url": "https://platform.openai.com/api-keys",
+      "key_help": "PAID: every call costs money. Create a key at platform.openai.com.",
+      "base_url": "https://api.openai.com/v1"
+    },
+    {
+      "id": "anthropic",
+      "name": "Claude (Anthropic API)",
+      "website": "https://console.anthropic.com",
+      "free": false,
+      "incurs_cost": true,
+      "kinds": [
+        "text",
+        "translate",
+        "summary"
+      ],
+      "limits": {
+        "free_tier": "Pay-as-you-go API key (separate from the Claude CLI subscription)"
+      },
+      "models": [
+        {
+          "id": "claude-haiku-5-5",
+          "label": "Claude Haiku 5.5",
+          "kinds": [
+            "text",
+            "translate",
+            "summary"
+          ],
+          "free": false,
+          "pricing": {
+            "input_per_mtok": 0.1,
+            "output_per_mtok": 0.5,
+            "long_context": {
+              "over_tokens": 100000,
+              "input_per_mtok": 0.5,
+              "output_per_mtok": 2.5
+            }
+          }
+        },
+        {
+          "id": "claude-sonnet-5-5",
+          "label": "Claude Sonnet 5.5",
+          "kinds": [
+            "text",
+            "translate",
+            "summary"
+          ],
+          "free": false,
+          "pricing": {
+            "input_per_mtok": 2,
+            "output_per_mtok": 10
+          }
+        },
+        {
+          "id": "claude-opus-5-5",
+          "label": "Claude Opus 5.5",
+          "kinds": [
+            "text",
+            "translate",
+            "summary"
+          ],
+          "free": false,
+          "pricing": {
+            "input_per_mtok": 4,
+            "output_per_mtok": 20
+          }
+        },
+        {
+          "id": "claude-fable-5-1",
+          "label": "Claude Fable 5.1",
+          "kinds": [
+            "text",
+            "translate",
+            "summary"
+          ],
+          "free": false,
+          "pricing": {
+            "input_per_mtok": 10,
+            "output_per_mtok": 50
+          }
+        },
+        {
+          "id": "claude-sonnet-4-6",
+          "label": "Claude Sonnet 4.6",
+          "kinds": [
+            "text",
+            "translate",
+            "summary"
+          ],
+          "free": false,
+          "pricing": {
+            "input_per_mtok": 3,
+            "output_per_mtok": 15
+          }
+        },
+        {
+          "id": "claude-opus-4-8",
+          "label": "Claude Opus 4.8",
+          "kinds": [
+            "text",
+            "translate",
+            "summary"
+          ],
+          "free": false,
+          "pricing": {
+            "input_per_mtok": 5,
+            "output_per_mtok": 25
+          }
+        },
+        {
+          "id": "claude-haiku-4-5-20251001",
+          "label": "Claude Haiku 4.5",
+          "kinds": [
+            "text",
+            "translate",
+            "summary"
+          ],
+          "free": false,
+          "pricing": {
+            "input_per_mtok": 1,
+            "output_per_mtok": 5
+          }
+        }
+      ],
+      "key_url": "https://console.anthropic.com/settings/keys",
+      "key_help": "PAID API key — distinct from the Claude CLI subscription. Usage shows as Claude (API), separate from Claude (CLI).",
+      "base_url": "https://api.anthropic.com/v1"
+    },
+    {
+      "id": "google_gemini",
+      "name": "Gemini (Google API)",
+      "website": "https://aistudio.google.com",
+      "free": false,
+      "incurs_cost": true,
+      "kinds": [
+        "text",
+        "translate",
+        "summary"
+      ],
+      "limits": {
+        "free_tier": "AI Studio keys have a free tier; paid above it. Treated as paid unless you know your key is free."
+      },
+      "models": [
+        {
+          "id": "gemini-2.5-flash",
+          "label": "Gemini 2.5 Flash",
+          "kinds": [
+            "text",
+            "translate",
+            "summary"
+          ],
+          "free": false,
+          "pricing": {
+            "input_per_mtok": 0.3,
+            "output_per_mtok": 2.5
+          }
+        },
+        {
+          "id": "gemini-2.5-pro",
+          "label": "Gemini 2.5 Pro",
+          "kinds": [
+            "text",
+            "translate",
+            "summary"
+          ],
+          "free": false,
+          "pricing": {
+            "input_per_mtok": 1.25,
+            "output_per_mtok": 10
+          }
+        }
+      ],
+      "key_url": "https://aistudio.google.com/apikey",
+      "key_help": "Google AI Studio key. Free tier exists but limited; gated as paid by default. Usage shows as Gemini (API), separate from Gemini (CLI).",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai"
+    },
+    {
+      "id": "cloudflare",
+      "name": "Cloudflare Workers AI",
+      "website": "https://developers.cloudflare.com/workers-ai/",
+      "free": true,
+      "kinds": [
+        "image",
+        "image-gen",
+        "text",
+        "code"
+      ],
+      "limits": {
+        "free_tier": "10,000 Neurons/day free",
+        "rate_window": "daily"
+      },
+      "models": [
+        {
+          "id": "@cf/black-forest-labs/flux-1-schnell",
+          "label": "FLUX.1 schnell (Cloudflare)",
+          "kinds": [
+            "image",
+            "image-gen"
+          ],
+          "free": true
+        },
+        {
+          "id": "@cf/meta/llama-3.1-8b-instruct",
+          "label": "Llama 3.1 8B (Cloudflare)",
+          "kinds": [
+            "text",
+            "code"
+          ],
+          "free": true
+        }
+      ],
+      "key_format": "ACCOUNT_ID:API_TOKEN",
+      "key_url": "https://dash.cloudflare.com/profile/api-tokens",
+      "key_help": "Create an API token with the Workers AI permission. Find your Account ID on the Workers & Pages overview page. Enter the key as ACCOUNT_ID:API_TOKEN (account id, a colon, then the token).",
+      "base_url": "https://api.cloudflare.com/client/v4"
+    },
+    {
+      "id": "cli_claude",
+      "name": "Claude CLI (free)",
+      "website": "",
+      "free": true,
+      "kinds": [
+        "text",
+        "translate",
+        "summary"
+      ],
+      "limits": {
+        "free_tier": "Uses your installed Claude Code CLI — no API key needed",
+        "rate_window": "CLI rate limits apply"
+      },
+      "models": [
+        {
+          "id": "default",
+          "label": "Claude CLI (current model)",
+          "kinds": [
+            "text",
+            "translate",
+            "summary"
+          ],
+          "free": true
+        }
+      ],
+      "key_url": "",
+      "key_help": "No key needed — uses the Claude Code CLI running in the cockpit tmux session.",
+      "base_url": "",
+      "no_key_required": true
+    },
+    {
+      "id": "cli_gemini",
+      "name": "Gemini CLI (free)",
+      "website": "",
+      "free": true,
+      "kinds": [
+        "text",
+        "translate",
+        "summary"
+      ],
+      "limits": {
+        "free_tier": "Uses your installed Gemini CLI — no API key needed",
+        "rate_window": "CLI rate limits apply"
+      },
+      "models": [
+        {
+          "id": "default",
+          "label": "Gemini CLI (current model)",
+          "kinds": [
+            "text",
+            "translate",
+            "summary"
+          ],
+          "free": true
+        }
+      ],
+      "key_url": "",
+      "key_help": "No key needed — uses the Gemini CLI running in the cockpit tmux session.",
+      "base_url": "",
+      "no_key_required": true
+    },
+    {
+      "id": "ww_duckai",
+      "name": "Duck.ai (web page)",
+      "type": "webworker",
+      "website": "https://duck.ai/",
+      "url": "https://duck.ai/",
+      "free": true,
+      "incurs_cost": false,
+      "no_key_required": true,
+      "kinds": [
+        "text"
+      ],
+      "limits": {
+        "free_tier": "Free, no account (DuckDuckGo anonymises the chat)"
+      },
+      "key_help": "No key: Cockpit uses the site's own web page in a window you do not see. If the site asks you to log in, its window is shown once; log in there. EXPERIMENTAL: a site can change its page at any time; use the self-test. Check the site's terms before using it this way.",
+      "models": [
+        {
+          "id": "web",
+          "label": "Duck.ai (web page)",
+          "kinds": [
+            "text"
+          ],
+          "free": true
+        }
+      ],
+      "adapter": {
+        "input": [
+          "textarea[name=\"user-prompt\"]"
+        ],
+        "send": [
+          "button[type=\"submit\"]"
+        ],
+        "busy": [
+          "button[aria-label*=\"Stop\" i]"
+        ],
+        "trim": [
+          "\\n?2nd opinion[\\s\\S]*$",
+          "\\n?Jump to latest response[\\s\\S]*$",
+          "\\n?All chats are private[\\s\\S]*$",
+          "\\n?Ask anything privately[\\s\\S]*$"
+        ],
+        "blocked": [
+          "verify you are human",
+          "just a moment"
+        ],
+        "stable": 3000,
+        "trimStart": [
+          "^Duck\\.ai said\\s*\\n[^\\n]*\\n"
+        ]
+      }
+    },
+    {
+      "id": "ww_perplexity",
+      "name": "Perplexity (web page)",
+      "type": "webworker",
+      "website": "https://www.perplexity.ai/",
+      "url": "https://www.perplexity.ai/",
+      "free": true,
+      "incurs_cost": false,
+      "no_key_required": true,
+      "kinds": [
+        "text"
+      ],
+      "limits": {
+        "free_tier": "Free without an account, with limits; answers come with sources"
+      },
+      "key_help": "No key: Cockpit uses the site's own web page in a window you do not see. If the site asks you to log in, its window is shown once; log in there. EXPERIMENTAL: a site can change its page at any time; use the self-test. Check the site's terms before using it this way.",
+      "models": [
+        {
+          "id": "web",
+          "label": "Perplexity (web page)",
+          "kinds": [
+            "text"
+          ],
+          "free": true
+        }
+      ],
+      "adapter": {
+        "input": [
+          "#ask-input",
+          "div[contenteditable=\"true\"]"
+        ],
+        "send": [
+          "button[aria-label=\"Submit\"]"
+        ],
+        "busy": [
+          "button[aria-label*=\"Stop\" i]"
+        ],
+        "dismiss": [
+          "Decline optional"
+        ],
+        "trim": [
+          "\\n\\s*[^\\n]{1,40}\\n\\s*\\+\\d+\\s*\\n\\s*\\d+ sources?[\\s\\S]*$",
+          "\\n\\s*\\d+ sources?\\s*\\n[\\s\\S]*$",
+          "\\n?Related[\\s\\S]*$",
+          "\\n?Ask a follow-up[\\s\\S]*$"
+        ],
+        "blocked": [
+          "verify you are human",
+          "just a moment"
+        ],
+        "loginText": [
+          "sign in to continue"
+        ],
+        "stable": 3500,
+        "trimStart": [
+          "^(?:(?:Read more|Researched|Searched|Thinking|Working)\\s*\\n\\s*)+",
+          "^\\d+(?:\\.\\d+)?\\s?s\\s*\\n\\s*"
+        ],
+        "dropLines": [
+          "^[a-z0-9][a-z0-9.-]{2,40}$",
+          "^\\+\\d+$"
+        ]
+      }
+    },
+    {
+      "id": "ww_mistral",
+      "name": "Mistral Le Chat (web page)",
+      "type": "webworker",
+      "website": "https://chat.mistral.ai/chat",
+      "url": "https://chat.mistral.ai/chat",
+      "free": true,
+      "incurs_cost": false,
+      "no_key_required": true,
+      "kinds": [
+        "text"
+      ],
+      "limits": {
+        "free_tier": "Free tier with an account (log in once in the window)"
+      },
+      "key_help": "No key: Cockpit uses the site's own web page in a window you do not see. If the site asks you to log in, its window is shown once; log in there. EXPERIMENTAL: a site can change its page at any time; use the self-test. Check the site's terms before using it this way.",
+      "models": [
+        {
+          "id": "web",
+          "label": "Mistral Le Chat (web page)",
+          "kinds": [
+            "text"
+          ],
+          "free": true
+        }
+      ],
+      "adapter": {
+        "input": [
+          "div[contenteditable=\"true\"]",
+          "textarea"
+        ],
+        "send": [
+          "button[aria-label*=\"Send\" i]",
+          "button[type=\"submit\"]"
+        ],
+        "busy": [
+          "button[aria-label*=\"Stop\" i]"
+        ],
+        "login": [
+          "input[type=\"password\"]",
+          "input[type=\"email\"]"
+        ],
+        "loginText": [
+          "log in",
+          "sign in",
+          "sign up"
+        ],
+        "blocked": [
+          "verify you are human",
+          "just a moment"
+        ],
+        "stable": 3000,
+        "answer": [
+          "[data-message-part-type=\"answer\"]"
+        ]
+      }
+    },
+    {
+      "id": "ww_deepseek",
+      "name": "DeepSeek (web page)",
+      "type": "webworker",
+      "website": "https://chat.deepseek.com/",
+      "url": "https://chat.deepseek.com/",
+      "free": true,
+      "incurs_cost": false,
+      "no_key_required": true,
+      "kinds": [
+        "text"
+      ],
+      "limits": {
+        "free_tier": "Free with an account (log in once in the window)"
+      },
+      "key_help": "No key: Cockpit uses the site's own web page in a window you do not see. If the site asks you to log in, its window is shown once; log in there. EXPERIMENTAL: a site can change its page at any time; use the self-test. Check the site's terms before using it this way.",
+      "models": [
+        {
+          "id": "web",
+          "label": "DeepSeek (web page)",
+          "kinds": [
+            "text"
+          ],
+          "free": true
+        }
+      ],
+      "adapter": {
+        "input": [
+          "textarea#chat-input",
+          "textarea"
+        ],
+        "send": [
+          "div.ds-button--filled.ds-button--circle[role=\"button\"][aria-disabled=\"false\"]",
+          "div.ds-button--primary[role=\"button\"]"
+        ],
+        "answer": [
+          "div.ds-markdown"
+        ],
+        "trimStart": [
+          "^[A-Za-z+#]*\\s*Copy\\s*Download\\s*"
+        ],
+        "busy": [
+          "[aria-label*=\"Stop\" i]"
+        ],
+        "login": [
+          "input[type=\"password\"]"
+        ],
+        "loginText": [
+          "log in",
+          "sign in",
+          "sign up"
+        ],
+        "blocked": [
+          "verify you are human",
+          "just a moment"
+        ],
+        "stable": 3500
+      }
+    },
+    {
+      "id": "ww_meta",
+      "name": "Meta AI (web page)",
+      "type": "webworker",
+      "website": "https://www.meta.ai/",
+      "url": "https://www.meta.ai/",
+      "free": true,
+      "incurs_cost": false,
+      "no_key_required": true,
+      "kinds": [
+        "text"
+      ],
+      "limits": {
+        "free_tier": "Free (an account may be asked for)"
+      },
+      "key_help": "No key: Cockpit uses the site's own web page in a window you do not see. If the site asks you to log in, its window is shown once; log in there. EXPERIMENTAL: a site can change its page at any time; use the self-test. Check the site's terms before using it this way.",
+      "models": [
+        {
+          "id": "web",
+          "label": "Meta AI (web page)",
+          "kinds": [
+            "text"
+          ],
+          "free": true
+        }
+      ],
+      "adapter": {
+        "input": [
+          "div[contenteditable=\"true\"][role=\"textbox\"]",
+          "div[contenteditable=\"true\"]",
+          "textarea"
+        ],
+        "send": [
+          "div[aria-label=\"Send\"]",
+          "button[aria-label*=\"Send\" i]"
+        ],
+        "answer": [
+          "div.markdown-content"
+        ],
+        "answerJoin": true,
+        "trimStart": [
+          "^Show thinking\\s*"
+        ],
+        "busy": [
+          "[aria-label*=\"Stop\" i]"
+        ],
+        "login": [
+          "input[type=\"password\"]"
+        ],
+        "loginText": [
+          "log in",
+          "continue with facebook",
+          "continue with instagram"
+        ],
+        "blocked": [
+          "verify you are human",
+          "just a moment"
+        ],
+        "stable": 3500
+      }
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "id": "3d-printing",
+  "name": "3D printing / CAD",
+  "icon": "view_in_ar",
+  "description": "Parametric models in OpenSCAD: checked, exported, print-tested.",
+  "detect": ["*.scad", "*.stl"],
+  "group": "Hardware & making",
+  "note": "This is a 3D-modelling project in OpenSCAD (.scad files): models are code, built from named parameters, and exported to STL or 3MF for a slicer. Put every dimension in a parameter at the top (with a comment saying what it is and its unit, millimetres) and group them with /* [Group] */ comments for the Customizer; build shapes from small modules; set $fn high enough for smooth curves but not wastefully; leave 0.2 to 0.4 mm clearance between parts that must fit; keep walls at least 1.2 mm (two nozzle widths) and avoid overhangs steeper than 45 degrees or add the support in the model. Never guess a measurement of a real object: ask for it. After every change run the OpenSCAD check (errors, warnings, a valid solid) and, before exporting, Will it print for the user's bed size. OpenSCAD can read any file on the machine, so the tools compile only inside a sandbox: do not add include or import of paths outside the model's folder.",
+  "verify": "scad check",
+  "details": "Designing parts as code. The 3D tool compiles an OpenSCAD model in a bubblewrap sandbox (no network, no home folder) and reports errors and warnings with their line and whether the result is a valid solid; exports STL, 3MF and a PNG picture; analyses any STL in plain arithmetic (triangles, size in millimetres, volume, surface area, watertight or not); checks whether a model will print on your bed (fit, watertight, thin parts, how much overhangs); lists the parameters a model is built from; and starts a parametric box.",
+  "examples": [
+    "A case for a Raspberry Pi with openings for the ports",
+    "Make this bracket's hole diameter a parameter",
+    "Will this fit my 220x220 bed, and does it need supports",
+    "Fix a model that the slicer says is not watertight"
+  ],
+  "tools": [
+    {"tool": "scad", "why": "check, export STL/3MF/PNG, mesh info, print check, parameters, new part, in a sandbox"}
+  ]
+}

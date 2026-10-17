@@ -1,0 +1,147 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// craft_tool — the Hobby crafts tools' work, for the tool presets (tools_builtins/craft.json). A command-line program, never reachable over the web.
+//
+//   php craft_tool cutlist   PARTS OUTPUT [stock=2400 kerf=3 boards=N unit=mm]   cut list for boards, rods or fabric lengths: first-fit decreasing, saw kerf between pieces, offcuts, waste
+//   php craft_tool yarn      PIECES OUTPUT [swatch=10x10 swatch_yarn=18 | stitch_length=1.2 ...]  yarn estimate from the area of the pieces and a measured swatch (or the gauge and the yarn per stitch)
+//   php craft_tool fabric    PIECES OUTPUT fabric_width=140 [margin=10 unit=cm]   fabric length needed from the area of the pieces: a lower bound, not a cutting layout
+//   php craft_tool rows      PATTERN.md OUTPUT                                    check a knitting/crochet pattern in markdown: row numbers, repeats, stitch counts against the "(N sts)" you wrote
+//   php craft_tool materials LIST OUTPUT [currency=EUR]                           materials list: line totals, totals by category or supplier, what you still have to buy
+//
+// PARTS is a CSV with a header: name, length (fractions such as 36 1/2 and 3/4 are read), qty (default 1), material (optional: each material gets its own cut list). PIECES: name, width, height (or length), qty;
+// unit=cm (default), mm, in. LIST: item, qty, unit (optional), unit_cost, category or supplier (optional), have (optional). Column names in English, French, German, Italian, Portuguese or Spanish are accepted
+// (longueur/laenge/lunghezza/comprimento/largo, quantite/anzahl/quantita/cantidad ...). Results are ESTIMATES from the numbers you give: swatches stretch, fabric has nap and pattern matching,
+// shops round up. Buy a margin. The original is never changed. Nothing is looked up or guessed: a missing number is reported.
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "craft_tool: $m\n"); exit($rc); }
+[$sub, $in, $out] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? ''];
+$args = array_slice($argv, 4);
+if (!in_array($sub, ['cutlist', 'yarn', 'fabric', 'rows', 'materials'], true) || $in === '' || $out === '') fail('usage: craft_tool cutlist|yarn|fabric|rows|materials INPUT OUTPUT [key=value ...]', 2);
+$opt = []; foreach ($args as $a) foreach (preg_split('/\s+(?=\w+=)/', trim($a)) as $p) if (strpos($p, '=') !== false) { [$k, $v] = explode('=', $p, 2); $opt[strtolower(trim($k))] = trim($v); }
+if (!is_file($in)) fail("no such file: $in"); $name = basename($in);
+
+function ascii(string $s): string { $s = mb_strtolower(trim($s)); $t = function_exists('iconv') ? @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $s) : false; $s = ($t !== false && $t !== '') ? $t : $s; return trim(preg_replace('/[^a-z0-9]+/', ' ', $s)); }
+function num(string $s): ?float { $s = trim($s); if ($s === '') return null;
+    if (preg_match('/^(\d+)\s+(\d+)\s*\/\s*(\d+)$/', $s, $m) && (int)$m[3] > 0) return (float)$m[1] + $m[2] / $m[3]; if (preg_match('/^(\d+)\s*\/\s*(\d+)$/', $s, $m) && (int)$m[2] > 0) return $m[1] / $m[2];
+    $s = preg_replace('/[^\d.,\-]/', '', $s); if ($s === '' || !preg_match('/\d/', $s)) return null; $lc = strrpos($s, ','); $ld = strrpos($s, '.');
+    if ($lc !== false && $ld !== false) $s = $lc > $ld ? str_replace(',', '.', str_replace('.', '', $s)) : str_replace(',', '', $s); elseif ($lc !== false) $s = (strlen($s) - $lc - 1 === 3 && substr_count($s, ',') >= 1) ? str_replace(',', '', $s) : str_replace(',', '.', $s); elseif (substr_count($s, '.') > 1) $s = str_replace('.', '', $s);
+    return is_numeric($s) ? (float)$s : null; }
+function fmt(float $v, int $d = 2): string { return rtrim(rtrim(number_format($v, $d, '.', ','), '0'), '.') ?: '0'; }
+function read_csv(string $f): array {
+    $t = (string)file_get_contents($f); if (strncmp($t, "\xEF\xBB\xBF", 3) === 0) $t = substr($t, 3); if (!mb_check_encoding($t, 'UTF-8')) $t = mb_convert_encoding($t, 'UTF-8', 'CP1252');
+    $t = str_replace(["\r\n", "\r"], "\n", $t); if (trim($t) === '') fail(basename($f) . ' is empty'); $first = strtok($t, "\n");
+    $c = ["\t" => substr_count($first, "\t"), ';' => substr_count($first, ';'), ',' => substr_count($first, ',')]; arsort($c); $sep = array_key_first($c);
+    $rows = []; $h = fopen('php://memory', 'r+'); fwrite($h, $t); rewind($h); $ln = 0; $header = null;
+    while (($r = fgetcsv($h, 0, $sep, '"', '')) !== false) { $ln++; if ($r === [null] || (count($r) === 1 && trim((string)$r[0]) === '')) continue; if ($header === null) { $header = array_map(fn($x) => ascii((string)$x), $r); continue; } $rows[] = ['line' => $ln, 'c' => $r]; }
+    return [$header ?? [], $rows]; }
+function colidx(array $header, array $names, array $skip = []): ?int { foreach ($header as $i => $h) if (!in_array($i, $skip, true) && in_array($h, $names, true)) return $i; return null; }
+$ALIAS = ['name' => ['name', 'part', 'piece', 'item', 'nom', 'piece', 'teil', 'nome', 'pezzo', 'peca', 'pieza', 'nombre', 'description'],
+    'len' => ['length', 'len', 'l', 'longueur', 'laenge', 'lange', 'lunghezza', 'comprimento', 'largo', 'longitud'], 'qty' => ['qty', 'quantity', 'count', 'copies', 'quantite', 'anzahl', 'quantita', 'quantidade', 'cantidad', 'pcs'],
+    'mat' => ['material', 'materiau', 'werkstoff', 'materiale', 'materialien'], 'w' => ['width', 'w', 'largeur', 'breite', 'larghezza', 'largura', 'ancho'], 'h' => ['height', 'h', 'length', 'longueur', 'hoehe', 'hohe', 'altezza', 'altura', 'alto', 'laenge', 'lunghezza', 'comprimento', 'largo'],
+    'cost' => ['unit cost', 'unit price', 'cost', 'price', 'prix', 'preis', 'prezzo', 'preco', 'precio', 'prix unitaire', 'einzelpreis'], 'unit' => ['unit', 'unite', 'einheit', 'unita', 'unidade', 'unidad', 'uom'],
+    'cat' => ['category', 'supplier', 'shop', 'categorie', 'kategorie', 'categoria', 'fournisseur', 'lieferant', 'fornitore', 'fornecedor', 'proveedor'], 'have' => ['have', 'in stock', 'stock', 'owned', 'en stock', 'vorrat', 'disponibile', 'tenho', 'tengo']];
+$UNITS = ['mm' => 0.1, 'cm' => 1.0, 'm' => 100.0, 'in' => 2.54, 'inch' => 2.54, 'inches' => 2.54, 'ft' => 30.48];
+
+// ---- cutlist -----------------------------------------------------------------------------------------------------------------------------------
+if ($sub === 'cutlist') {
+    $stock = num($opt['stock'] ?? ''); if ($stock === null || $stock <= 0) fail('give the stock length: stock=2400 (in the unit of the list; unit=mm is only a label)', 2); $kerf = num($opt['kerf'] ?? '0') ?? 0; if ($kerf < 0) fail('kerf cannot be negative', 2); $maxB = isset($opt['boards']) ? (int)$opt['boards'] : 0; $unit = $opt['unit'] ?? '';
+    [$hd, $rows] = read_csv($in); $cl = colidx($hd, $ALIAS['len']); $cn = colidx($hd, $ALIAS['name']); $cq = colidx($hd, $ALIAS['qty']); $cm = colidx($hd, $ALIAS['mat']); if ($cl === null) fail("$name has no length column (found: " . implode(', ', $hd) . ')'); if (!$rows) fail("$name has no parts");
+    $parts = []; $msgs = [];
+    foreach ($rows as $r) { $L = num((string)($r['c'][$cl] ?? '')); $q = $cq !== null ? num((string)($r['c'][$cq] ?? '1')) : 1; $q = $q === null ? 1 : $q; $nm = $cn !== null ? trim((string)($r['c'][$cn] ?? '')) : ''; $mt = $cm !== null ? trim((string)($r['c'][$cm] ?? '')) : '';
+        if ($L === null || $L <= 0) { $msgs[] = "$name({$r['line']}) Error: length \"" . ($r['c'][$cl] ?? '') . '" is not a positive number'; continue; } if ($q < 1 || floor($q) != $q) { $msgs[] = "$name({$r['line']}) Error: quantity \"" . ($r['c'][$cq] ?? '') . '" is not a whole number of 1 or more'; continue; }
+        if ($L > $stock) { $msgs[] = "$name({$r['line']}) Error: part \"" . ($nm ?: "line {$r['line']}") . '" (' . fmt($L) . ") is longer than the stock length (" . fmt($stock) . '): cannot be cut'; continue; }
+        for ($i = 0; $i < $q; $i++) $parts[$mt][] = [$L, $nm ?: 'part ' . $r['line']]; }
+    $o = "# Cut list from $name\n\nStock length " . fmt($stock) . ($unit ? " $unit" : '') . ', saw kerf ' . fmt($kerf) . ". Method: first-fit decreasing (longest piece first, into the first board with room); it is a good heuristic, not always the provable minimum. A kerf is counted between two pieces on a board; the end of a board is assumed to be square.\n";
+    $totalBoards = 0; $totalWaste = 0.0; $totalParts = 0; $unplaced = [];
+    ksort($parts); foreach ($parts as $mt => $list) { usort($list, fn($a, $b) => $b[0] <=> $a[0]); $boards = [];
+        foreach ($list as $p) { $placed = false; foreach ($boards as $bi => &$b) { if (array_sum(array_column($b, 0)) + $kerf * count($b) + $p[0] <= $stock + 1e-9) { $b[] = $p; $placed = true; break; } } unset($b); if (!$placed) { if ($maxB > 0 && count($boards) >= $maxB) { $unplaced[] = $p; continue; } $boards[] = [$p]; } }
+        $o .= "\n## " . ($mt !== '' ? "Material: $mt" : 'Parts') . ' - ' . count($boards) . " board(s)\n\n"; $mw = 0.0;
+        foreach ($boards as $bi => $b) { $used = array_sum(array_column($b, 0)) + $kerf * (count($b) - 1); $waste = $stock - $used; $mw += $waste; $o .= '- Board ' . ($bi + 1) . ': ' . implode(' + ', array_map(fn($p) => fmt($p[0]) . ' (' . $p[1] . ')', $b)) . ' | used ' . fmt($used) . ', offcut ' . fmt($waste) . "\n"; }
+        $totalBoards += count($boards); $totalWaste += $mw; $totalParts += count($list) - count(array_filter($unplaced, fn($u) => in_array($u, $list, true))); }
+    $o .= "\n## Totals\n\n$totalBoards board(s) of " . fmt($stock) . ' = ' . fmt($totalBoards * $stock) . " in all; offcuts (the unused ends; saw kerf is counted as used) " . fmt($totalWaste) . ($totalBoards ? ' (' . fmt(100 * $totalWaste / ($totalBoards * $stock), 1) . "% of the stock)" : '') . ".\n";
+    foreach ($unplaced as $u) $msgs[] = "$name Warning: part \"{$u[1]}\" (" . fmt($u[0]) . ") did not fit in the $maxB board(s) allowed"; if ($msgs) $o .= "\n## Problems\n\n" . implode("\n", $msgs) . "\n";
+    file_put_contents($out, $o); echo "Wrote $out ($totalBoards boards)\n"; exit(0);
+}
+// ---- yarn / fabric -----------------------------------------------------------------------------------------------------------------------------
+function pieces(string $in, string $name, array $opt): array { global $ALIAS, $UNITS; $u = strtolower($opt['unit'] ?? 'cm'); if (!isset($UNITS[$u])) fail("unit must be one of " . implode(', ', array_keys($UNITS)), 2); $f = $UNITS[$u];
+    [$hd, $rows] = read_csv($in); $cw = colidx($hd, $ALIAS['w']); $ch = colidx($hd, $ALIAS['h'], [$cw ?? -1]); $cq = colidx($hd, $ALIAS['qty']); $cn = colidx($hd, $ALIAS['name']); if ($cw === null || $ch === null) fail("$name needs a width and a height (or length) column (found: " . implode(', ', $hd) . ')'); if (!$rows) fail("$name has no pieces");
+    $res = []; $msgs = []; foreach ($rows as $r) { $w = num((string)($r['c'][$cw] ?? '')); $h = num((string)($r['c'][$ch] ?? '')); $q = $cq !== null ? (num((string)($r['c'][$cq] ?? '1')) ?? 1) : 1; $nm = $cn !== null ? trim((string)($r['c'][$cn] ?? '')) : '';
+        if ($w === null || $h === null || $w <= 0 || $h <= 0) { $msgs[] = "$name({$r['line']}) Error: width/height are not positive numbers"; continue; } if ($q < 1 || floor($q) != $q) { $msgs[] = "$name({$r['line']}) Error: quantity is not a whole number of 1 or more"; continue; }
+        $res[] = ['name' => $nm ?: 'piece ' . $r['line'], 'w' => $w * $f, 'h' => $h * $f, 'q' => (int)$q, 'line' => $r['line']]; } return [$res, $msgs]; }
+if ($sub === 'fabric') {
+    $fw = num($opt['fabric_width'] ?? ''); if ($fw === null || $fw <= 0) fail('give the fabric width: fabric_width=140 (in the same unit as unit=, default cm)', 2); $u = strtolower($opt['unit'] ?? 'cm'); $fwc = $fw * ($UNITS[$u] ?? 1); $margin = num($opt['margin'] ?? '10') ?? 10; [$pc, $msgs] = pieces($in, $name, $opt);
+    if (!$pc) fail("$name has no usable piece:\n" . implode("\n", $msgs)); $area = 0.0; $o = "# Fabric estimate from $name\n\n| Piece | Size (cm) | Qty | Area (cm2) |\n|---|---|---|---|\n";
+    foreach ($pc as $p) { if (min($p['w'], $p['h']) > $fwc) $msgs[] = "$name({$p['line']}) Error: piece \"{$p['name']}\" (" . fmt($p['w'], 1) . ' x ' . fmt($p['h'], 1) . " cm) is wider than the fabric both ways (" . fmt($fwc, 1) . ' cm)'; $a = $p['w'] * $p['h'] * $p['q']; $area += $a; $o .= "| {$p['name']} | " . fmt($p['w'], 1) . ' x ' . fmt($p['h'], 1) . " | {$p['q']} | " . fmt($a, 1) . " |\n"; }
+    $len = $area / $fwc; $withM = $len * (1 + $margin / 100);
+    $o .= "\nTotal area " . fmt($area, 1) . " cm2 on fabric " . fmt($fwc, 1) . " cm wide: " . fmt($len, 1) . " cm (" . fmt($len / 100, 2) . " m, " . fmt($len / 91.44, 2) . " yd) with no waste at all; with a $margin% margin " . fmt($withM, 1) . ' cm (' . fmt($withM / 100, 2) . ' m, ' . fmt($withM / 91.44, 2) . " yd).\n\nThis is a LOWER BOUND from the area: real cutting wastes more, and nap, stripes, pattern matching, grain and seam allowances are not included unless your sizes already contain them. Check against the pattern's own yardage chart.\n";
+    if ($msgs) $o .= "\n## Problems\n\n" . implode("\n", $msgs) . "\n"; file_put_contents($out, $o); echo "Wrote $out (" . fmt($withM / 100, 2) . " m)\n"; exit(0);
+}
+if ($sub === 'yarn') {
+    [$pc, $msgs] = pieces($in, $name, $opt); if (!$pc) fail("$name has no usable piece:\n" . implode("\n", $msgs)); $margin = num($opt['margin'] ?? '10') ?? 10;
+    $sw = null; if (isset($opt['swatch'])) { if (!preg_match('/^([\d.,]+)\s*[x*]\s*([\d.,]+)$/i', $opt['swatch'], $m)) fail('swatch must look like swatch=10x10 (centimetres)', 2); $sw = num($m[1]) * num($m[2]); }
+    $perCm2 = null; $perCm2g = null; $sl = num($opt['stitch_length'] ?? ''); $gauge = null;
+    if (isset($opt['gauge'])) { if (!preg_match('/^([\d.,]+)\s*[x*\/]\s*([\d.,]+)$/i', $opt['gauge'], $m)) fail('gauge must look like gauge=20x28 (stitches x rows in 10 cm)', 2); $gauge = [num($m[1]), num($m[2])]; }
+    if ($sw !== null && $sw > 0) { $sy = num($opt['swatch_yarn'] ?? ''); $sg = num($opt['swatch_g'] ?? ''); if ($sy !== null) $perCm2 = $sy * 100 / $sw; if ($sg !== null) $perCm2g = $sg / $sw; }
+    if ($perCm2 === null && $perCm2g === null && !($gauge && $sl)) fail("cannot estimate without a measurement of your own: give swatch=10x10 with swatch_yarn=METRES (and/or swatch_g=GRAMS) from unravelling or weighing your swatch, or gauge=20x28 with stitch_length=CM of yarn per stitch", 2);
+    $area = 0.0; $sts = 0; $o = "# Yarn estimate from $name\n\n| Piece | Size (cm) | Qty | Area (cm2)" . ($gauge ? ' | Stitches x rows' : '') . " |\n|---|---|---|---|" . ($gauge ? '---|' : '') . "\n";
+    foreach ($pc as $p) { $a = $p['w'] * $p['h'] * $p['q']; $area += $a; $row = "| {$p['name']} | " . fmt($p['w'], 1) . ' x ' . fmt($p['h'], 1) . " | {$p['q']} | " . fmt($a, 1) . ' |'; if ($gauge) { $s = (int)ceil($p['w'] * $gauge[0] / 10); $r = (int)ceil($p['h'] * $gauge[1] / 10); $sts += $s * $r * $p['q']; $row .= " $s x $r |"; } $o .= "$row\n"; }
+    $o .= "\nTotal area " . fmt($area, 1) . ' cm2' . ($gauge ? ", about " . number_format($sts) . " stitches from the gauge" : '') . ".\n\n"; $m = 1 + $margin / 100; $skm = num($opt['skein'] ?? ''); $skg = num($opt['skein_g'] ?? '');
+    if ($perCm2 !== null) { $L = $area * $perCm2 / 100; $o .= '- From the swatch: ' . fmt($L, 1) . ' m of yarn; with a ' . $margin . '% margin ' . fmt($L * $m, 1) . ' m' . ($skm ? '; skeins of ' . fmt($skm) . ' m: ' . (int)ceil($L * $m / $skm) : '') . ".\n"; }
+    if ($perCm2g !== null) { $G = $area * $perCm2g; $o .= '- By weight: ' . fmt($G, 1) . ' g; with a ' . $margin . '% margin ' . fmt($G * $m, 1) . ' g' . ($skg ? '; skeins of ' . fmt($skg) . ' g: ' . (int)ceil($G * $m / $skg) : '') . ".\n"; }
+    if ($gauge && $sl) { $L2 = $sts * $sl / 100; $o .= '- From stitch count x yarn per stitch (' . fmt($sl, 2) . ' cm): ' . fmt($L2, 1) . ' m; with margin ' . fmt($L2 * $m, 1) . ' m' . ($skm ? '; skeins: ' . (int)ceil($L2 * $m / $skm) : '') . ".\n"; }
+    $o .= "\nThis is an ESTIMATE. A swatch is only as good as its size and washing; textured stitches, seams, edgings, tension changes and joins use more. Buy the whole project's yarn from one dye lot, and a skein extra if the margin is thin.\n"; if ($msgs) $o .= "\n## Problems\n\n" . implode("\n", $msgs) . "\n";
+    file_put_contents($out, $o); echo "Wrote $out\n"; exit(0);
+}
+// ---- materials ---------------------------------------------------------------------------------------------------------------------------------
+if ($sub === 'materials') {
+    [$hd, $rows] = read_csv($in); $cn = colidx($hd, $ALIAS['name']); $cq = colidx($hd, $ALIAS['qty']); $cc = colidx($hd, $ALIAS['cost']); $cu = colidx($hd, $ALIAS['unit']); $ct = colidx($hd, $ALIAS['cat']); $chv = colidx($hd, $ALIAS['have']); $cur = $opt['currency'] ?? '';
+    if ($cn === null || $cq === null) fail("$name needs an item and a qty column (found: " . implode(', ', $hd) . ')'); if (!$rows) fail("$name has no rows");
+    $o = "# Materials list from $name\n\n| Item | Qty | Unit cost | Line total | Have | To buy | Cost of the rest |\n|---|---:|---:|---:|---:|---:|---:|\n"; $tot = 0.0; $toBuy = 0.0; $by = []; $nocost = []; $msgs = [];
+    foreach ($rows as $r) { $it = trim((string)($r['c'][$cn] ?? '')); $q = num((string)($r['c'][$cq] ?? '')); $c = $cc !== null ? num((string)($r['c'][$cc] ?? '')) : null; $h = $chv !== null ? (num((string)($r['c'][$chv] ?? '')) ?? 0) : 0; $cat = $ct !== null ? trim((string)($r['c'][$ct] ?? '')) : ''; $un = $cu !== null ? trim((string)($r['c'][$cu] ?? '')) : '';
+        if ($q === null || $q < 0) { $msgs[] = "$name({$r['line']}) Error: quantity of \"$it\" is not a number"; continue; } $rest = max($q - $h, 0); $lt = $c !== null ? $q * $c : null; $rc = $c !== null ? $rest * $c : null;
+        if ($c === null) { $nocost[] = $it; $msgs[] = "$name({$r['line']}) Warning: no unit cost for \"$it\": left out of the totals"; } else { $tot += $lt; $toBuy += $rc; $k = $cat === '' ? '(none)' : $cat; $by[$k] = ($by[$k] ?? 0) + $lt; }
+        $o .= "| $it | " . fmt($q) . ($un ? " $un" : '') . ' | ' . ($c !== null ? fmt($c) : '-') . ' | ' . ($lt !== null ? fmt($lt) : '-') . ' | ' . fmt($h) . ' | ' . fmt($rest) . ' | ' . ($rc !== null ? fmt($rc) : '-') . " |\n"; }
+    $o .= "\n**Total of everything listed: " . fmt($tot) . ($cur ? " $cur" : '') . "**; of that, still to buy (after what you have): **" . fmt($toBuy) . ($cur ? " $cur" : '') . "**.\n"; if ($ct !== null && count($by) > 0) { $o .= "\n## By " . ($hd[$ct]) . "\n\n"; arsort($by); foreach ($by as $k => $v) $o .= "- $k: " . fmt($v) . ($cur ? " $cur" : '') . "\n"; }
+    $o .= "\nCosts are the ones you wrote; shop prices, delivery and tax are not added. Items without a cost are not in the totals.\n"; if ($msgs) $o .= "\n## Problems\n\n" . implode("\n", $msgs) . "\n"; file_put_contents($out, $o); echo "Wrote $out (total " . fmt($tot) . ")\n"; exit(0);
+}
+// ---- rows (pattern check) ----------------------------------------------------------------------------------------------------------------------
+$raw = (string)file_get_contents($in); if (strncmp($raw, "\xEF\xBB\xBF", 3) === 0) $raw = substr($raw, 3); if (!mb_check_encoding($raw, 'UTF-8')) fail('the pattern is not valid UTF-8: convert it first'); if (trim($raw) === '') fail("$name is empty");
+$lines = explode("\n", str_replace(["\r\n", "\r"], "\n", $raw)); $rowsDef = []; $repeats = []; $msgs = []; $lastNo = 0;
+/** stitches (consumed, produced) of one row's instructions, or null when not computable ("to end", "as set") */
+function row_count(string $t): ?array {
+    $t = preg_replace('/\((?:RS|WS|right side|wrong side)\)/i', '', $t); $t = preg_replace('/\(\s*\d+\s*(?:sts?|stitches|m|mailles|maschen|maglie|pontos|puntos)\s*\)\s*\.?\s*$/iu', '', $t);
+    if (preg_match('/\b(to end|to last|to marker|as set|as established|across|bis zum ende|jusqu\'au bout|fino alla fine|hasta el final)\b/i', $t)) return null;
+    $t = preg_replace_callback('/\*([^*;]+?)[;,]?\s*(?:rep(?:eat)?\.?\s*from\s*\*)\s*(\d+)\s*(?:times|x)?/i', fn($m) => implode(', ', array_fill(0, max(1, (int)$m[2]), $m[1])), $t); if (strpos($t, '*') !== false) return null;
+    $guard = 0; while (preg_match('/\(([^()]*)\)\s*(?:x|\*)?\s*(\d+)\s*(?:times|x)?/i', $t, $m, PREG_OFFSET_CAPTURE) && $guard++ < 20) $t = substr($t, 0, $m[0][1]) . implode(', ', array_fill(0, max(1, (int)$m[2][0]), $m[1][0])) . substr($t, $m[0][1] + strlen($m[0][0]));
+    $cons = 0; $prod = 0; $any = false;
+    foreach (preg_split('/\s*[,;]\s*|\s+then\s+/i', $t) as $tok) { $tok = trim($tok, " .\t"); if ($tok === '') continue;
+        if (!preg_match('/^(k2tog|k3tog|ssk|sk2p|p2tog|p3tog|dc2tog|sc2tog|dec|kfb|pfb|m1[lr]?|inc|yo|yrn|sl|k|p|sc|hdc|dc|tr|ch|st|sts)\s*(\d*)$/i', $tok, $m)) return null; $x = strtolower($m[1]); $n = $m[2] === '' ? 1 : (int)$m[2]; $any = true;
+        if (in_array($x, ['k2tog', 'ssk', 'p2tog', 'dc2tog', 'sc2tog', 'dec'], true)) { $cons += 2 * $n; $prod += $n; } elseif (in_array($x, ['k3tog', 'p3tog', 'sk2p'], true)) { $cons += 3 * $n; $prod += $n; } elseif (in_array($x, ['kfb', 'pfb', 'inc'], true)) { $cons += $n; $prod += 2 * $n; }
+        elseif (in_array($x, ['m1', 'm1l', 'm1r', 'yo', 'yrn'], true)) { $prod += $n; } elseif ($x === 'ch') { $prod += $n; } else { $cons += $n; $prod += $n; } }
+    return $any ? [$cons, $prod] : null; }
+foreach ($lines as $i => $l) { $ln = $i + 1;
+    if (preg_match('/^\s*(?:[-*+]\s*|\d+\.\s*)?\**\s*(?:rows?|rnds?|rounds?|reihen?|rangs?|righe?|riga|fileiras?|vueltas?|filas?)\s*(\d+)(?:\s*(?:-|–|to|bis|a|au)\s*(\d+))?\s*\**\s*[:.]\s*(.*)$/iu', $l, $m)) {
+        $a = (int)$m[1]; $b = isset($m[2]) && $m[2] !== '' ? (int)$m[2] : $a; if ($b < $a) { $msgs[] = [$ln, 'Error', "row range $a-$b runs backwards"]; $b = $a; }
+        $stated = preg_match('/\(\s*(\d+)\s*(?:sts?|stitches|m|mailles|maschen|maglie|pontos|puntos)\s*\)\s*\.?\s*$/iu', $m[3], $s) ? (int)$s[1] : null; $rc = row_count($m[3]);
+        $rowsDef[] = ['a' => $a, 'b' => $b, 'line' => $ln, 'stated' => $stated, 'rc' => $rc, 'text' => $m[3]]; }
+    elseif (preg_match('/repeat\s+(?:rows?|rnds?|rounds?)\s*(\d+)\s*(?:-|–|to)\s*(\d+)\s*(?:x\s*(\d+)|[,;]?\s*(\d+)\s*times)/iu', $l, $m) || preg_match('/repeat\s+(?:rows?|rnds?|rounds?)\s*(\d+)\s*(?:-|–|to)\s*(\d+)/iu', $l, $m)) $repeats[] = ['a' => (int)$m[1], 'b' => (int)$m[2], 'n' => isset($m[3]) && $m[3] !== '' ? (int)$m[3] : (isset($m[4]) && $m[4] !== '' ? (int)$m[4] : null), 'line' => $ln]; }
+if (!$rowsDef) fail("$name has no lines like \"Row 1: k2, p2\" (also Rnd, Round, Reihe, Rang, Riga, Fileira, Vuelta, Fila)");
+$cover = []; foreach ($rowsDef as $d) for ($r = $d['a']; $r <= $d['b']; $r++) { if (isset($cover[$r])) $msgs[] = [$d['line'], 'Error', "row $r is written twice (also on line " . $cover[$r] . ')']; else $cover[$r] = $d['line']; }
+$max = max(array_keys($cover)); for ($r = 1; $r <= $max; $r++) if (!isset($cover[$r])) $msgs[] = [$rowsDef[0]['line'], 'Error', "row $r is missing (rows run up to $max)"];
+$firstRow = min(array_keys($cover)); if ($firstRow !== 1) $msgs[] = [$cover[$firstRow], 'Warning', "the first row written is $firstRow, not 1 (a pattern that continues from another section is fine)"];
+usort($rowsDef, fn($x, $y) => $x['a'] <=> $y['a']); $prevProd = null; $prevEnd = null;
+foreach ($rowsDef as $d) { $rc = $d['rc']; $label = $d['a'] === $d['b'] ? "row {$d['a']}" : "rows {$d['a']}-{$d['b']}";
+    if ($rc !== null && $d['stated'] !== null && $rc[1] !== $d['stated']) $msgs[] = [$d['line'], 'Error', "$label: the instructions make " . $rc[1] . " stitches, but you wrote (" . $d['stated'] . ' sts)'];
+    if ($rc !== null && $prevProd !== null && $prevEnd === $d['a'] - 1 && $rc[0] !== $prevProd) $msgs[] = [$d['line'], 'Error', "$label: the instructions work " . $rc[0] . ' stitches but the previous row ended with ' . $prevProd];
+    if ($rc === null && $d['stated'] === null) $msgs[] = [$d['line'], 'Note', "$label: stitch count cannot be worked out (\"to end\", a * repeat without a count, or an abbreviation I do not know) and none is written"];
+    if ($d['rc'] !== null && $d['a'] !== $d['b'] && $d['rc'][0] !== $d['rc'][1]) $msgs[] = [$d['line'], 'Note', "$label changes the stitch count (" . $d['rc'][0] . ' to ' . $d['rc'][1] . ') and is repeated, so the count differs from row to row'];
+    $prevProd = $d['stated'] ?? ($rc[1] ?? null); $prevEnd = $d['b']; }
+$total = $max; $rep = '';
+foreach ($repeats as $r) { if (!isset($cover[$r['a']]) || !isset($cover[$r['b']])) $msgs[] = [$r['line'], 'Error', "repeat of rows {$r['a']}-{$r['b']} names a row that does not exist (rows 1-$max)"]; elseif ($r['b'] < $r['a']) $msgs[] = [$r['line'], 'Error', "repeat range {$r['a']}-{$r['b']} runs backwards"]; elseif ($r['n'] === null) $msgs[] = [$r['line'], 'Note', "repeat of rows {$r['a']}-{$r['b']} has no count (\"x N\" or \"N times\"): total rows cannot be counted"];
+    else { $len = $r['b'] - $r['a'] + 1; $extra = $r['n'] * $len; $rep .= "- Line {$r['line']}: rows {$r['a']}-{$r['b']} ($len rows) repeated {$r['n']} times = $extra more rows (read as {$r['n']} further passes after the first; if you mean {$r['n']} passes in all, subtract $len).\n"; $total += $extra; } }
+usort($msgs, fn($x, $y) => $x[0] <=> $y[0]); $e = count(array_filter($msgs, fn($m) => $m[1] === 'Error'));
+$o = "# Pattern check of $name\n\n" . count($rowsDef) . " row line(s) covering rows 1-$max" . ($rep ? ", total with the repeats $total" : '') . ". Stitch counts are worked out only for plain k, p, sc, dc, hdc, tr, ch, yo, kfb, m1, k2tog, ssk and similar with (N) repeats; anything else is skipped, never guessed.\n\n";
+foreach ($msgs as [$l, $s, $t]) $o .= "$name($l) $s: $t\n"; if (!$msgs) $o .= "No problems found.\n"; if ($rep) $o .= "\n## Repeats\n\n$rep"; $o .= "\n" . count($msgs) . " finding(s), $e error(s). A check of the arithmetic of the text, not a test knit.\n";
+file_put_contents($out, $o); echo "Wrote $out ($e errors)\n"; exit(0);

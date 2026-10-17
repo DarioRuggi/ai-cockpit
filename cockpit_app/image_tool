@@ -1,0 +1,88 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// image_tool — the Image generation tools' work, for the tool presets (tools_builtins/imagegen.json). A command-line program, never reachable over the web.
+//
+//   php image_tool gen      PROMPTFILE OUTPUT.png [preset=image|logo|icon|favicon|background] [steps=20] [seed=N] [size=WxH] [negative=text]
+//   php image_tool variants PROMPTFILE OUTPUT.png [count=4] [...the same options]     several images of the same prompt with different seeds, as one contact sheet
+//   php image_tool check    PROMPTFILE OUTPUT.md                                      is stable-diffusion.cpp built, which model, how much room is there
+//
+// Runs the same stable-diffusion.cpp as the Generate window (sd-cli, first .safetensors/.gguf/.ckpt in ~/ai-tools/sd.cpp/models; env COCKPIT_SD_BIN / COCKPIT_SD_MODEL override).
+// Sizes are capped at 512 per side (a 4 GB GPU runs out of memory above that), Ollama's models are released from the GPU first. The prompt is read from a FILE and the program is started
+// WITHOUT a shell, so a prompt can hold any quote or $( ) and it stays text. Every image gets OUTPUT.prompt.json next to it (prompt, preset, steps, SEED, size, model): the record that
+// lets you make the same picture again or change one thing.
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "image_tool: $m\n"); exit($rc); }
+[$sub, $in, $out] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? ''];
+$kv = []; foreach (array_slice($argv, 4) as $a) if (preg_match('/^([a-z_]+)=(.*)$/s', trim($a), $m)) $kv[$m[1]] = $m[2];
+if (!in_array($sub, ['gen', 'variants', 'check'], true) || $in === '' || $out === '') fail('usage: image_tool gen|variants|check PROMPTFILE OUTPUT [preset=...] [steps=20] [seed=N] [size=WxH] [count=4]', 2);
+
+$HOME = getenv('HOME') ?: '';
+$pj = __DIR__ . '/paths.json'; if (is_file($pj)) { $j = json_decode((string)@file_get_contents($pj), true); if (is_array($j) && !empty($j['home'])) $HOME = (string)$j['home']; }
+$SD = (string)(getenv('COCKPIT_SD_BIN') ?: '');
+if ($SD === '') foreach ([$HOME . '/ai-tools/sd.cpp/build/bin/sd-cli', $HOME . '/ai-tools/sd.cpp/build/bin/sd'] as $c) if (is_file($c) && is_executable($c)) { $SD = $c; break; }
+$MODEL = (string)(getenv('COCKPIT_SD_MODEL') ?: '');
+if ($MODEL === '') { $MODEL = $HOME . '/ai-tools/sd.cpp/models/sd-v1-5.safetensors'; if (!is_file($MODEL)) foreach (glob($HOME . '/ai-tools/sd.cpp/models/*.{safetensors,gguf,ckpt}', GLOB_BRACE) ?: [] as $m) { $MODEL = $m; break; } }
+const PRESETS = ['image' => ['', 512, 512], 'logo' => [', flat vector logo, centered, simple, solid dark background', 512, 512], 'icon' => [', app icon, flat, simple, centered, solid background', 512, 512],
+                 'favicon' => [', tiny simple icon, flat, single subject, solid background', 512, 512], 'background' => [', wallpaper, scenic, detailed, wide', 768, 512]];
+
+if ($sub === 'check') {
+    $o = "# Image generation: check\n\n";
+    $ok = $SD !== '' && is_executable($SD) && is_file($MODEL);
+    $o .= '- stable-diffusion.cpp: ' . ($SD !== '' && is_executable($SD) ? "`$SD`" : "**not built** (expected at ~/ai-tools/sd.cpp/build/bin/sd-cli)") . "\n- Model: " . (is_file($MODEL) ? '`' . basename($MODEL) . '` (' . round(filesize($MODEL) / 1048576) . " MB)" : '**none found** in ~/ai-tools/sd.cpp/models (any .safetensors, .gguf or .ckpt Stable Diffusion checkpoint works)') . "\n";
+    $free = @disk_free_space(dirname(realpath($out) ?: $out) ?: '.'); $o .= '- Free disk where the images go: ' . ($free ? round($free / 1073741824, 1) . ' GB' : 'unknown') . "\n";
+    $gpu = trim((string)@shell_exec('nvidia-smi --query-gpu=name,memory.total,memory.used --format=csv,noheader 2>/dev/null')); if ($gpu === '') $gpu = trim((string)@shell_exec('lspci 2>/dev/null | grep -iE "vga|3d" | head -2'));
+    $o .= '- GPU: ' . ($gpu !== '' ? str_replace("\n", '; ', $gpu) : 'not detected (it runs on the CPU, slowly)') . "\n- Sizes are capped at 512 per side (a 4 GB GPU runs out of memory above that); presets: " . implode(', ', array_keys(PRESETS)) . ".\n\n" . ($ok ? "Ready.\n" : "Not ready: fix the first line that says **not built** or **none found**.\n") . "\n[exit code " . ($ok ? 0 : 1) . "]\n";
+    file_put_contents($out, $o); echo "Wrote $out\n"; exit($ok ? 0 : 1);   // "Not ready" is a failed check: the job says so too
+}
+
+if (!is_file($in)) fail("no such file: $in");
+$prompt = trim(preg_replace('/\s+/u', ' ', (string)file_get_contents($in))); if ($prompt === '') fail('the prompt file is empty');
+if (!mb_check_encoding($prompt, 'UTF-8')) fail('the prompt is not valid UTF-8');
+$prompt = mb_substr($prompt, 0, 1000);
+if ($SD === '' || !is_executable($SD)) fail('stable-diffusion.cpp is not built (expected at ~/ai-tools/sd.cpp/build/bin/sd-cli): see Check');
+if (!is_file($MODEL)) fail('no Stable Diffusion model found in ~/ai-tools/sd.cpp/models: see Check');
+$preset = $kv['preset'] ?? 'image'; if (!isset(PRESETS[$preset])) fail('preset must be one of: ' . implode(', ', array_keys(PRESETS)));
+[$suf, $w, $h] = PRESETS[$preset];
+if (isset($kv['size'])) { if (!preg_match('/^(\d{3,4})x(\d{3,4})$/', $kv['size'], $m)) fail('size= must look like 512x512'); [$w, $h] = [(int)$m[1], (int)$m[2]]; }
+$w = max(256, min(512, $w)); $h = max(256, min(512, $h));
+$steps = isset($kv['steps']) ? (int)$kv['steps'] : 20; if ($steps < 1 || $steps > 60) fail('steps= must be between 1 and 60');
+$neg = isset($kv['negative']) ? trim(mb_substr($kv['negative'], 0, 300)) : '';
+$count = $sub === 'variants' ? (int)($kv['count'] ?? 4) : 1; if ($sub === 'variants' && ($count < 2 || $count > 6)) fail('count= must be between 2 and 6');
+if (isset($kv['seed']) && !preg_match('/^\d{1,10}$/', $kv['seed'])) fail('seed= must be a whole number');
+$ext = strtolower(pathinfo($out, PATHINFO_EXTENSION)); if ($ext !== 'png') fail('the output must be a .png file');
+$outDir = dirname($out); if (!is_dir($outDir) && !@mkdir($outDir, 0775, true)) fail("cannot create $outDir");
+
+// free the GPU: a model Ollama still holds leaves too little room for the image
+$released = [];
+$ps = @file_get_contents('http://127.0.0.1:11434/api/ps', false, stream_context_create(['http' => ['timeout' => 2]])); $jj = $ps ? json_decode($ps, true) : null;
+foreach ((array)($jj['models'] ?? []) as $mm) { $nm = (string)($mm['name'] ?? $mm['model'] ?? ''); if ($nm === '') continue; @file_get_contents('http://127.0.0.1:11434/api/generate', false, stream_context_create(['http' => ['method' => 'POST', 'timeout' => 5, 'header' => "Content-Type: application/json\r\n", 'content' => json_encode(['model' => $nm, 'keep_alive' => 0])]])); $released[] = $nm; }
+if ($released) usleep(1500000);
+
+function run_sd(array $cmd, string &$log): int {
+    $p = proc_open($cmd, [0 => ['file', '/dev/null', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+    if (!is_resource($p)) { $log = 'could not start the program'; return 127; }
+    stream_set_blocking($pipes[1], true); $log = stream_get_contents($pipes[1]) . stream_get_contents($pipes[2]); fclose($pipes[1]); fclose($pipes[2]); return proc_close($p);
+}
+$files = []; $seeds = [];
+for ($i = 0; $i < $count; $i++) {
+    $seed = isset($kv['seed']) ? (int)$kv['seed'] + $i : random_int(1, 2147483646); $seeds[] = $seed;
+    $target = $count > 1 ? preg_replace('/\.png$/i', '', $out) . '.' . ($i + 1) . '.png' : $out;
+    $cmd = [$SD, '-M', 'img_gen', '-m', $MODEL, '-p', $prompt . $suf, '-o', $target, '--steps', (string)$steps, '-W', (string)$w, '-H', (string)$h, '--seed', (string)$seed, '-t', '8', '--diffusion-fa', '--vae-tiling'];
+    if ($neg !== '') { $cmd[] = '-n'; $cmd[] = $neg; }
+    @unlink($target); $log = ''; $rc = run_sd($cmd, $log);
+    if ($rc !== 0 || !is_file($target) || filesize($target) < 8 || file_get_contents($target, false, null, 0, 8) !== "\x89PNG\r\n\x1a\n") {
+        $tail = implode(' | ', array_slice(array_filter(array_map('trim', explode("\n", $log))), -4));
+        fail('stable-diffusion.cpp did not make an image (exit ' . $rc . ')' . ($tail !== '' ? ': ' . mb_substr($tail, 0, 400) : '') . (stripos($log, 'out of memory') !== false || stripos($log, 'alloc') !== false ? ' (out of memory: close other programs that use the GPU, or lower steps/size)' : ''));
+    }
+    @file_put_contents($target . '.prompt.json', json_encode(['prompt' => $prompt, 'preset' => $preset, 'prompt_sent' => $prompt . $suf, 'negative' => $neg, 'steps' => $steps, 'seed' => $seed, 'size' => "{$w}x{$h}", 'model' => basename($MODEL), 'created' => date('c')], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . "\n");
+    $files[] = $target;
+}
+if ($count > 1) {
+    $m = trim((string)@shell_exec('command -v montage 2>/dev/null'));
+    if ($m !== '') { $cmd = array_merge([$m], $files, ['-tile', ($count <= 4 ? 2 : 3) . 'x', '-geometry', '+4+4', $out]); $l = ''; run_sd($cmd, $l); }
+    if (!is_file($out)) { copy($files[0], $out); echo "no montage program: the first image is $out, the others are next to it\n"; }
+    @file_put_contents($out . '.prompt.json', json_encode(['prompt' => $prompt, 'preset' => $preset, 'steps' => $steps, 'seeds' => $seeds, 'size' => "{$w}x{$h}", 'model' => basename($MODEL), 'images' => array_map('basename', $files)], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . "\n");
+}
+echo ($released ? 'released from Ollama: ' . implode(', ', $released) . "\n" : '') . "Wrote $out" . ($count > 1 ? " (a sheet of $count; seeds " . implode(', ', $seeds) . ')' : " (seed {$seeds[0]}, {$w}x{$h}, $steps steps)") . "; the settings are in $out.prompt.json\n"; exit(0);

@@ -1,0 +1,12 @@
+{
+  "id": "goose", "display": "Goose", "kind": "agent", "transport": "process",
+  "command": "goose",
+  "args": ["run", "-t", "{prompt}", "--no-session"],
+  "parser": "plain",
+  "tiers": {"shell": []},
+  "detect": {"cmd": "goose", "version_args": ["--version"]},
+  "cwd_policy": "project",
+  "limits": {"timeout_s": 900},
+  "notes": "Only tier shell declared (no way to restrict rights from the command line).",
+  "docs_checked": "2026-10-05"
+}

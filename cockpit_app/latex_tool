@@ -1,0 +1,180 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// latex_tool — the Academic paper tools' work, for the tool presets (tools_builtins/latex.json). A command-line program, never reachable over the web.
+//
+//   php latex_tool new      FOLDER OUTPUT NAME   a new paper NAME (article, equations, bibliography) inside FOLDER; never overwrites
+//   php latex_tool build    INPUT  OUTPUT.pdf    compile to a PDF (engine chosen from the preamble, bibtex and enough passes), in a scratch COPY of the project
+//   php latex_tool check    INPUT  OUTPUT        the same build, reported: errors as file(line) Error:, undefined references and citations, overfull boxes, missing
+//                                                packages with how to install them, then [exit code N]
+//   php latex_tool bibcheck INPUT  OUTPUT        citation keys against the .bib files: missing, duplicated, unused, entries lacking author/title/year
+//   php latex_tool words    INPUT  OUTPUT        the number of words in the text (pandoc reads the LaTeX; maths and commands are not counted)
+//
+// INPUT is the main .tex file, or the project folder (the file with \documentclass: main.tex, paper.tex, or the only one). The project is never written to:
+// every build runs in a temporary copy. TeX is run with file reading and writing restricted to the project (no absolute paths, no ..) and with shell escape off,
+// so a paper from somewhere else cannot read /etc or run commands.
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "latex_tool: $m\n"); exit($rc); }
+[$sub, $in, $out, $arg] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? '', $argv[4] ?? ''];
+if (!in_array($sub, ['new', 'build', 'check', 'bibcheck', 'words'], true) || $in === '' || $out === '') fail('usage: latex_tool new|build|check|bibcheck|words INPUT OUTPUT [NAME]', 2);
+if (!file_exists($in)) fail("no such file or folder: $in");
+
+// ---- new --------------------------------------------------------------------------------------------------------------------------------------
+if ($sub === 'new') {
+    if (!is_dir($in)) fail('new: give the folder to create the paper in');
+    $nm = preg_replace('/[^A-Za-z0-9_-]/', '', $arg); if ($nm === '') fail('new: type the paper\'s name in the extra arguments (letters, digits, - and _)');
+    $d = rtrim($in, '/') . '/' . $nm; if (file_exists($d)) fail("new: $d already exists, nothing was changed");
+    mkdir($d, 0775, true);
+    file_put_contents("$d/main.tex", "\\documentclass[11pt]{article}\n\\usepackage[utf8]{inputenc}\n\\usepackage[T1]{fontenc}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\usepackage[numbers]{natbib}\n% \\usepackage{hyperref}   % clickable links: needs texlive-latex-recommended (etoolbox); uncomment when it is installed\n\n\\title{" . $nm . "}\n\\author{Author Name}\n\\date{\\today}\n\n\\begin{document}\n\\maketitle\n\n\\begin{abstract}\nOne paragraph: the question, the method, the result.\n\\end{abstract}\n\n\\section{Introduction}\\label{sec:intro}\nThe problem and why it matters \\citep{knuth1984}. Section~\\ref{sec:method} describes the method.\n\n\\section{Method}\\label{sec:method}\nAn equation:\n\\begin{equation}\\label{eq:main}\n  E = mc^2\n\\end{equation}\nEquation~\\ref{eq:main} is the one that matters.\n\n\\section{Conclusion}\nWhat was found.\n\n\\bibliographystyle{plainnat}\n\\bibliography{refs}\n\\end{document}\n");
+    file_put_contents("$d/refs.bib", "@book{knuth1984,\n  author    = {Donald E. Knuth},\n  title     = {The {TeXbook}},\n  publisher = {Addison-Wesley},\n  year      = {1984}\n}\n");
+    file_put_contents($out, "Created $d with main.tex and refs.bib (natbib + bibtex, which are installed everywhere).\nNext: Check on that folder; the paper is built in a scratch copy and never litters it.\n[exit code 0]\n");
+    echo "Created $d\n"; exit(0);
+}
+
+// ---- finding the project ---------------------------------------------------------------------------------------------------------------------
+$root = is_dir($in) ? rtrim($in, '/') : dirname($in); $main = null;
+if (is_file($in)) { if (!preg_match('/\.tex$/i', $in)) fail("not a .tex file: $in"); $main = basename($in); }
+else {
+    $cands = []; foreach (glob("$root/*.tex") ?: [] as $f) if (preg_match('/^\s*\\\\documentclass/m', (string)file_get_contents($f, false, null, 0, 20000))) $cands[] = basename($f);
+    foreach (['main.tex', 'paper.tex', 'thesis.tex', 'article.tex'] as $pref) if (in_array($pref, $cands, true)) { $cands = [$pref]; break; }
+    if (count($cands) === 0) fail("no .tex file with \\documentclass in $root");
+    if (count($cands) > 1) fail('several main files (' . implode(', ', $cands) . '): give the one to build, not the folder');
+    $main = $cands[0];
+}
+$base = preg_replace('/\.tex$/i', '', $main);
+$srcMain = (string)file_get_contents("$root/$main");
+
+/** the .tex files the project reads: the main one and everything it \input / \include s, recursively */
+function tex_files(string $root, string $main): array {
+    $seen = []; $todo = [$main];
+    while ($todo) {
+        $f = array_pop($todo); if (isset($seen[$f]) || !is_file("$root/$f")) continue; $seen[$f] = (string)file_get_contents("$root/$f");
+        if (preg_match_all('/\\\\(?:input|include|subfile)\s*\{([^}]+)\}/', preg_replace('/(?<!\\\\)%.*$/m', '', $seen[$f]), $m)) foreach ($m[1] as $x) { $x = trim($x); if (strpos($x, '..') !== false || $x[0] === '/') continue; $todo[] = preg_match('/\.tex$/i', $x) ? $x : "$x.tex"; }
+    }
+    return $seen;
+}
+function strip_comments(string $s): string { return preg_replace('/(?<!\\\\)%.*$/m', '', $s); }
+
+// ---- bibcheck / words (no build) ---------------------------------------------------------------------------------------------------------------
+if ($sub === 'bibcheck') {
+    $files = tex_files($root, $main); $all = strip_comments(implode("\n", $files));
+    $bibs = []; if (preg_match_all('/\\\\bibliography\s*\{([^}]+)\}/', $all, $m)) foreach ($m[1] as $l) foreach (explode(',', $l) as $b) $bibs[] = trim($b);
+    if (preg_match_all('/\\\\addbibresource\s*(?:\[[^\]]*\])?\s*\{([^}]+)\}/', $all, $m)) foreach ($m[1] as $b) $bibs[] = trim($b);
+    $cited = []; $line = []; $nonLit = false;
+    foreach ($files as $fn => $txt) { $lines = explode("\n", strip_comments($txt));
+        foreach ($lines as $i => $l) if (preg_match_all('/\\\\(?:cite[a-zA-Z]*|nocite|parencite|textcite|autocite|footcite)\*?\s*(?:\[[^\]]*\]\s*){0,2}\{([^}]+)\}/', $l, $m)) foreach ($m[1] as $keys) foreach (explode(',', $keys) as $k) { $k = trim($k); if ($k === '') continue; if ($k === '*') { $nonLit = true; continue; } $cited[$k] = $cited[$k] ?? [$fn, $i + 1]; } }
+    $entries = []; $dups = []; $weak = []; $nb = basename($main); $msgs = []; $err = 0; $warn = 0;
+    $add = function (string $kind, string $f, int $l, string $m) use (&$msgs, &$err, &$warn) { $msgs[] = "$f($l) $kind: $m"; if ($kind === 'Error') $err++; elseif ($kind === 'Warning') $warn++; };
+    if (!$bibs && $cited) $add('Error', $main, 1, 'citations are used but no \\bibliography{...} or \\addbibresource{...} names a .bib file');
+    foreach ($bibs as $b) {
+        $p = preg_match('/\.bib$/i', $b) ? $b : "$b.bib"; if (strpos($p, '..') !== false || $p[0] === '/') { $add('Error', $main, 1, "the bibliography path '$p' leaves the project: refused"); continue; }
+        if (!is_file("$root/$p")) { $add('Error', $main, 1, "the bibliography file $p does not exist"); continue; }
+        $txt = (string)file_get_contents("$root/$p");
+        if (preg_match_all('/@(\w+)\s*\{\s*([^,\s]+)\s*,(.*?)(?=\n\s*@|\z)/s', $txt, $mm, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) foreach ($mm as $e) {
+            $type = strtolower($e[1][0]); if (in_array($type, ['comment', 'string', 'preamble'], true)) continue;
+            $key = $e[2][0]; $ln = substr_count(substr($txt, 0, $e[0][1]), "\n") + 1;
+            if (isset($entries[$key])) $add('Error', $p, $ln, "the key '$key' is defined twice (first in " . $entries[$key][0] . '(' . $entries[$key][1] . '))'); else $entries[$key] = [$p, $ln];
+            $body = strtolower($e[3][0]); $need = []; if (!in_array($type, ['proceedings', 'misc', 'unpublished'], true)) $need[] = 'author'; $need[] = 'title';
+            if (in_array($type, ['book', 'inbook', 'incollection', 'inproceedings', 'article', 'misc', 'techreport', 'phdthesis', 'mastersthesis', 'conference', 'proceedings', 'unpublished'], true)) $need[] = 'year';
+            $missing = []; foreach ($need as $fld) if (!preg_match('/\b' . $fld . '\s*=/', $body) && !($fld === 'year' && preg_match('/\bdate\s*=/', $body)) && !($fld === 'author' && preg_match('/\beditor\s*=/', $body))) $missing[] = $fld;
+            if ($missing) $add('Warning', $p, $ln, "entry '$key' ($type) has no " . implode(', ', $missing));
+        }
+    }
+    foreach ($cited as $k => [$f, $l]) if ($bibs && !isset($entries[$k]) && !$nonLit) $add('Error', $f, $l, "the citation '$k' is not in any .bib file");
+    if (!$nonLit) foreach ($entries as $k => [$f, $l]) if (!isset($cited[$k])) $add('Note', $f, $l, "entry '$k' is never cited");
+    $report = "# Bibliography check: $nb\n\n- Citation keys used: " . count($cited) . "; entries in the .bib files: " . count($entries) . "; bib files: " . ($bibs ? implode(', ', $bibs) : 'none') . ($nonLit ? "\n- \\nocite{*} is used: every entry counts as cited" : '') . "\n\n";
+    $report .= ($msgs ? "## Problems ($err errors, $warn warnings)\n\n" . implode("\n", $msgs) . "\n" : "No problems found.\n") . "\n[exit code " . ($err > 0 ? 1 : 0) . "]\n";
+    file_put_contents($out, $report); echo "Wrote $out ($err errors, $warn warnings)\n"; exit(0);
+}
+if ($sub === 'words') {
+    $tmp = sys_get_temp_dir() . '/lt_w_' . getmypid(); @mkdir($tmp, 0700, true); $text = null;
+    if (trim((string)shell_exec('command -v pandoc 2>/dev/null'))) { $o = []; exec('cd ' . escapeshellarg($root) . ' && pandoc -f latex -t plain --wrap=none ' . escapeshellarg($main) . ' 2>/dev/null', $o, $rc); if ($rc === 0) $text = implode("\n", $o); }
+    if ($text === null) fail('pandoc could not read the LaTeX (is pandoc installed? a package it does not know?): the word count needs it');
+    // cut the bibliography heading and everything after it: references are not the paper's words
+    $body = preg_split('/^\s*(References|Bibliography|Works Cited)\s*$/m', $text, 2)[0];
+    $count = fn(string $t) => preg_match_all('/[\p{L}\p{N}][\p{L}\p{N}\'’-]*/u', $t);
+    $sections = []; foreach (preg_split('/^(?=[^\n]+\n[=-]{3,}\s*$)/m', $body) as $chunk) { if (preg_match('/^([^\n]+)\n[=-]{3,}\s*$/m', $chunk, $mm)) $sections[trim($mm[1])] = $count($chunk); }
+    $o = "# Word count: $main\n\n- Words in the text (without maths, commands, bibliography): " . $count($body) . "\n";
+    if ($sections) { $o .= "\nBy section:\n\n"; foreach ($sections as $s => $c) $o .= "- $s: $c\n"; }
+    file_put_contents($out, $o . "\n[exit code 0]\n"); echo "Wrote $out\n"; @rmdir($tmp); exit(0);
+}
+
+// ---- build / check: in a scratch COPY of the project --------------------------------------------------------------------------------------------
+$tmp = sys_get_temp_dir() . '/lt_' . getmypid() . '_' . mt_rand(1000, 9999); mkdir($tmp, 0700, true);
+register_shutdown_function(function () use ($tmp) { if (strpos(basename($tmp), 'lt_') !== 0 || !is_dir($tmp)) return; $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($tmp, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::CHILD_FIRST); foreach ($it as $f) { $f->isDir() && !$f->isLink() ? @rmdir($f->getPathname()) : @unlink($f->getPathname()); } @rmdir($tmp); });
+$size = 0; $maxBytes = 200 * 1048576;
+$it = new RecursiveIteratorIterator(new RecursiveCallbackFilterIterator(new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS), function ($f) { $n = $f->getFilename(); return !in_array($n, ['.git', 'node_modules', '.svn'], true) && !$f->isLink(); }), RecursiveIteratorIterator::SELF_FIRST);
+foreach ($it as $f) {
+    $rel = substr($f->getPathname(), strlen($root) + 1);
+    if ($f->isDir()) { @mkdir("$tmp/$rel", 0700, true); continue; }
+    if (preg_match('/\.(aux|log|out|toc|lof|lot|blg|fls|fdb_latexmk|synctex\.gz|pdf)$/i', $rel) && !preg_match('/\.pdf$/i', $rel)) continue;     // stale build files mislead; figures that are PDFs stay
+    if (preg_match('~^' . preg_quote($base, '~') . '\.pdf$~i', $rel)) continue;
+    $size += $f->getSize(); if ($size > $maxBytes) fail('the project is larger than 200 MB: build it by hand');
+    copy($f->getPathname(), "$tmp/$rel");
+}
+$hasHeb = (bool)preg_match('/[\x{0590}-\x{05FF}]/u', $srcMain . implode('', tex_files($root, $main)));
+$needsLua = $hasHeb || preg_match('/\\\\usepackage(?:\[[^\]]*\])?\{[^}]*\b(fontspec|unicode-math|polyglossia|luacode)\b/', $srcMain) || preg_match('/%\s*!TEX\s+program\s*=\s*lualatex/i', $srcMain);
+$engine = $needsLua ? 'lualatex' : 'pdflatex';
+if (!trim((string)shell_exec('command -v ' . $engine . ' 2>/dev/null'))) fail("$engine is not installed (sudo apt install " . ($needsLua ? 'texlive-luatex texlive-latex-recommended' : 'texlive-latex-base') . ')');
+$env = 'openin_any=p openout_any=p shell_escape=f TEXMFOUTPUT=' . escapeshellarg($tmp) . ' ';          // paranoid file access, no \write18
+$run = function (string $cmd, int $secs = 240) use ($tmp, $env): array { $o = []; $rc = 0; exec('cd ' . escapeshellarg($tmp) . ' && ' . $env . 'timeout ' . $secs . ' ' . $cmd . ' </dev/null 2>&1', $o, $rc); return [$rc, implode("\n", $o)]; };
+$texCmd = $engine . ' -interaction=nonstopmode -file-line-error ' . escapeshellarg($main);
+$passes = 0; $bibLog = ''; $usedBib = false; $needBiber = false;
+for ($i = 0; $i < 5; $i++) {
+    [$rc, $_] = $run($texCmd); $passes++;
+    $log = (string)@file_get_contents("$tmp/$base.log");
+    if ($i === 0) {
+        $aux = (string)@file_get_contents("$tmp/$base.aux");
+        $bcf = is_file("$tmp/$base.bcf");
+        if ($bcf) { $needBiber = true; }
+        elseif (strpos($aux, '\\bibdata') !== false && trim((string)shell_exec('command -v bibtex 2>/dev/null'))) { [$brc, $bo] = $run('bibtex ' . escapeshellarg($base), 120); $usedBib = true; $bibLog = (string)@file_get_contents("$tmp/$base.blg"); continue; }
+    }
+    if (!preg_match('/Rerun to get|Label\(s\) may have changed|Please \(re\)run|rerun LaTeX/i', $log)) break;
+}
+$log = (string)@file_get_contents("$tmp/$base.log"); $pdf = "$tmp/$base.pdf"; $havePdf = is_file($pdf) && filesize($pdf) > 0;
+
+// ---- reading the log ---------------------------------------------------------------------------------------------------------------------------
+$errs = []; $warns = []; $notes = []; $over = 0; $under = 0; $missingPk = [];
+$pk = ['xcolor' => 'texlive-latex-recommended', 'color' => 'texlive-latex-base', 'booktabs' => 'texlive-latex-recommended', 'microtype' => 'texlive-latex-recommended', 'amssymb' => 'texlive-latex-base', 'tikz' => 'texlive-pictures', 'pgf' => 'texlive-pictures', 'pgfplots' => 'texlive-pictures', 'listings' => 'texlive-latex-extra', 'siunitx' => 'texlive-science', 'cleveref' => 'texlive-latex-extra', 'fontspec' => 'texlive-latex-recommended and texlive-luatex (or texlive-xetex)', 'polyglossia' => 'texlive-lang-other / texlive-xetex', 'biblatex' => 'texlive-bibtex-extra and biber', 'subcaption' => 'texlive-latex-extra', 'multirow' => 'texlive-latex-extra', 'algorithm2e' => 'texlive-science', 'algorithmicx' => 'texlive-science', 'enumitem' => 'texlive-latex-extra', 'titlesec' => 'texlive-latex-extra', 'fancyhdr' => 'texlive-latex-recommended', 'natbib' => 'texlive-latex-base', 'hyperref' => 'texlive-latex-base', 'geometry' => 'texlive-latex-base', 'lmodern' => 'texlive-fonts-recommended'];
+$lines = explode("\n", $log); $n = count($lines);
+$addErr = function (string $file, int $line, string $msg, string $ctx) use (&$errs, &$missingPk, $pk, $main) {
+    if (strpos($file, '/') !== false) $file = (strpos($file, '/usr/') === 0 || strpos($file, '/var/') === 0) ? basename($file) : $file;
+    if (preg_match("/File [`'](.+?)[`'] not found/", $msg, $f)) { $p = preg_replace('/\.(sty|cls)$/', '', $f[1]); $missingPk[$p] = true; $hint = ' To install it: sudo apt install ' . ($pk[$p] ?? 'texlive-latex-recommended texlive-latex-extra texlive-fonts-recommended') . ' (or the TeX Live package that carries ' . $f[1] . ')'; $errs[] = [$main, $line, "the TeX package '" . $f[1] . "' is not installed." . $hint]; return; }
+    if ($missingPk && preg_match('/Emergency stop|Fatal error occurred|no output PDF produced/i', $msg)) return;      // the consequence of the missing package already reported
+    $errs[] = [$file, $line, rtrim($msg, '.') . ($ctx !== '' ? "  [at: $ctx]" : '')];
+};
+for ($i = 0; $i < $n; $i++) {
+    $l = $lines[$i];
+    if (preg_match('/^(?:\.\/)?(.+?\.(?:tex|sty|cls|bbl|aux)):(\d+): (.*)$/', $l, $m)) {
+        $ctx = ''; for ($j = $i + 1; $j < min($n, $i + 4); $j++) if (preg_match('/^l\.\d+ (.*)$/', $lines[$j], $c)) { $ctx = trim($c[1]); break; }
+        $addErr($m[1], (int)$m[2], $m[3], $ctx);
+    } elseif (preg_match('/^! (.*)$/', $l, $m)) { $ctx = ''; for ($j = $i + 1; $j < min($n, $i + 4); $j++) if (preg_match('/^l\.(\d+) (.*)$/', $lines[$j], $c)) { $ctx = trim($c[2]); break; } $addErr($main, isset($c[1]) ? (int)$c[1] : 1, $m[1], $ctx); }
+    elseif (preg_match("/(?:LaTeX|Package \w+) Warning: (Reference|Citation) [`'](.+?)' on page \d+ undefined on input line (\d+)/", $l, $m)) $warns[] = [$main, (int)$m[3], ($m[1] === 'Reference' ? 'undefined reference' : 'undefined citation') . " '" . $m[2] . "'"];
+    elseif (preg_match('/Overfull \\\\hbox \(([\d.]+)pt too wide\).*?lines? (\d+)/', $l, $m)) { $over++; if ((float)$m[1] > 10) $warns[] = [$main, (int)$m[2], 'a line is ' . $m[1] . ' pt too wide (it runs into the margin)']; }
+    elseif (preg_match('/Underfull \\\\[hv]box/', $l)) $under++;
+    elseif (preg_match('/Missing character: There is no (.+?) in font (.+?)!/', $l, $m)) $warns[] = [$main, 1, "no glyph for {$m[1]} in the font {$m[2]} (text will be missing in the PDF)"];
+    elseif (preg_match('/LaTeX Font Warning: (.*)$/', $l, $m)) $notes[] = [$main, 1, 'font: ' . $m[1]];
+    elseif (preg_match('/^(?:LaTeX|Package (\w+)) Warning: (.*)$/', $l, $m) && !preg_match('/Reference|Citation|Label\(s\) may have changed|There were undefined/', $m[2])) { $t = $m[2]; while ($i + 1 < $n && trim($lines[$i + 1]) !== '' && strlen($t) < 160 && preg_match('/^\(/', $lines[$i + 1])) { $t .= ' ' . trim($lines[++$i]); } $warns[] = [$main, preg_match('/input line (\d+)/', $t, $q) ? (int)$q[1] : 1, ($m[1] ? $m[1] . ': ' : '') . trim(preg_replace('/ on input line \d+\.?/', '', $t))]; }
+}
+foreach (explode("\n", $bibLog) as $bl) {
+    if (preg_match('/^Warning--I didn\'t find a database entry for "(.+?)"/', $bl, $m)) $warns[] = [$base . '.bib', 1, "bibtex: no entry for the citation '" . $m[1] . "'"];
+    elseif (preg_match('/^I couldn\'t open database file (.+)$/', $bl, $m)) $errs[] = [$main, 1, 'bibtex could not open ' . $m[1]];
+    elseif (preg_match('/^Repeated entry/', $bl)) $warns[] = [$base . '.bib', 1, 'bibtex: ' . trim($bl)];
+}
+if ($needBiber) $errs[] = [$main, 1, 'the paper uses biblatex with biber, which is not part of this build: install biber (sudo apt install biber) or switch to natbib + bibtex'];
+if (!$havePdf && !$errs) $errs[] = [$main, 1, "$engine produced no PDF (see the log)"];
+
+if ($sub === 'build') {
+    if (!$havePdf) { $e = array_slice($errs, 0, 5); fail("the build failed, no PDF:\n" . implode("\n", array_map(fn($x) => "  $x[0]($x[1]) Error: $x[2]", $e)), 1); }
+    copy($pdf, $out);
+    echo "Wrote $out ($engine, $passes pass" . ($passes > 1 ? 'es' : '') . ($usedBib ? ', bibtex' : '') . ")" . ($errs ? "\nBUILT WITH " . count($errs) . " ERROR(S): run Check to see them." : '') . ($warns ? "\n" . count($warns) . " warning(s): run Check to see them." : '') . "\n"; exit(0);
+}
+$rep = "# LaTeX check: $main\n\n- Engine: $engine" . ($needsLua && !$hasHeb ? ' (the preamble asks for it)' : ($hasHeb ? ' (the text has Hebrew: it needs Unicode fonts)' : '')) . "; passes: $passes" . ($usedBib ? '; bibtex run' : '') . "\n- PDF: " . ($havePdf ? 'produced (' . round(filesize($pdf) / 1024) . ' KB)' : 'NOT produced') . "\n- Overfull boxes: $over; underfull: $under\n\n";
+$lines2 = [];
+foreach ($errs as [$f, $l, $m]) $lines2[] = "$f($l) Error: $m";
+$seen = []; foreach ($warns as [$f, $l, $m]) { $k = "$f|$l|$m"; if (isset($seen[$k])) continue; $seen[$k] = 1; $lines2[] = "$f($l) Warning: $m"; }
+foreach (array_slice($notes, 0, 5) as [$f, $l, $m]) $lines2[] = "$f($l) Note: $m";
+$ne = count($errs); $nw = count($seen);
+$rep .= ($lines2 ? "## Problems ($ne errors, $nw warnings)\n\n" . implode("\n", $lines2) . "\n" : "No problems found.\n") . "\n[exit code " . ($ne > 0 || !$havePdf ? 1 : 0) . "]\n";
+file_put_contents($out, $rep); echo "Wrote $out ($ne errors, $nw warnings)\n"; exit(0);

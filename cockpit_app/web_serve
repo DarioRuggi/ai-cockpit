@@ -1,0 +1,54 @@
+#!/bin/bash
+# =============================================================================
+# web_serve — a local preview of a web site folder, for the Web Site tools (tools_builtins/website.json).
+#
+#   web_serve start FOLDER OUTPUT [MINUTES]   serve FOLDER on 127.0.0.1 (a free port from 8200), stop by itself after MINUTES (default 30, 1-240);
+#                                             the address is written to OUTPUT
+#   web_serve stop  FOLDER OUTPUT             stop the preview(s) of FOLDER
+#
+# PHP's built-in server does the serving (static files, and .php files run): it needs nothing beyond PHP, and it works the same under Apache
+# and in the self-contained mode. It listens on 127.0.0.1 only (not on the network). Hidden files and folders (.git, .env) and editor backups
+# answer 404 (web_router.php). The server is detached, so the tool returns at once and the page keeps working.
+# WEB_SERVE_SECONDS overrides the time limit in seconds (for tests).
+# =============================================================================
+set -u
+SUB="${1:-}"; FOLDER="${2:-}"; OUT="${3:-}"; MIN="${4:-30}"
+HERE="$(cd "$(dirname "$0")" && pwd)"; ROUTER="$HERE/web_router.php"
+fail() { printf 'web_serve: %s\n' "$*" > "${OUT:-/dev/stderr}"; printf 'web_serve: %s\n' "$*" >&2; exit 1; }
+[ -n "$SUB" ] && [ -n "$FOLDER" ] && [ -n "$OUT" ] || { echo "usage: web_serve start|stop FOLDER OUTPUT [MINUTES]" >&2; exit 2; }
+[ -d "$FOLDER" ] || fail "no such folder: $FOLDER"
+ROOT="$(cd "$FOLDER" && pwd -P)"
+STATE="${XDG_RUNTIME_DIR:-/tmp}/cockpit_web_serve_$(id -u)"; mkdir -p "$STATE" && chmod 700 "$STATE"
+alive() { local pid="$1" port="$2"; [ -n "$pid" ] && [ -r "/proc/$pid/cmdline" ] && tr '\0' ' ' < "/proc/$pid/cmdline" | grep -q -- "-S 127.0.0.1:$port"; }
+listening() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
+case "$SUB" in
+start)
+    command -v php >/dev/null 2>&1 || fail "PHP is not installed"
+    [[ "$MIN" =~ ^[0-9]+$ ]] || MIN=30; [ "$MIN" -ge 1 ] || MIN=1; [ "$MIN" -le 240 ] || MIN=240
+    SECS="${WEB_SERVE_SECONDS:-$((MIN * 60))}"
+    # already serving this folder? say so instead of starting a second one
+    for f in "$STATE"/*.root; do [ -f "$f" ] || continue; port="$(basename "$f" .root)"
+        if [ "$(cat "$f")" = "$ROOT" ] && alive "$(cat "$STATE/$port.pid" 2>/dev/null)" "$port"; then
+            printf 'Already being served: http://127.0.0.1:%s/\nFolder: %s\nStop it with the Stop preview preset.\n' "$port" "$ROOT" > "$OUT"; exit 0; fi
+    done
+    PORT=""; for p in $(seq 8200 8299); do listening "$p" || { PORT="$p"; break; }; done
+    [ -n "$PORT" ] || fail "no free port between 8200 and 8299"
+    cd "$ROOT" || fail "cannot enter $ROOT"
+    PHP_CLI_SERVER_WORKERS=4 setsid nohup timeout "$SECS" php -S "127.0.0.1:$PORT" -t "$ROOT" "$ROUTER" >"$STATE/$PORT.log" 2>&1 < /dev/null &
+    echo $! > "$STATE/$PORT.pid"      # the pid of the timeout process, which leads its own session: stop kills the whole group
+    echo "$ROOT" > "$STATE/$PORT.root"
+    for i in $(seq 30); do listening "$PORT" && break; sleep 0.1; done
+    listening "$PORT" || fail "the preview server did not start (see $STATE/$PORT.log)"
+    { printf 'http://127.0.0.1:%s/\n\n' "$PORT"; printf 'Serving %s\n' "$ROOT"; printf 'Only this computer can open it. It stops by itself after %s.\n' "$([ -n "${WEB_SERVE_SECONDS:-}" ] && echo "$SECS seconds" || echo "$MIN minutes")"; printf 'Stop it earlier with the Stop preview preset.\n'; } > "$OUT" ;;
+stop)
+    n=0
+    for f in "$STATE"/*.root; do [ -f "$f" ] || continue; port="$(basename "$f" .root)"
+        [ "$(cat "$f")" = "$ROOT" ] || continue
+        pid="$(cat "$STATE/$port.pid" 2>/dev/null)"
+        if alive "$pid" "$port"; then kill -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null; n=$((n + 1)); fi
+        rm -f "$STATE/$port.pid" "$STATE/$port.root" "$STATE/$port.log"
+    done
+    if [ "$n" -gt 0 ]; then echo "Stopped $n preview server(s) of $ROOT" > "$OUT"; else echo "No preview of $ROOT was running" > "$OUT"; fi ;;
+*) fail "unknown subcommand '$SUB'" ;;
+esac
+exit 0

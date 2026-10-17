@@ -1,0 +1,203 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// garden_tool — the Gardening tools' work, for the tool presets (tools_builtins/garden.json). A command-line program, never reachable over the web.
+//
+//   php garden_tool calendar PLANTS OUTPUT start=YYYY-MM-DD hemisphere=north|south   sowing window (open now / opens in N days / next year) and earliest-latest harvest for every plant
+//   php garden_tool spacing  PLANTS OUTPUT bed=LENGTHxWIDTH [unit=cm|m|in|ft] [plant=NAME]   how many plants fit a bed: square grid and staggered rows, from each plant's spacing_cm
+//   php garden_tool logcheck LOG OUTPUT [plants=PLANTS.csv] [hemisphere=north|south]  check a garden log: unreadable/future dates, harvest before sowing or sooner than the plant allows, sowing out of season
+//   php garden_tool todo     PLANTS OUTPUT start=YYYY-MM-DD hemisphere=north|south [days=14] [log=LOG.csv] [water=N]   a day-by-day to-do list: sowings opening/closing, harvests due, watering
+//
+// PLANTS is a CSV with a header: name, sow_from, sow_to, harvest_days, spacing_cm (optional: hemisphere, water_days). sow_from / sow_to are months (1-12, or a month name in English, French,
+// German, Italian, Portuguese or Spanish) or MM-DD; a window may wrap the year (11 to 2). The months are taken AS WRITTEN for the gardener's own climate. If a row has a hemisphere column
+// (north or south) that differs from hemisphere=, its months are moved by six months and the output says so. A hemisphere is always an argument: none is assumed. Climate, altitude and frost
+// dates vary: the windows are the CSV's, not a forecast. The original is never changed.
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "garden_tool: $m\n"); exit($rc); }
+[$sub, $in, $out] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? ''];
+if (!in_array($sub, ['calendar', 'spacing', 'logcheck', 'todo'], true) || $in === '' || $out === '') fail('usage: garden_tool calendar|spacing|logcheck|todo FILE OUTPUT [start=YYYY-MM-DD hemisphere=north|south bed=LxW unit= plant= plants= log= days= water=]', 2);
+$opt = []; foreach (array_slice($argv, 4) as $a) foreach (preg_split('/\s+(?=\w+=)/', trim($a)) as $p) if (strpos($p, '=') !== false) { [$k, $v] = explode('=', $p, 2); $opt[strtolower(trim($k))] = trim($v); }
+date_default_timezone_set('UTC');
+
+function read_csv(string $f): array {
+    if (!is_file($f)) fail("no such file: $f");
+    $t = (string)file_get_contents($f); if (strncmp($t, "\xEF\xBB\xBF", 3) === 0) $t = substr($t, 3);
+    if (!mb_check_encoding($t, 'UTF-8')) $t = mb_convert_encoding($t, 'UTF-8', 'CP1252');
+    $t = str_replace(["\r\n", "\r"], "\n", $t); $first = strtok($t, "\n"); if ($first === false || trim($first) === '') fail("$f is empty");
+    $c = ["\t" => substr_count($first, "\t"), ';' => substr_count($first, ';'), ',' => substr_count($first, ',')]; arsort($c); $sep = array_key_first($c);
+    $rows = []; $h = fopen('php://memory', 'r+'); fwrite($h, $t); rewind($h); $ln = 0; $header = null;
+    while (($r = fgetcsv($h, 0, $sep, '"', '')) !== false) { $ln++; if ($r === [null] || (count($r) === 1 && trim((string)$r[0]) === '')) continue; if ($header === null) { $header = array_map(fn($x) => trim((string)$x), $r); continue; } $rows[] = ['line' => $ln, 'cells' => $r]; }
+    fclose($h); if ($header === null) fail('the file is empty'); return [$header, $rows];
+}
+function find_col(array $header, array $names): ?int { foreach ($header as $i => $h) { $x = mb_strtolower(trim(preg_replace('/[\s_\-.]+/u', ' ', $h))); foreach ($names as $n) if ($x === $n) return $i; } foreach ($header as $i => $h) { $x = mb_strtolower(trim(preg_replace('/[\s_\-.]+/u', ' ', $h))); foreach ($names as $n) if (in_array($n, explode(' ', $x), true)) return $i; } return null; }
+function cell(array $r, ?int $i): string { return $i === null ? '' : trim((string)($r['cells'][$i] ?? '')); }
+function num(string $s): ?float { $s = trim(str_replace(',', '.', $s)); return preg_match('/^\d+(\.\d+)?$/', $s) ? (float)$s : null; }
+function month_of(string $s): ?int {
+    $s = mb_strtolower(trim($s)); if (preg_match('/^(\d{1,2})$/', $s, $m)) return ($m[1] >= 1 && $m[1] <= 12) ? (int)$m[1] : null; if (preg_match('/^(\d{1,2})[-\/.](\d{1,2})$/', $s, $m)) return ($m[1] >= 1 && $m[1] <= 12) ? (int)$m[1] : null;
+    $s = strtr($s, ['é' => 'e', 'û' => 'u', 'ä' => 'a', 'ç' => 'c', 'ã' => 'a']); if (strncmp($s, 'juil', 4) === 0) return 7; if (strncmp($s, 'juin', 4) === 0) return 6; if (strncmp($s, 'sett', 4) === 0) return 9;
+    $m = ['jan' => 1, 'gen' => 1, 'ene' => 1, 'feb' => 2, 'fev' => 2, 'mar' => 3, 'mrz' => 3, 'apr' => 4, 'avr' => 4, 'abr' => 4, 'may' => 5, 'mai' => 5, 'mag' => 5, 'jun' => 6, 'giu' => 6, 'jul' => 7, 'lug' => 7, 'aug' => 8, 'aou' => 8, 'ago' => 8,
+        'sep' => 9, 'set' => 9, 'oct' => 10, 'okt' => 10, 'ott' => 10, 'out' => 10, 'nov' => 11, 'dec' => 12, 'dez' => 12, 'dic' => 12];
+    return $m[substr($s, 0, 3)] ?? null;
+}
+/** A window edge "month" or "MM-DD" -> [month, day|null]. */
+function edge(string $s): ?array { $m = month_of($s); if ($m === null) return null; $d = preg_match('/^\d{1,2}[-\/.](\d{1,2})$/', trim($s), $x) ? (int)$x[1] : null; return [$m, $d]; }
+function parse_date(string $s, bool &$amb): ?string {
+    $amb = false; $s = trim($s);
+    if (preg_match('/^(\d{4})-(\d{1,2})-(\d{1,2})/', $s, $m)) return checkdate((int)$m[2], (int)$m[3], (int)$m[1]) ? sprintf('%04d-%02d-%02d', $m[1], $m[2], $m[3]) : null;
+    if (preg_match('/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{4})$/', $s, $m)) { [$a, $b, $y] = [(int)$m[1], (int)$m[2], (int)$m[3]]; if ($a > 12) [$d, $mo] = [$a, $b]; elseif ($b > 12) [$d, $mo] = [$b, $a]; else { $amb = $a !== $b; [$d, $mo] = [$a, $b]; } return checkdate($mo, $d, $y) ? sprintf('%04d-%02d-%02d', $y, $mo, $d) : null; }
+    return null;
+}
+function season(int $m, string $hemi): string { $n = [12 => 'winter', 1 => 'winter', 2 => 'winter', 3 => 'spring', 4 => 'spring', 5 => 'spring', 6 => 'summer', 7 => 'summer', 8 => 'summer', 9 => 'autumn', 10 => 'autumn', 11 => 'autumn'][$m]; if ($hemi === 'south') $n = ['winter' => 'summer', 'summer' => 'winter', 'spring' => 'autumn', 'autumn' => 'spring'][$n]; return $n; }
+function hemi_arg(array $opt, bool $needed = true): string {
+    $h = strtolower($opt['hemisphere'] ?? ''); if ($h === '' && !$needed) return ''; if (!in_array($h, ['north', 'south', 'northern', 'southern'], true)) fail('give the hemisphere: hemisphere=north or hemisphere=south (no hemisphere is assumed)', 2); return substr($h, 0, 5);
+}
+function start_arg(array $opt): DateTime { $a = false; $d = isset($opt['start']) ? parse_date($opt['start'], $a) : null; if ($d === null) fail('give a start date: start=YYYY-MM-DD', 2); return new DateTime($d); }
+/** Plants: [name, from(m,d), to(m,d), harvest_days|null, spacing|null, hemisphere|'', water|null, line, shifted] */
+function load_plants(string $f, string $hemi, array &$problems): array {
+    [$h, $rows] = read_csv($f); $cn = find_col($h, ['name', 'plant', 'crop', 'nom', 'nombre', 'pflanze', 'pianta']); $cf = find_col($h, ['sow from', 'sow start', 'sow_from', 'sowfrom', 'from', 'start']); $ct = find_col($h, ['sow to', 'sow end', 'sow_to', 'sowto', 'to', 'until', 'end']);
+    $ch = find_col($h, ['harvest days', 'harvest', 'days to harvest', 'days']); $cs = find_col($h, ['spacing cm', 'spacing', 'spacing_cm']); $cx = find_col($h, ['hemisphere']); $cw = find_col($h, ['water days', 'water every', 'water']);
+    if ($cn === null || $cf === null || $ct === null) fail('the plant CSV needs the columns name, sow_from and sow_to (and harvest_days, spacing_cm)');
+    $out = []; $seen = [];
+    foreach ($rows as $r) {
+        $l = $r['line']; $name = cell($r, $cn); if ($name === '') { $problems[] = "$f($l) Error: a plant row without a name"; continue; }
+        $a = edge(cell($r, $cf)); $b = edge(cell($r, $ct)); if ($a === null || $b === null) { $problems[] = "$f($l) Error: $name: sow_from / sow_to must be months (1-12 or a month name) or MM-DD"; continue; }
+        $hd = num(cell($r, $ch)); $sp = num(cell($r, $cs)); $rh = strtolower(cell($r, $cx)); $rh = in_array($rh, ['north', 'south', 'northern', 'southern'], true) ? substr($rh, 0, 5) : ''; $shift = false;
+        if ($rh !== '' && $hemi !== '' && $rh !== $hemi) { $a[0] = (($a[0] + 5) % 12) + 1; $b[0] = (($b[0] + 5) % 12) + 1; $shift = true; }
+        if (isset($seen[mb_strtolower($name)])) $problems[] = "$f($l) Warning: $name is listed twice (also line {$seen[mb_strtolower($name)]})"; else $seen[mb_strtolower($name)] = $l;
+        if ($ch !== null && cell($r, $ch) !== '' && $hd === null) $problems[] = "$f($l) Warning: $name: harvest_days \"" . cell($r, $ch) . '" is not a number';
+        $out[] = ['name' => $name, 'from' => $a, 'to' => $b, 'hd' => $hd, 'sp' => $sp, 'water' => $cw !== null ? num(cell($r, $cw)) : null, 'line' => $l, 'shift' => $shift];
+    }
+    if (!$out) fail('no plants in ' . basename($f));
+    return $out;
+}
+/** The window instance (start, end DateTimes) of a plant for a given year, starting in $year. */
+function window_in(array $p, int $year): array {
+    [$m1, $d1] = $p['from']; [$m2, $d2] = $p['to']; $s = new DateTime(sprintf('%04d-%02d-%02d', $year, $m1, $d1 ?? 1)); $ey = ($m2 < $m1 || ($m2 === $m1 && $d2 !== null && $d2 < ($d1 ?? 1))) ? $year + 1 : $year;
+    $e = $d2 !== null ? new DateTime(sprintf('%04d-%02d-%02d', $ey, $m2, min($d2, (int)date('t', mktime(0, 0, 0, $m2, 1, $ey))))) : new DateTime(sprintf('%04d-%02d-01', $ey, $m2)); if ($d2 === null) $e->modify('last day of this month'); return [$s, $e];
+}
+function nf(float $v): string { return strpos((string)round($v, 1), '.') === false ? (string)round($v, 1) : rtrim(rtrim(number_format($v, 1, '.', ''), '0'), '.'); }
+function day(DateTime $d): string { return $d->format('Y-m-d'); }
+function days_between(DateTime $a, DateTime $b): int { return (int)$a->diff($b)->format('%r%a'); }
+/** the window that contains $t or the next one after it: [start, end, open(bool)] */
+function next_window(array $p, DateTime $t): array {
+    $y = (int)$t->format('Y');
+    foreach ([$y - 1, $y, $y + 1] as $yy) { [$s, $e] = window_in($p, $yy); if ($t >= $s && $t <= $e) return [$s, $e, true]; }
+    foreach ([$y - 1, $y, $y + 1] as $yy) { [$s, $e] = window_in($p, $yy); if ($s > $t) return [$s, $e, false]; }
+    [$s, $e] = window_in($p, $y + 1); return [$s, $e, false];
+}
+function find_plant(array $plants, string $q): ?array { foreach ($plants as $p) if (mb_strtolower($p['name']) === mb_strtolower($q)) return $p; foreach ($plants as $p) if (mb_stripos($p['name'], $q) !== false) return $p; return null; }
+$problems = [];
+$pname = basename($in);
+
+// ---- calendar -------------------------------------------------------------------------------------------------------------------------------------
+if ($sub === 'calendar') {
+    $hemi = hemi_arg($opt); $t = start_arg($opt); $plants = load_plants($in, $hemi, $problems); $rows = [];
+    foreach ($plants as $p) {
+        [$s, $e, $open] = next_window($p, $t);
+        if ($open) $status = 'open now, closes in ' . days_between($t, $e) . ' days'; else { $dd = days_between($t, $s); $status = "opens in $dd days"; }
+        $first = $open ? $t : $s; $h1 = $p['hd'] !== null ? (clone $first)->modify('+' . (int)$p['hd'] . ' days') : null; $h2 = $p['hd'] !== null ? (clone $e)->modify('+' . (int)$p['hd'] . ' days') : null;
+        $rows[] = [$s->format('U'), $p, $s, $e, $status, $h1, $h2, $open];
+    }
+    usort($rows, fn($a, $b) => ($b[7] <=> $a[7]) ?: ($a[0] <=> $b[0]));
+    $o = "# Sowing calendar from " . day($t) . " ($hemi hemisphere, " . season((int)$t->format('n'), $hemi) . ")\n\nSource: $pname. Windows are the file's own months; harvest = the sowing day plus harvest_days (earliest if sown on the first day, latest if sown on the last).\n\n| Plant | Sow from | Sow until | Status | Harvest from | Harvest until | Spacing |\n|---|---|---|---|---|---|---|\n";
+    foreach ($rows as [$k, $p, $s, $e, $st, $h1, $h2, $open]) $o .= '| ' . $p['name'] . ($p['shift'] ? ' (months moved 6)' : '') . ' | ' . day($s) . ' | ' . day($e) . " | $st | " . ($h1 ? day($h1) : '?') . ' | ' . ($h2 ? day($h2) : '?') . ' | ' . ($p['sp'] !== null ? nf($p['sp']) . ' cm' : '?') . " |\n";
+    $mv = array_filter($plants, fn($p) => $p['shift']); if ($mv) $o .= "\nRows whose hemisphere column differs from $hemi had their months moved by six: that is a rough guide, check it against local knowledge.\n";
+    $o .= "\nThese dates come from your CSV, not a forecast: frost, altitude and weather move the real dates.\n" . ($problems ? "\n" . implode("\n", $problems) . "\n" : '');
+    file_put_contents($out, $o); echo "Wrote $out (" . count($plants) . " plants)\n"; exit(0);
+}
+
+// ---- spacing --------------------------------------------------------------------------------------------------------------------------------------
+if ($sub === 'spacing') {
+    if (!preg_match('/^(\d+(?:[.,]\d+)?)\s*[xX×]\s*(\d+(?:[.,]\d+)?)$/', $opt['bed'] ?? '', $m)) fail('give the bed size: bed=LENGTHxWIDTH, e.g. bed=240x120 unit=cm', 2);
+    $unit = strtolower($opt['unit'] ?? 'cm'); $f = ['cm' => 1, 'm' => 100, 'in' => 2.54, 'ft' => 30.48][$unit] ?? null; if ($f === null) fail('unit must be cm, m, in or ft', 2);
+    $L = (float)str_replace(',', '.', $m[1]) * $f; $W = (float)str_replace(',', '.', $m[2]) * $f; if ($L <= 0 || $W <= 0) fail('the bed has no area', 2);
+    $plants = load_plants($in, '', $problems); if (isset($opt['plant'])) { $p = find_plant($plants, $opt['plant']); if (!$p) fail('no plant matching "' . $opt['plant'] . '" in ' . $pname); $plants = [$p]; }
+    $o = '# Plants per bed: ' . nf($L) . ' x ' . nf($W) . " cm\n\nSource: $pname. Each plant gets a square of its spacing_cm (grid) or the same distance to all six neighbours (staggered rows).\n\n| Plant | Spacing | Grid | Staggered | Note |\n|---|---|---|---|---|\n"; $lines = [];
+    foreach ($plants as $p) {
+        $s = $p['sp']; if ($s === null || $s <= 0) { $o .= '| ' . $p['name'] . " | ? | | | no spacing_cm in the file |\n"; $problems[] = "$pname({$p['line']}) Warning: {$p['name']} has no usable spacing_cm"; continue; }
+        $note = ''; if ($s > $L || $s > $W) { $grid = 0; $stag = 0; $note = 'does not fit even one plant'; }
+        else {
+            $grid = (int)floor($L / $s + 1e-9) * (int)floor($W / $s + 1e-9);
+            $pitch = $s * 0.8660254; $rowsN = (int)floor(($W - $s) / $pitch + 1e-9) + 1; $a = (int)floor($L / $s + 1e-9); $b = (int)floor(($L - $s / 2) / $s + 1e-9) + 0; $b = max(0, $b); $stag = 0; for ($i = 0; $i < $rowsN; $i++) $stag += ($i % 2 === 0) ? $a : $b;
+            if ($stag > $grid) $note = '+' . ($stag - $grid) . ' by staggering'; elseif ($stag < $grid) { $stag = $grid; $note = 'staggering gains nothing here'; }
+        }
+        $o .= '| ' . $p['name'] . ' | ' . nf($s) . " cm | $grid | $stag | $note |\n";
+    }
+    file_put_contents($out, $o . "\nCounts are the most that fit at the stated spacing, with no path or margin. Seed packets often advise sowing more thickly and thinning later: follow the packet.\n"); echo "Wrote $out\n"; exit(0);
+}
+
+// ---- logcheck -------------------------------------------------------------------------------------------------------------------------------------
+$ACT = ['sow' => '/^(sow|sown|sowing|seed|seeded|semis|semer|sem[eé]|aussaat|aussaen|semina|seminato|siembra|sembrar|sembrado|semeadura|semear|semeado)/iu', 'harvest' => '/^(harvest|harvested|pick|picked|r[eé]colt|ernte|ernten|geerntet|raccolt|cosech|colheita|colhid|colher)/iu',
+    'transplant' => '/^(transplant|planted out|plant out|plant|planted|repiq|plant[eé]|auspflanz|pflanz|trapiant|trasplant|transplant)/iu', 'water' => '/^(water|watered|watering|arros|eau|gie[sß]|ann?affi|riego|regar|rega|irrig)/iu'];
+if ($sub === 'logcheck') {
+    $hemi = hemi_arg($opt, false); $plants = isset($opt['plants']) ? load_plants($opt['plants'], $hemi, $problems) : []; [$h, $rows] = read_csv($in);
+    $cd = find_col($h, ['date', 'fecha', 'datum', 'data']); $cp = find_col($h, ['plant', 'crop', 'name', 'planta', 'pflanze', 'pianta']); $ca = find_col($h, ['action', 'task', 'activity', 'tarea', 'aktion', 'azione', 'accion']); $cb = find_col($h, ['bed', 'plot', 'area', 'location', 'bancal', 'beet', 'aiuola', 'canteiro']);
+    if ($cd === null || $cp === null || $ca === null) fail('the log CSV needs the columns date, plant and action (bed is optional)');
+    $msgs = array_filter($problems, fn($x) => true); $problems = []; $err = 0; $warn = 0; $today = date('Y-m-d'); $sown = []; $seen = []; $ambNoted = false; $n = 0;
+    $add = function (string $k, int $l, string $m) use (&$msgs, &$err, &$warn, $pname) { $msgs[] = "$pname($l) $k: $m"; if ($k === 'Error') $err++; elseif ($k === 'Warning') $warn++; };
+    $events = [];
+    foreach ($rows as $r) {
+        $n++; $l = $r['line']; $amb = false; $d = parse_date(cell($r, $cd), $amb); $pl = cell($r, $cp); $ac = cell($r, $ca); $bed = cell($r, $cb);
+        if ($d === null) { $add('Error', $l, 'the date "' . cell($r, $cd) . '" cannot be read (use YYYY-MM-DD)'); continue; }
+        if ($amb && !$ambNoted) { $add('Note', $l, 'the date "' . cell($r, $cd) . '" could be day-first or month-first: read as day first; use YYYY-MM-DD to be exact'); $ambNoted = true; }
+        if ($pl === '') { $add('Warning', $l, 'no plant named'); continue; }
+        if ($d > $today) $add('Warning', $l, "the date $d is in the future");
+        $kind = null; foreach ($ACT as $k => $re) if (preg_match($re, $ac)) { $kind = $k; break; } if ($kind === null) $add('Note', $l, 'the action "' . $ac . '" is not one of sow, plant out, water, harvest (kept, not checked)');
+        $key = mb_strtolower($d . '|' . $pl . '|' . $bed . '|' . $ac); if (isset($seen[$key])) $add('Warning', $l, 'looks like a duplicate of line ' . $seen[$key]); else $seen[$key] = $l;
+        $events[] = [$d, $l, mb_strtolower($pl), $pl, $bed, $kind];
+        $pp = $plants ? find_plant($plants, $pl) : null;
+        if ($kind === 'sow' && $pp) {
+            [$s0, $e0, $o0] = next_window($pp, new DateTime($d)); if (!$o0) { $add('Warning', $l, "$pl sown on $d, outside its sowing window in {$opt['plants']} (" . $pp['from'][0] . '-' . $pp['to'][0] . ' as months)'); }
+        }
+    }
+    usort($events, fn($a, $b) => strcmp($a[0], $b[0]) ?: ($a[1] <=> $b[1]));
+    $first = [];
+    foreach ($events as [$d, $l, $pk, $pl, $bed, $kind]) {
+        $k = $pk . '|' . mb_strtolower($bed);
+        if ($kind === 'sow' || $kind === 'transplant') { if (!isset($first[$k])) $first[$k] = [$d, $kind]; }
+        if ($kind === 'harvest') {
+            if (!isset($first[$k])) { $add('Warning', $l, "$pl" . ($bed !== '' ? " in $bed" : '') . " harvested on $d with no sowing or planting of it in the log"); continue; }
+            $pp = $plants ? find_plant($plants, $pl) : null; $age = days_between(new DateTime($first[$k][0]), new DateTime($d));
+            if ($pp && $pp['hd'] !== null && $first[$k][1] === 'sow' && $age < 0.6 * $pp['hd']) $add('Warning', $l, "$pl harvested $age days after sowing; the plant file says about " . (int)$pp['hd'] . ' days to harvest');
+        }
+    }
+    if (!$n) $add('Warning', 1, 'the log has no rows');
+    $rep = "# Garden log check: $pname\n\n" . ($msgs ? "## Findings ($err errors, $warn warnings)\n\n" . implode("\n", $msgs) . "\n" : "No problems found.\n") . "\nFinds out-of-order and implausible entries only; it does not know your weather. A harvest much earlier than the plant file's days is flagged below 60% of them.\n\n[exit code " . ($err > 0 ? 1 : 0) . "]\n";
+    file_put_contents($out, $rep); echo "Wrote $out ($err errors, $warn warnings)\n"; exit(0);
+}
+
+// ---- todo -------------------------------------------------------------------------------------------------------------------------------------------------
+$hemi = hemi_arg($opt); $t = start_arg($opt); $nd = (int)($opt['days'] ?? 14); if ($nd < 1 || $nd > 366) fail('days= must be 1 to 366', 2);
+$plants = load_plants($in, $hemi, $problems); $end = (clone $t)->modify('+' . ($nd - 1) . ' days'); $tasks = []; $dwater = isset($opt['water']) ? (int)$opt['water'] : 0;
+$add = function (DateTime $d, string $x) use (&$tasks) { $tasks[day($d)][] = $x; };
+foreach ($plants as $p) {
+    [$s, $e, $open] = next_window($p, $t);
+    if ($open) { if ($t <= $e) { $left = days_between($t, $e); $add($t, 'Sowing window for ' . $p['name'] . " is open (closes " . day($e) . ", $left days)"); } }
+    elseif ($s <= $end) $add($s, 'Sowing window for ' . $p['name'] . ' opens (until ' . day($e) . ')');
+    if ($e >= $t && $e <= $end) $add($e, 'LAST DAY to sow ' . $p['name'] . ' in this window');
+}
+$logNote = '';
+if (isset($opt['log'])) {
+    [$h, $rows] = read_csv($opt['log']); $cd = find_col($h, ['date', 'fecha', 'datum', 'data']); $cp = find_col($h, ['plant', 'crop', 'name', 'planta', 'pflanze', 'pianta']); $ca = find_col($h, ['action', 'task', 'activity', 'tarea', 'aktion', 'azione', 'accion']); $cb = find_col($h, ['bed', 'plot', 'area', 'location', 'bancal', 'beet', 'aiuola', 'canteiro']);
+    if ($cd === null || $cp === null || $ca === null) fail('the log CSV needs the columns date, plant and action');
+    $lastW = []; $sownOn = []; $harv = [];
+    foreach ($rows as $r) {
+        $amb = false; $d = parse_date(cell($r, $cd), $amb); if ($d === null || cell($r, $cp) === '') continue; $pl = cell($r, $cp); $bed = cell($r, $cb); $ac = cell($r, $ca); $k = mb_strtolower($pl . '|' . $bed);
+        if (preg_match($ACT['sow'], $ac) || preg_match($ACT['transplant'], $ac)) { $sownOn[$k] = [$d, $pl, $bed]; $lastW[$k] = max($lastW[$k] ?? '', $d); }
+        elseif (preg_match($ACT['water'], $ac)) $lastW[$k] = max($lastW[$k] ?? '', $d);
+        elseif (preg_match($ACT['harvest'], $ac)) $harv[$k] = $d;
+    }
+    foreach ($sownOn as $k => [$d, $pl, $bed]) {
+        $pp = find_plant($plants, $pl); $lab = $pl . ($bed !== '' ? " ($bed)" : ''); if (isset($harv[$k]) && $harv[$k] >= $d) continue;
+        if ($pp && $pp['hd'] !== null) { $hd = (new DateTime($d))->modify('+' . (int)$pp['hd'] . ' days'); if ($hd >= $t && $hd <= $end) $add($hd, "Harvest due about now: $lab (sown $d, ~" . (int)$pp['hd'] . ' days)'); elseif ($hd < $t) $add($t, "Harvest overdue or ready: $lab (sown $d, ~" . (int)$pp['hd'] . ' days, due about ' . day($hd) . ')'); }
+        $wd = $pp && $pp['water'] ? (int)$pp['water'] : $dwater;
+        if ($wd > 0) { $next = (new DateTime($lastW[$k]))->modify("+$wd days"); while ($next < $t) $next->modify("+$wd days"); for (; $next <= $end; $next->modify("+$wd days")) $add(clone $next, "Water $lab (every $wd days)"); }
+    }
+    $logNote = 'Harvests and watering come from ' . basename($opt['log']) . ' (plants sown or planted out and not yet harvested).';
+} else $logNote = 'No log given: only sowing windows are listed. Add log=FILE.csv to get harvests and watering for what is already in the ground.';
+ksort($tasks);
+$o = '# To-do from ' . day($t) . ' for ' . $nd . " days ($hemi hemisphere, " . season((int)$t->format('n'), $hemi) . ")\n\n";
+if (!$tasks) $o .= "Nothing scheduled in this period.\n"; foreach ($tasks as $d => $xs) { $o .= '## ' . $d . ' (' . (new DateTime($d))->format('D') . ")\n\n"; foreach (array_unique($xs) as $x) $o .= "- [ ] $x\n"; $o .= "\n"; }
+$o .= "$logNote\nWatering needs depend on weather and soil: the interval is the one you gave, not a measurement. Dates come from your CSV, not a forecast.\n" . ($problems ? "\n" . implode("\n", $problems) . "\n" : '');
+file_put_contents($out, $o); echo "Wrote $out (" . array_sum(array_map('count', $tasks)) . " tasks)\n"; exit(0);

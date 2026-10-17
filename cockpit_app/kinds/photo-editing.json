@@ -1,0 +1,31 @@
+{
+    "id": "photo-editing",
+    "name": "Photo editing",
+    "icon": "photo_library",
+    "description": "Photo folders: checked, cleaned of hidden data, resized, de-duplicated.",
+    "detect": [
+        "*.jpg",
+        "*.jpeg",
+        "*.heic"
+    ],
+    "note": "This is a photo project. The originals are irreplaceable: never overwrite, move or delete a photo, write every result under a new name or in a new folder, and show the user a plan before any batch operation. A photo can carry a hidden GPS location, the camera and the exact time: before photos are shared or published, run the Photo check and offer a stripped or web-ready copy. Apply the rotation tag before resizing or stripping, convert to sRGB for the web, never enlarge, and keep JPEG quality 80 to 90. Duplicates are found by a fingerprint and may be false matches: list them and let the user decide. Never claim a photo was taken somewhere or at some time that its metadata does not say.",
+    "verify": "photo check",
+    "group": "Media",
+    "details": "Looking after photo folders. The Photo tool reads EXIF without exiftool (camera, date taken, orientation, GPS) and shows one photo or a table of a folder; warns about hidden GPS locations, huge files, CMYK JPEGs, rotation tags that other tools ignore and files that are not photos; removes all metadata after applying the rotation; makes web-ready copies (rotated, stripped, sRGB, shrunk) one at a time or for a whole folder in a zip; auto-levels gently; draws a contact sheet; finds exact and near-duplicate photos; and proposes names by date taken without renaming anything. File types are judged by content and passed to ImageMagick as an explicit decoder. With exiftool installed it also lists every tag (lens, ISO, serial numbers, owner), writes artist, copyright and keywords into a copy, and shifts all dates for a camera clock that was wrong.",
+    "examples": [
+        "Strip the GPS location from the photos before I post them",
+        "Make web-sized copies of this whole folder",
+        "Find the duplicates in my camera dump",
+        "A rename plan by date taken for the holiday folder"
+    ],
+    "tools": [
+        {
+            "tool": "photo",
+            "why": "info, check, strip, web-ready copies, batch, contact sheet, duplicates, rename plan"
+        },
+        {
+            "tool": "imagemagick",
+            "why": "format conversion, thumbnails, resize, grayscale"
+        }
+    ]
+}

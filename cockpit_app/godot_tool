@@ -1,0 +1,110 @@
+#!/bin/bash
+# =============================================================================
+# godot_tool — the Godot tools' work, for the tool presets (tools_builtins/godot.json): check every GDScript of a project, run it
+# headless for a few seconds, list its export presets, compare its Godot version with the installed one.
+#
+#   godot_tool check    IN OUT          every .gd under the project (or just IN, when it is a .gd file): the parse errors, one per
+#                                       line as  file(line) Error: message  (the form the build summary box reads), then [exit code N]
+#   godot_tool run      IN OUT [SECS]   the project's main scene headless for SECS seconds (default 5, at most 60): its output
+#   godot_tool exports  IN OUT          the export presets of export_presets.cfg
+#   godot_tool version  IN OUT          the project's Godot version against the installed binary
+#
+# IN is a project folder (the one with project.godot), any folder or file inside it, or a .gd file. Nothing in the project is
+# written to except Godot's own .godot/ cache folder (Godot makes it on every headless start).
+# The binary: $GODOT, else `godot` on the PATH, else the one fetched without root into <home>/.local/share/cockpit/tools/godot/
+# (<home> read from this install's paths.json, because the web server's own HOME is not the owner's).
+# =============================================================================
+set -u
+SUB="${1:-}"; IN="${2:-}"; OUT="${3:-}"; ARG="${4:-}"
+fail() { printf 'godot_tool: %s\n' "$*" > "${OUT:-/dev/stderr}"; printf 'godot_tool: %s\n' "$*" >&2; exit 1; }
+[ -n "$SUB" ] && [ -n "$IN" ] && [ -n "$OUT" ] || { echo "usage: godot_tool check|run|exports|version INPUT OUTPUT [SECONDS]" >&2; exit 2; }
+[ -e "$IN" ] || fail "no such file or folder: $IN"
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+find_godot() {
+    local c h
+    [ -n "${GODOT:-}" ] && [ -x "$GODOT" ] && { printf '%s' "$GODOT"; return; }
+    c="$(command -v godot 2>/dev/null)"; [ -n "$c" ] && { printf '%s' "$c"; return; }
+    h="$(grep -o '"home": *"[^"]*"' "$HERE/paths.json" 2>/dev/null | head -1 | sed 's/.*: *"\(.*\)"/\1/')"
+    [ -n "$h" ] || h="${HOME:-}"
+    for c in "$h/.local/share/cockpit/tools/godot/godot" "$h/.local/bin/godot"; do [ -x "$c" ] && { printf '%s' "$c"; return; }; done
+}
+GD="$(find_godot)"
+[ -n "$GD" ] || fail "Godot is not installed. Fetch the Godot 4 Linux build from https://godotengine.org/download/linux/ into ~/.local/share/cockpit/tools/godot/ (a binary named godot), or set GODOT to its path."
+
+# the project root: the nearest folder at or above IN that holds project.godot
+d="$IN"; [ -d "$d" ] || d="$(dirname "$d")"
+ROOT=""; while [ "$d" != "/" ] && [ -n "$d" ]; do [ -f "$d/project.godot" ] && { ROOT="$d"; break; }; d="$(dirname "$d")"; done
+[ -n "$ROOT" ] || fail "no project.godot at or above $IN: give the project's folder"
+ROOT="$(cd "$ROOT" && pwd)"
+
+if [ "$SUB" = check ]; then
+    if [ -f "$IN" ]; then
+        case "$IN" in *.gd) FILES="$(cd "$(dirname "$IN")" && printf '%s/%s\n' "$PWD" "$(basename "$IN")")" ;; *) fail "check takes a project folder or a .gd file" ;; esac
+    else
+        FILES="$(find "$ROOT" \( -name .godot -o -name .git -o -name addons -o -name '.*' \) -prune -o -name '*.gd' -type f -print | sort)"
+    fi
+    [ -n "$FILES" ] || fail "no .gd scripts in $ROOT"
+    : > "$OUT"; bad=0; n=0
+    while IFS= read -r f; do
+        rel="${f#"$ROOT"/}"; n=$((n + 1))
+        # Godot prints each problem as "SCRIPT ERROR: Parse Error: message" then "at: GDScript::reload (res://file.gd:LINE)"; the same
+        # place is reported twice with two wordings, so keep the first message per line.
+        timeout 60 "$GD" --headless --path "$ROOT" --check-only --script "res://$rel" 2>&1 | awk -v rel="$rel" '
+            /^SCRIPT ERROR: / { msg = $0; sub(/^SCRIPT ERROR: (Parse Error: )?/, "", msg); next }
+            /^ +at: GDScript::reload \(res:\/\// { if (msg != "") { l = $0; sub(/.*:/, "", l); sub(/\).*/, "", l); if (!(l in seen)) { seen[l] = 1; printf "%s(%s) Error: %s\n", rel, l, msg } } msg = ""; next }
+            /^ERROR: Failed to load script/ { next }
+            /^Godot Engine v/ { next }
+            /^[[:space:]]*$/ { next }
+            /^(ERROR|SCRIPT ERROR|WARNING|SCRIPT WARNING):/ { print rel "(1) Error: " $0 }' >> "$OUT.part"
+        if [ -s "$OUT.part" ]; then bad=$((bad + 1)); cat "$OUT.part" >> "$OUT"; fi
+        rm -f "$OUT.part"
+    done <<< "$FILES"
+    printf '%s script(s) checked, %s with errors.\n[exit code %s]\n' "$n" "$bad" "$([ "$bad" = 0 ] && echo 0 || echo 1)" >> "$OUT"
+    exit 0
+fi
+
+if [ "$SUB" = run ]; then
+    secs="$(printf '%s' "$ARG" | tr -dc '0-9')"; [ -n "$secs" ] || secs=5; [ "$secs" -gt 60 ] && secs=60; [ "$secs" -lt 1 ] && secs=1
+    timeout "$((secs + 20))" "$GD" --headless --path "$ROOT" --quit-after "$((secs * 60))" > "$OUT" 2>&1
+    rc=$?; [ "$rc" = 124 ] && rc=0     # the safety timeout fired: the run itself was fine
+    printf '[exit code %s]\n' "$rc" >> "$OUT"
+    exit 0
+fi
+
+if [ "$SUB" = exports ]; then
+    CFG="$ROOT/export_presets.cfg"
+    if [ ! -f "$CFG" ]; then printf 'No export_presets.cfg in %s: the project has no export presets yet (Godot editor: Project > Export).\n' "$ROOT" > "$OUT"; exit 0; fi
+    {
+        echo "Export presets of $ROOT:"; echo
+        awk -F= '/^name=/ { gsub(/"/, "", $2); n = $2 } /^platform=/ { gsub(/"/, "", $2); p = $2 } /^export_path=/ { gsub(/"/, "", $2); e = $2; printf "- %s  (%s)  ->  %s\n", n, p, (e == "" ? "no path set" : e) }' "$CFG"
+    } > "$OUT"
+    exit 0
+fi
+
+if [ "$SUB" = version ]; then
+    have="$("$GD" --version 2>/dev/null | head -1)"
+    cv="$(grep -E '^config_version=' "$ROOT/project.godot" | head -1 | cut -d= -f2)"
+    feat="$(grep -E '^config/features=' "$ROOT/project.godot" | head -1 | grep -o '"[0-9][0-9.]*"' | head -1 | tr -d '"')"
+    case "$cv" in 5) want="Godot 4.x" ;; 4) want="Godot 3.x" ;; 3|2) want="Godot 2.x/3.0 (very old)" ;; *) want="unknown" ;; esac
+    {
+        echo "Project:   $ROOT"
+        echo "Project file format (config_version): ${cv:-?}  =>  $want${feat:+  (features say $feat)}"
+        echo "Installed: ${have:-unknown}"
+        echo
+        if [ "$cv" = 5 ]; then
+            if [ -n "$feat" ] && [ "${feat%%.*}" = "${have%%.*}" ]; then
+                echo "The project is a Godot 4 project and so is the installed binary."
+                hv="$(printf '%s' "$have" | cut -d. -f1-2)"
+                [ "$feat" != "$hv" ] && echo "Note: the project was last saved with $feat, the binary is $hv: opening it in a newer editor may upgrade its files, so keep it under git."
+            else
+                echo "The project is a Godot 4 project."
+            fi
+        else
+            echo "This project is NOT a Godot 4 project: the installed binary cannot open it. Use a Godot 3.x binary for it, or port it to 4 (the editor has Project > Tools > Upgrade)."
+        fi
+    } > "$OUT"
+    exit 0
+fi
+
+fail "unknown subcommand: $SUB (check | run | exports | version)"

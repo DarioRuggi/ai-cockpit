@@ -1,0 +1,37 @@
+{
+    "id": "gardening",
+    "name": "Gardening and plants",
+    "icon": "potted_plant",
+    "description": "What to sow and harvest when, how many plants fit a bed, a checked garden log and a to-do list.",
+    "detect": [],
+    "note": "This is a gardening project: a plant file (CSV: name, sow_from, sow_to, harvest_days, spacing_cm), a garden log and notes. Never invent a sowing date, a spacing, a frost date or a harvest time: they come from the user's files or a seed packet, and the user's own climate decides. Ask which hemisphere and region if it matters; never assume one. Say when a window was moved by six months for the other hemisphere, because that is only a rough guide. Do not give plant-health, pesticide or safety advice beyond what the packet says; if a plant may be poisonous to pets or children, tell the user to check a reliable source. Keep the originals and write new copies. Run the Garden Log check after every change to the log and fix what it lists.",
+    "verify": "garden logcheck",
+    "group": "Home & life",
+    "details": "A garden kept in plain files. The Garden planner reads a plant CSV and, for a start date and a hemisphere you name, shows what can be sown now or later, with the earliest and latest harvest dates; counts how many plants fit a bed from each plant's spacing (square grid and staggered rows); checks a garden log for impossible dates, harvests before sowing, harvests far sooner than the plant allows and sowings out of season; and writes a day-by-day to-do list of sowings, harvests and watering. Months can be numbers or names in six languages. The dates are your CSV's, not a forecast.",
+    "examples": [
+        "What can I sow from 1 March in the southern hemisphere?",
+        "How many lettuces fit a 2.4 by 1.2 metre bed?",
+        "Check my garden log for impossible harvest dates",
+        "A two-week watering and sowing to-do list"
+    ],
+    "tools": [
+        {
+            "tool": "garden",
+            "why": "sowing and harvest calendar, bed counts, log check, to-do list"
+        },
+        {
+            "tool": "data",
+            "why": "ask the plant file or the log free-form questions in SQL"
+        }
+    ],
+    "starter": [
+        {
+            "path": "plants.csv",
+            "content": "name,sow_from,sow_to,harvest_days,spacing_cm\nLettuce,3,8,55,25\nCarrot,4,7,80,5\nRadish,3,9,30,3\n"
+        },
+        {
+            "path": "log.csv",
+            "content": "date,bed,plant,action\n"
+        }
+    ]
+}

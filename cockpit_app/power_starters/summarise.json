@@ -1,0 +1,19 @@
+{
+    "id": "summarise",
+    "name": "Summarise",
+    "icon": "summarize",
+    "colour": "",
+    "description": "A few short sentences with the main points.",
+    "prompt": "Summarise the text in a few short sentences that give the main points. Use the language of the text. Return only the summary.",
+    "skill": "",
+    "supplier": {
+        "type": "ollama",
+        "model": ""
+    },
+    "input": "clipboard",
+    "output": "notify",
+    "tools": "none",
+    "confirm": "first",
+    "allow_secrets": false,
+    "starter": true
+}

@@ -1,0 +1,86 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// ebook_tool — the E-book / publishing tools' work, for the tool presets (tools_builtins/ebook.json). A command-line program, never reachable over the web.
+//
+//   php ebook_tool check   BOOK.epub OUTPUT            epubcheck (the official validator): errors and warnings as file(line,col), with the epubcheck code, then [exit code N]
+//   php ebook_tool inspect BOOK.epub OUTPUT            what is inside: EPUB version, title, author, language, identifier, chapters, images, fonts, CSS, scripts, remote links, cover, size
+//   php ebook_tool build   FOLDER|FILE.md OUTPUT.epub [title= author= lang=en cover=PATH css=PATH]   an EPUB from markdown (every .md of the folder in order, or one file) with pandoc
+//   php ebook_tool new     FOLDER OUTPUT NAME          a book skeleton NAME/ with metadata.yaml, two chapters and a stylesheet; never overwrites
+//
+// The sources and the book are never changed by check and inspect. Needs Java and epubcheck for check, pandoc for build.
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "ebook_tool: $m\n"); exit($rc); }
+[$sub, $in, $out] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? '']; $args = array_slice($argv, 4);
+if (!in_array($sub, ['check', 'inspect', 'build', 'new'], true) || $in === '' || $out === '') fail('usage: ebook_tool check|inspect|build|new INPUT OUTPUT [ARGS]', 2);
+$opt = []; foreach ($args as $a) foreach (preg_split('/[\s;]+(?=\w+=)/', trim($a)) as $p) if (strpos($p, '=') !== false) { [$k, $v] = explode('=', $p, 2); $opt[strtolower(trim($k))] = trim($v, " \t\"'"); }
+function sh(string $cmd, ?int &$rc = null, int $secs = 120): string { $o = []; exec('timeout ' . $secs . ' ' . $cmd . ' 2>&1', $o, $rc); return implode("\n", $o); }
+function have(string $b): bool { return trim((string)shell_exec('command -v ' . escapeshellarg($b) . ' 2>/dev/null')) !== ''; }
+$home = ''; if (preg_match('/"home"\s*:\s*"([^"]*)"/', (string)@file_get_contents(__DIR__ . '/paths.json'), $pm)) $home = $pm[1]; if ($home === '') $home = getenv('HOME') ?: '';
+
+if ($sub === 'new') {
+    if (!is_dir($in)) fail('new: give the folder to create the book in'); $nm = preg_replace('/[^A-Za-z0-9_-]/', '', preg_split('/\s+/', trim($args[0] ?? ''))[0] ?? ''); if ($nm === '' || strpos($args[0] ?? '', '=') !== false) fail('new: type the book\'s name in the extra arguments (letters, digits, - and _)');
+    $d = rtrim($in, '/') . '/' . $nm; if (file_exists($d)) fail("new: $d already exists, nothing was changed"); mkdir($d, 0775, true);
+    file_put_contents("$d/metadata.yaml", "---\ntitle: \"$nm\"\nauthor: \"Author Name\"\nlang: en\ndate: \"" . date('Y-m-d') . "\"\nrights: \"© " . date('Y') . " Author Name\"\nidentifier: \"urn:uuid:" . sprintf('%04x%04x-%04x-4%03x-%04x-%04x%04x%04x', mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xfff), mt_rand(0x8000, 0xbfff), mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffff)) . "\"\n---\n");
+    file_put_contents("$d/01-first-chapter.md", "# First chapter\n\nThe first paragraph of the book.\n\n## A section\n\nMore text.\n");
+    file_put_contents("$d/02-second-chapter.md", "# Second chapter\n\nThe story goes on. A footnote.[^1]\n\n[^1]: The note text.\n");
+    file_put_contents("$d/style.css", "body { font-family: serif; line-height: 1.5; margin: 1em; }\nh1 { page-break-before: always; margin-top: 2em; }\nblockquote { margin-left: 1.5em; font-style: italic; }\n");
+    file_put_contents($out, "Created $d: metadata.yaml, two chapters, style.css. Next: Build the EPUB on the folder, then Check it (epubcheck). Add a cover with cover=PATH.png at build time.\n[exit code 0]\n"); echo "Created $d\n"; exit(0);
+}
+if (!file_exists($in)) fail("no such file or folder: $in");
+
+if ($sub === 'build') {
+    if (!have('pandoc')) fail('pandoc is not installed (sudo apt install pandoc)'); if (strtolower(pathinfo($out, PATHINFO_EXTENSION)) !== 'epub') fail('the output must be .epub');
+    $src = []; $meta = null;
+    if (is_dir($in)) { foreach (new DirectoryIterator($in) as $f) { if ($f->isDot() || !$f->isFile() || $f->isLink()) continue; $n = $f->getFilename(); if (preg_match('/\.(md|markdown)$/i', $n) && !preg_match('/^(readme|notes)\./i', $n)) $src[] = $f->getPathname(); elseif ($n === 'metadata.yaml' || $n === 'metadata.yml') $meta = $f->getPathname(); } usort($src, fn($a, $b) => strnatcasecmp(basename($a), basename($b))); }
+    else $src = [$in];
+    if (!$src) fail('no .md chapters found'); $cwd = is_dir($in) ? $in : dirname($in); $css = $opt['css'] ?? ''; if ($css === '' && is_file("$cwd/style.css")) $css = "$cwd/style.css";
+    // pandoc without its sandbox must read images, the stylesheet and the cover, so the SOURCES are checked first: nothing may point outside the book folder or at the network
+    $bad = function (string $t, string $where) { $hits = []; if (preg_match_all('/!\[[^\]]*\]\(\s*<?([^)\s>]+)/', $t, $m)) $hits = array_merge($hits, $m[1]); if (preg_match_all('/\bsrc=["\']([^"\']+)["\']/i', $t, $m)) $hits = array_merge($hits, $m[1]); if (preg_match_all('/\bhref=["\']([^"\'#][^"\']*)["\']/i', $t, $m)) $hits = array_merge($hits, array_filter($m[1], fn($x) => $x[0] === '/' || strpos($x, '..') !== false || preg_match('~^https?:~i', $x) === 1)); if (preg_match_all('/^(?:cover-image|css|stylesheet|include-[a-z-]+|bibliography|csl|reference-doc|epub-cover-image)\s*:\s*["\']?([^\s"\'#]+)/mi', $t, $m)) $hits = array_merge($hits, $m[1]);
+        foreach ($hits as $h) { if (preg_match('~^(?:[a-z][a-z0-9+.-]*:|//)~i', $h) && !preg_match('~^(?:mailto|tel):~i', $h)) fail("$where refers to a remote file ('$h'): put the image beside the book and use its file name"); if ($h !== '' && $h[0] !== '#' && ($h[0] === '/' || $h[0] === '~' || strpos($h, '..') !== false)) fail("$where refers to a file outside the book folder ('$h'): copy it into the folder and use a relative name"); } };
+    foreach (array_merge($src, $meta ? [$meta] : []) as $sf) $bad((string)file_get_contents($sf), basename($sf));
+    $cwdReal = realpath($cwd); $outAbs = (realpath(dirname($out)) ?: getcwd()) . '/' . basename($out); $cover = $opt['cover'] ?? ''; if ($cover !== '' && is_file($cover)) $opt['cover'] = realpath($cover); if ($css !== '' && is_file($css)) $css = realpath($css); if ($meta) $meta = realpath($meta); $src = array_map('realpath', $src); if (!@chdir($cwd)) fail("cannot enter $cwd");
+    $cmd = 'pandoc -f markdown -t epub3 --toc --toc-depth=2 --split-level=1 --standalone';
+    if ($meta) $cmd .= ' --metadata-file=' . escapeshellarg($meta);
+    foreach (['title', 'author', 'lang', 'date', 'rights'] as $k) if (!empty($opt[$k])) $cmd .= ' --metadata ' . escapeshellarg(($k === 'lang' ? 'lang' : $k) . '=' . $opt[$k]);
+    if (!$meta && empty($opt['title'])) $cmd .= ' --metadata ' . escapeshellarg('title=' . pathinfo($src[0], PATHINFO_FILENAME)); if (!$meta && empty($opt['lang'])) $cmd .= ' --metadata lang=en';
+    if ($css !== '') { if (!is_file($css)) fail("no such stylesheet: $css"); if (strpos(realpath($css) ?: $css, $cwdReal . '/') !== 0) fail('the stylesheet is outside the book folder: copy it in'); $cmd .= ' --css=' . escapeshellarg($css); }
+    $cover = $opt['cover'] ?? ''; if ($cover !== '') { if (!is_file($cover) || !@getimagesize($cover)) fail("the cover is not a readable image: $cover"); $cmd .= ' --epub-cover-image=' . escapeshellarg($cover); }
+    $cmd .= ' -o ' . escapeshellarg($outAbs) . ' ' . implode(' ', array_map(fn($f) => escapeshellarg($f), $src));
+    $o = sh($cmd, $rc, 180); if ($rc !== 0 || !is_file($outAbs)) fail('pandoc failed: ' . trim(substr($o, 0, 400)));
+    echo "Wrote $outAbs: " . count($src) . " chapter file(s), " . round(filesize($outAbs) / 1024) . " KB" . (($opt['cover'] ?? '') !== '' ? ', with a cover' : ', no cover (add cover=PATH.png)') . ". Run Check on it (epubcheck).\n" . trim(substr($o, 0, 300)) . "\n"; exit(0);
+}
+if (!is_file($in) || strtolower(pathinfo($in, PATHINFO_EXTENSION)) !== 'epub') fail('give an .epub file');
+if (!class_exists('ZipArchive')) fail('php zip is not installed');
+
+if ($sub === 'inspect') {
+    $z = new ZipArchive(); if ($z->open($in) !== true) fail('not a readable EPUB (a zip file)'); $names = []; for ($i = 0; $i < $z->numFiles; $i++) $names[] = $z->getNameIndex($i);
+    $cont = (string)$z->getFromName('META-INF/container.xml'); $opf = preg_match('/full-path="([^"]+)"/', $cont, $m) ? $m[1] : null; if (!$opf) fail('META-INF/container.xml names no package file: not a valid EPUB');
+    $x = (string)$z->getFromName($opf); if ($x === '') fail("the package file $opf is missing"); $base = dirname($opf) === '.' ? '' : dirname($opf) . '/';
+    $dc = fn($t) => preg_match('~<dc:' . $t . '[^>]*>(.*?)</dc:' . $t . '>~s', $x, $mm) ? trim(html_entity_decode(strip_tags($mm[1]))) : '';
+    $ver = preg_match('/<package[^>]*\sversion="([^"]+)"/', $x, $mm) ? $mm[1] : '?'; preg_match_all('/<item\b[^>]*>/', $x, $items); $types = []; $remote = 0; $big = [];
+    foreach ($items[0] as $it) { $mt = preg_match('/media-type="([^"]+)"/', $it, $mm) ? $mm[1] : '?'; $k = strpos($mt, 'image/') === 0 ? 'images' : (strpos($mt, 'font') !== false || preg_match('/otf|ttf|woff/', $mt) ? 'fonts' : ($mt === 'application/xhtml+xml' ? 'chapters (xhtml)' : ($mt === 'text/css' ? 'css' : ($mt === 'text/javascript' || $mt === 'application/javascript' ? 'scripts' : 'other')))); $types[$k] = ($types[$k] ?? 0) + 1;
+        if (preg_match('/href="https?:/', $it)) $remote++; if ($k === 'images' && preg_match('/href="([^"]+)"/', $it, $h)) { $s = $z->statName($base . rawurldecode($h[1])); if ($s && $s['size'] > 1048576) $big[] = basename($h[1]) . ' (' . round($s['size'] / 1048576, 1) . ' MB)'; } }
+    $spine = preg_match_all('/<itemref\b/', $x); $nav = (bool)preg_match('/properties="[^"]*\bnav\b/', $x); $cover = (bool)preg_match('/properties="[^"]*cover-image|<meta[^>]*name="cover"/', $x);
+    $o = "# EPUB: " . basename($in) . "\n\n| | |\n|---|---|\n| EPUB version | $ver |\n| Title | " . ($dc('title') ?: '(none)') . " |\n| Author | " . ($dc('creator') ?: '(none)') . " |\n| Language | " . ($dc('language') ?: '(none)') . " |\n| Identifier | " . ($dc('identifier') ?: '(none)') . " |\n| Date | " . ($dc('date') ?: '-') . " |\n| Rights | " . ($dc('rights') ?: '-') . " |\n| Reading order (spine) | $spine item(s) |\n| Navigation document | " . ($nav ? 'yes' : 'NO') . " |\n| Cover image | " . ($cover ? 'yes' : 'no') . " |\n| Size | " . round(filesize($in) / 1024) . " KB; " . count($names) . " files |\n";
+    foreach ($types as $k => $c) $o .= "| " . ucfirst($k) . " | $c |\n"; $notes = [];
+    if (!$dc('title')) $notes[] = 'no title in the metadata'; if (!$dc('language')) $notes[] = 'no language'; if (!$cover) $notes[] = 'no cover image'; if (!$nav && strpos($ver, '3') === 0) $notes[] = 'an EPUB 3 needs a navigation document'; if (!empty($types['scripts'])) $notes[] = 'contains JavaScript: many readers and stores refuse it'; if ($remote) $notes[] = "$remote resource(s) loaded from the network: an EPUB should be self-contained"; if ($big) $notes[] = 'images over 1 MB: ' . implode(', ', array_slice($big, 0, 5)); if (strpos($x, 'accessMode') === false) $notes[] = 'no accessibility metadata (schema:accessMode, accessibilityFeature ...)';
+    $o .= "\n" . ($notes ? "## Worth a look\n\n- " . implode("\n- ", $notes) . "\n" : "Nothing stands out.\n");
+    file_put_contents($out, $o . "\n[exit code 0]\n"); echo "Wrote $out\n"; exit(0);
+}
+
+// check: epubcheck
+$EC = null; foreach ([trim((string)shell_exec('command -v epubcheck 2>/dev/null')), "$home/.local/bin/epubcheck"] as $c) if ($c !== '' && is_executable($c)) { $EC = $c; break; }
+if ($EC === null) fail('epubcheck is not installed. Fetch the official release (github.com/w3c/epubcheck, epubcheck-X.zip) into ~/.local/share/cockpit/tools/epubcheck/ and a wrapper "epubcheck" (java -jar .../epubcheck.jar "$@") into ~/.local/bin');
+if (!have('java')) fail('Java is not installed (sudo apt install default-jre-headless): epubcheck needs it');
+$o = sh(escapeshellarg($EC) . ' ' . escapeshellarg(realpath($in)) . ' -q 2>&1', $rc, 240); $msgs = []; $cnt = ['Error' => 0, 'Warning' => 0, 'Note' => 0]; $b = basename($in);
+foreach (explode("\n", $o) as $l) { if (!preg_match('/^(FATAL|ERROR|WARNING|INFO|USAGE)\(([^)]+)\):\s*(.*)$/', trim($l), $m)) continue; $sev = in_array($m[1], ['FATAL', 'ERROR'], true) ? 'Error' : ($m[1] === 'WARNING' ? 'Warning' : 'Note'); if ($m[1] === 'USAGE') $sev = 'Note'; $rest = $m[3]; $file = $b; $line = 1; $col = 0;
+    if (preg_match('~^(?:[^/]*\.epub/)?(.+?)\((-?\d+),(-?\d+)\):\s*(.*)$~', $rest, $mm)) { $file = $mm[1]; $line = max(1, (int)$mm[2]); $col = max(0, (int)$mm[3]); $rest = $mm[4]; } elseif (preg_match('~^(?:[^/]*\.epub/)?(\S+?):\s*(.*)$~', $rest, $mm) && strpos($mm[1], '.') !== false) { $file = $mm[1]; $rest = $mm[2]; }
+    $file = preg_replace('~^.*?[^/]*\.epub/~', '', $file); if ($file === '' || $file === '.') $file = $b; $msgs[] = "$file($line" . ($col ? ",$col" : '') . ") $sev: [{$m[2]}] $rest"; $cnt[$sev]++; }
+$summary = preg_match('/Check finished with (.+)$/m', $o, $mm) ? $mm[1] : trim(substr($o, -200));
+if ($summary === '') $summary = $msgs ? 'finished, with findings below' : 'finished with no errors or warnings';   // quiet mode prints nothing when the book is clean: the header must not be empty
+
+if (!$msgs && $rc !== 0 && !preg_match('/no errors or warnings/i', $o)) { $cnt['Error']++; $msgs[] = "$b(1) Error: epubcheck could not run: " . trim(substr($o, 0, 300)); }
+$rep = "# EPUB check: $b\n\n- epubcheck: " . $summary . "\n\n" . ($msgs ? "## Findings ({$cnt['Error']} errors, {$cnt['Warning']} warnings, {$cnt['Note']} notes)\n\n" . implode("\n", array_slice($msgs, 0, 300)) . "\n" : "No errors or warnings.\n") . "\n[exit code " . ($cnt['Error'] > 0 ? 1 : 0) . "]\n";
+file_put_contents($out, $rep); echo "Wrote $out ({$cnt['Error']} errors, {$cnt['Warning']} warnings)\n";

@@ -1,0 +1,24 @@
+{
+  "id": "game-godot",
+  "name": "Godot",
+  "icon": "stadia_controller",
+  "description": "A Godot game project (GDScript).",
+  "detect": [
+    "project.godot"
+  ],
+  "note": "This is a Godot project. Godot 3 and Godot 4 differ greatly in GDScript syntax and API: read the version from project.godot and use only that version's API; do not mix them. Scenes (.tscn) and resources (.tres) are text: edit them carefully and keep them loadable.",
+  "verify": "godot --headless --check-only",
+  "group": "Software & games",
+  "details": "A Godot project. Godot 3 and Godot 4 differ greatly in GDScript syntax and API, so the agent reads the version from project.godot first and uses only that version. The Godot tools check every script for parse errors (file and line), run the project headless for a few seconds and list its export presets: the engine itself is the judge.",
+  "examples": [
+    "A GDScript prototype checked headless",
+    "Port a small project from Godot 3 to 4",
+    "A tool built from Control nodes"
+  ],
+  "tools": [
+    {
+      "tool": "godot",
+      "why": "check every GDScript for parse errors with file and line (the judge after each edit), run the project headless, list export presets, compare the project version with the installed Godot"
+    }
+  ]
+}

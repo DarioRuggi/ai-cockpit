@@ -1,0 +1,77 @@
+{
+    "id": "petcare",
+    "name": "Pet care log",
+    "description": "Works on a care-log CSV (date, pet, task, interval_days, weight_kg, notes). Due gives reminders (last done plus the interval); Vaccines checks vaccinations and treatments against the log or a schedule CSV you supply; Weight shows the trend; Feeding reads the daily amount off the package table you type in. NOT veterinary advice: it is date arithmetic on what you recorded and does not know your animal. The original is never changed.",
+    "binary": "php",
+    "version_args": "--version",
+    "website": "https://www.php.net",
+    "packages": {
+        "apt": "php-cli php-mbstring",
+        "dnf": "php-cli php-mbstring",
+        "pacman": "php",
+        "zypper": "php8 php8-mbstring",
+        "brew": "php"
+    },
+    "presets": [
+        {
+            "id": "due",
+            "label": "Reminders (what is due or overdue)",
+            "description": "For every pet and task: last done, interval, next due date, and overdue / due soon / fine. Extra arguments: today=YYYY-MM-DD within=30. Tasks without an interval_days are listed separately.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_due",
+            "command": "php {WEBROOT}/petcare_tool due {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "vaccines",
+            "label": "Vaccination and treatment check",
+            "description": "Overdue and upcoming vaccinations, worming, flea and tick treatments from the log. Extra argument schedule=FILE.csv (task, interval_days) checks against the schedule your vet gave you and lists what was never recorded or given too early. Not veterinary advice.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_vaccines",
+            "command": "php {WEBROOT}/petcare_tool vaccines {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "weight",
+            "label": "Weight trend",
+            "description": "First and last weight, change, change per month and the last three readings for each pet; mentions a change of more than 10% in about 90 days (threshold=N to change it) as something to tell the vet. Extra argument unit=kg or lb.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_weight",
+            "command": "php {WEBROOT}/petcare_tool weight {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "feeding",
+            "label": "Feeding amount from the package table",
+            "description": "Type the package guidance as guide=5:80,10:140,20:230 (kilograms:grams per day) and optionally meals=2 kcal=380 weight=12.5 pet=NAME. The amount is interpolated between the table rows and never extrapolated outside them. Package guidance only, not veterinary advice.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_feeding",
+            "command": "php {WEBROOT}/petcare_tool feeding {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        }
+    ]
+}

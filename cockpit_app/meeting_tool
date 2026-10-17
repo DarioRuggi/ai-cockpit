@@ -1,0 +1,119 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// meeting_tool — the Meeting notes tools' work, for the tool presets (tools_builtins/meeting.json). A command-line program, never reachable over the web.
+//
+//   php meeting_tool clean   TRANSCRIPT OUTPUT         a readable transcript: .srt/.vtt cues joined into timestamped paragraphs, fillers (um, uh, eh, אה ...) and stutters removed
+//   php meeting_tool actions TRANSCRIPT OUTPUT         candidates, with where they were said: decisions, action items (with an owner when the line names one), deadlines, questions
+//   php meeting_tool stats   TRANSCRIPT OUTPUT         length, words, words per minute, who spoke how much (when lines start with "Name:"), questions asked
+//   php meeting_tool minutes TRANSCRIPT OUTPUT [TITLE] a minutes skeleton in markdown: attendees, decisions, an action table, open questions, to be written up by the agent
+//
+// TRANSCRIPT is plain text (one utterance per line, optionally "Name: ...") or .srt/.vtt (from the Whisper tool). English, Spanish and Hebrew phrases are recognised.
+// These are READING AIDS: they find candidates by wording. A person or the agent decides what really was decided. The original is never changed.
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "meeting_tool: $m\n"); exit($rc); }
+[$sub, $in, $out, $arg] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? '', $argv[4] ?? ''];
+if (!in_array($sub, ['clean', 'actions', 'stats', 'minutes'], true) || $in === '' || $out === '') fail('usage: meeting_tool clean|actions|stats|minutes TRANSCRIPT OUTPUT [TITLE]', 2);
+if (!is_file($in)) fail("no such file: $in");
+$raw = (string)file_get_contents($in); if (strncmp($raw, "\xEF\xBB\xBF", 3) === 0) $raw = substr($raw, 3);
+if (!mb_check_encoding($raw, 'UTF-8')) fail('the transcript is not valid UTF-8: convert it first');
+$raw = str_replace(["\r\n", "\r"], "\n", $raw); $name = basename($in);
+
+function t2s(string $t): ?float { return preg_match('/^\s*(?:(\d+):)?(\d{1,2}):(\d{1,2})[.,](\d{1,3})\s*$/', $t, $m) ? ((int)$m[1] * 3600 + (int)$m[2] * 60 + (int)$m[3]) + (int)str_pad($m[4], 3, '0') / 1000 : null; }
+function mmss(?float $s): string { if ($s === null) return ''; $s = (int)$s; return $s >= 3600 ? sprintf('%d:%02d:%02d', intdiv($s, 3600), intdiv($s % 3600, 60), $s % 60) : sprintf('%02d:%02d', intdiv($s, 60), $s % 60); }
+/** utterances: [start seconds|null, end|null, line (1-based), text] */
+$ents = []; $isCue = (bool)preg_match('/^\s*[\d:.,]+\s*-->\s*[\d:.,]+/m', $raw); $lines = explode("\n", $raw);
+if ($isCue) { for ($i = 0, $n = count($lines); $i < $n; $i++) if (preg_match('/^\s*(\S+)\s*-->\s*(\S+)/', $lines[$i], $m)) { $txt = []; $j = $i + 1; while ($j < $n && trim($lines[$j]) !== '') $txt[] = trim($lines[$j++]); $ents[] = [t2s($m[1]), t2s($m[2]), $i + 1, trim(preg_replace('/<[^>]+>|\{\\\\[^}]*\}/', '', implode(' ', $txt)))]; $i = $j; } }
+else foreach ($lines as $i => $l) if (trim($l) !== '' && !preg_match('/^WEBVTT/', $l)) $ents[] = [null, null, $i + 1, trim($l)];
+if (!$ents) fail('no text found in the transcript');
+$duration = $isCue ? max(array_map(fn($e) => $e[1] ?? 0, $ents)) : null;
+
+$FILL = '/(?<![\p{L}\p{N}])(?:u+m+|u+h+m*|e+r+m+|hmm+|mm+h*m+|e+h+|e+m+|a+h+m+|אה+|אמ+|המ+|אהמ+|מממ+)(?![\p{L}\p{N}])[,.…]*\s*/iu';
+function tidy(string $t): string {
+    global $FILL;
+    // a filler at the start of a sentence: the word after it becomes the new first word, so it gets the capital ("Uh, the release" -> "The release")
+    $t = preg_replace_callback('/(^|[.!?]\s+)' . substr($FILL, 1, -3) . '(\p{Ll})/iu', fn($m) => $m[1] . mb_strtoupper($m[2]), $t);
+    $t = preg_replace($FILL, '', $t);
+    // stutters, with or without a comma between the repeats ("is, is" / "the the")
+    $t = preg_replace('/\b([\p{L}\']+)(?:,?\s+\1\b){1,3}/iu', '$1', $t);
+    return trim(preg_replace('/\s{2,}/u', ' ', $t));
+}
+function speaker(string $t): ?string { return preg_match('/^((?:Speaker|SPEAKER|Hablante|דובר|דוברת)\s*\d+|[\p{Lu}][\p{L}.\'-]{0,24}(?:\s[\p{Lu}][\p{L}.\'-]{0,24})?|[\x{0590}-\x{05FF}]{2,20}(?:\s[\x{0590}-\x{05FF}]{2,20})?)\s*:\s+\S/u', $t, $m) ? $m[1] : null; }
+
+// ---- clean -------------------------------------------------------------------------------------------------------------------------------------
+if ($sub === 'clean') {
+    $o = "# Transcript: $name\n\n"; $para = ''; $pt = null; $last = null;
+    $flush = function () use (&$o, &$para, &$pt) { if (trim($para) !== '') $o .= ($pt !== null ? '**[' . mmss($pt) . ']** ' : '') . trim($para) . "\n\n"; $para = ''; $pt = null; };
+    foreach ($ents as [$s, $e, $l, $t]) {
+        $t = tidy($t); if ($t === '') continue;
+        if ($isCue) { if ($para !== '' && ($s - ($last ?? $s) > 2.5 || $s - $pt >= 60 || speaker($t) !== null)) $flush(); if ($para === '') $pt = $s; $para .= ($para === '' ? '' : ' ') . $t; $last = $e; }
+        else { $flush(); $o .= $t . "\n\n"; }
+    }
+    $flush(); file_put_contents($out, $o); echo "Wrote $out\n"; exit(0);
+}
+
+// ---- finding candidates ----------------------------------------------------------------------------------------------------------------------------
+$DAY = 'monday|tuesday|wednesday|thursday|friday|saturday|sunday|lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo';
+$P = [
+ 'Decision' => '/\b(we(\'ve| have)? decided|the decision|decision is|agreed|we agree|we\'ll go with|let\'s go with|approved|settled on)\b|\b(acordamos|decidimos|quedamos en|se aprob[oó]|vamos con|queda aprobado)\b|(הוחלט|החלטנו|סיכמנו|מאשרים|סוכם)/iu',
+ 'Action'   => '/\b(action item|to-?do|follow[- ]?up|take care of|i\'?ll|i will|we\'?ll|we will|needs? to|has to|have to|must|should|assigned to|will (send|prepare|check|write|call|review|fix|update))\b|\b(tenemos que|hay que|me encargo|se encarga|voy a|vamos a|pendiente|tarea)\b|(צריך|צריכה|נטפל|אטפל|אעשה|משימה|נשלח|אשלח|ניקח על עצמנו)/iu',
+ 'Deadline' => '/\b(by|before|until|due|no later than)\s+(' . $DAY . '|tomorrow|today|next week|next month|end of (the )?(day|week|month|quarter)|\d{1,2}[\/.]\d{1,2}|\d{1,2}(st|nd|rd|th)?\s+of)\b|\b(para el|antes del|hasta el|para ma[nñ]ana|para la semana)\b|(עד (יום|ה|מחר|סוף|\d))/iu',
+];
+function sentences(string $t): array { return array_values(array_filter(array_map('trim', preg_split('/(?<=[.!?…])\s+/u', $t)), fn($x) => $x !== '')); }
+function find_items(array $ents, array $P): array {
+    $res = ['Decision' => [], 'Action' => [], 'Deadline' => [], 'Question' => []]; $cur = null;
+    foreach ($ents as [$s, $e, $l, $t]) {
+        $t = tidy($t); if ($t === '') continue; $sp = speaker($t); if ($sp !== null) { $cur = $sp; $t = trim(substr($t, strpos($t, ':') + 1)); }
+        foreach (sentences($t) as $sen) {
+            $ref = $s !== null ? mmss($s) : "line $l"; $owner = $cur;
+            if (preg_match('/^\s*([\p{Lu}][\p{L}\'-]{1,20})\s+(will|can|to)\b/u', $sen, $m) && !preg_match('/^(Who|What|When|Where|Why|How|Which|This|That|It|There|They|We|You|He|She|Someone|Anyone|Everyone|Nobody|Quien|Qui[eé]n|Qu[eé]|Cu[aá]ndo)$/iu', $m[1])) $owner = $m[1];
+            if (preg_match('/[?¿]\s*$/u', $sen) && mb_strlen($sen) > 12) $res['Question'][] = [$ref, $l, $owner, $sen];
+            foreach (['Decision', 'Action'] as $k) if (preg_match($P[$k], $sen)) { $res[$k][] = [$ref, $l, $owner, $sen]; break; }       // a sentence is a decision or an action, not both
+            if (preg_match($P['Deadline'], $sen)) $res['Deadline'][] = [$ref, $l, $owner, $sen];
+        }
+    }
+    return $res;
+}
+if ($sub === 'actions') {
+    $r = find_items($ents, $P); $o = "# Candidates in $name\n\nFound by wording, with where they were said. Not all are real: check each against the recording.\n";
+    $lines2 = [];
+    foreach (['Decision' => 'Decisions', 'Action' => 'Action items', 'Deadline' => 'Deadlines mentioned', 'Question' => 'Questions'] as $k => $title) {
+        $o .= "\n## $title (" . count($r[$k]) . ")\n\n"; if (!$r[$k]) $o .= "None found.\n";
+        foreach ($r[$k] as [$ref, $l, $own, $txt]) { $o .= "- [$ref]" . ($own && $k !== 'Decision' ? " **$own**:" : '') . " $txt\n"; $lines2[] = "$name($l) Note: [$k] " . mb_substr($txt, 0, 140); }
+    }
+    file_put_contents($out, $o . "\n" . implode("\n", array_slice($lines2, 0, 200)) . "\n\n[exit code 0]\n"); echo "Wrote $out (" . count($r['Decision']) . ' decisions, ' . count($r['Action']) . ' actions, ' . count($r['Question']) . " questions)\n"; exit(0);
+}
+
+// ---- stats -------------------------------------------------------------------------------------------------------------------------------------
+$wc = fn(string $t) => preg_match_all('/[\p{L}\p{N}][\p{L}\p{N}\'’-]*/u', $t);
+function turns(array $ents): array {      // [speaker => [turns, words, longest]]
+    global $wc; $cur = null; $res = []; $run = 0; $curs = null;
+    foreach ($ents as [$s, $e, $l, $t]) {
+        $t = tidy($t); if ($t === '') continue; $sp = speaker($t); if ($sp !== null) { $cur = $sp; $t = trim(substr($t, strpos($t, ':') + 1)); $res[$cur] = $res[$cur] ?? [0, 0, 0]; $res[$cur][0]++; $run = 0; }
+        if ($cur !== null) { $w = $wc($t); $res[$cur][1] += $w; $run += $w; $res[$cur][2] = max($res[$cur][2], $run); }
+    }
+    return $res;
+}
+if ($sub === 'stats') {
+    $words = 0; foreach ($ents as $e) $words += $wc(tidy($e[3])); $q = 0; foreach ($ents as $e) $q += preg_match_all('/[?¿]/u', $e[3]);
+    $o = "# Meeting statistics: $name\n\n- Words: $words\n" . ($duration ? '- Length: ' . mmss($duration) . "; speaking pace: " . round($words / ($duration / 60)) . " words per minute\n" : "- Length: unknown (plain text: no times)\n") . "- Questions asked: $q\n";
+    $tn = turns($ents);
+    if ($tn) { $tot = array_sum(array_column($tn, 1)) ?: 1; arsort($tn); $o .= "\n| Speaker | Turns | Words | Share | Longest stretch |\n|---|---|---|---|---|\n"; foreach ($tn as $sp => [$t, $w, $lg]) $o .= "| $sp | $t | $w | " . round(100 * $w / $tot) . "% | $lg words |\n"; }
+    else $o .= "\nNo speaker labels (lines starting with a name and a colon), so no talk-time split.\n";
+    file_put_contents($out, $o . "\n[exit code 0]\n"); echo "Wrote $out\n"; exit(0);
+}
+
+// ---- minutes -----------------------------------------------------------------------------------------------------------------------------------
+$title = trim($arg) !== '' ? trim($arg) : 'Meeting minutes'; $r = find_items($ents, $P); $tn = turns($ents);
+$o = "# $title\n\n- Date: \n- Place / link: \n- Length: " . ($duration ? mmss($duration) : '') . "\n- Source: $name\n\n## Attendees\n\n";
+if ($tn) foreach (array_keys($tn) as $sp) $o .= "- $sp\n"; else $o .= "- (no speaker labels in the transcript: fill in)\n";
+$o .= "\n## Agenda and discussion\n\n(Write up each topic in a few lines. The cleaned transcript has the detail.)\n\n1. \n\n## Decisions\n\n";
+if ($r['Decision']) foreach ($r['Decision'] as [$ref, $l, $own, $txt]) $o .= "- $txt  _[$ref]_\n"; else $o .= "- (none found by wording: check)\n";
+$o .= "\n## Action items\n\n| Owner | Action | Due | Ref |\n|---|---|---|---|\n";
+$dl = []; foreach ($r['Deadline'] as [$ref, $l, $own, $txt]) $dl[$l] = $txt;
+if ($r['Action']) foreach ($r['Action'] as [$ref, $l, $own, $txt]) { $due = isset($dl[$l]) && preg_match('/(by|before|until|due)\s+([^,.;]{3,30})/iu', $dl[$l], $m) ? trim($m[2]) : ''; $o .= '| ' . ($own ?? '') . ' | ' . str_replace('|', '/', mb_substr($txt, 0, 200)) . " | $due | $ref |\n"; }
+else $o .= "| | (none found by wording: check) | | |\n";
+$o .= "\n## Open questions\n\n"; if ($r['Question']) foreach (array_slice($r['Question'], 0, 15) as [$ref, $l, $own, $txt]) $o .= "- $txt  _[$ref" . ($own ? ", $own" : '') . "]_\n"; else $o .= "- \n";
+$o .= "\n## Next meeting\n\n- \n";
+file_put_contents($out, $o); echo "Wrote $out\n";

@@ -1,0 +1,32 @@
+{
+  "id": "poppler",
+  "name": "PDF text",
+  "description": "Extract the text layer from a PDF. The attachment router pointed PDFs at 'pandoc:to-markdown', which has never existed — and pandoc cannot read PDF anyway — so every attached PDF fell through to 'saved as reference' with no text at all.",
+  "binary": "pdftotext",
+  "version_args": "-v",
+  "website": "https://poppler.freedesktop.org",
+  "presets": [
+    {
+      "id": "pdf-to-text",
+      "label": "PDF → text",
+      "description": "Keeps the page layout, which matters for tables and two-column books",
+      "input_kinds": ["document"],
+      "output_kind": "text",
+      "output_ext": "txt",
+      "output_stem": "{NAME}",
+      "command": "pdftotext -layout {INPUT} {OUTPUT}",
+      "timeout_seconds": 120
+    },
+    {
+      "id": "pdf-to-text-raw",
+      "label": "PDF → text (reading order)",
+      "description": "Ignores layout and follows the document's own order — better for flowing prose",
+      "input_kinds": ["document"],
+      "output_kind": "text",
+      "output_ext": "txt",
+      "output_stem": "{NAME}",
+      "command": "pdftotext {INPUT} {OUTPUT}",
+      "timeout_seconds": 120
+    }
+  ]
+}

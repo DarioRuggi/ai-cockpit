@@ -1,0 +1,65 @@
+{
+  "id": "writing",
+  "name": "Creative writing",
+  "description": "Reading aids for a manuscript: give a chapter file or a folder of .md/.txt chapters. Statistics gives length, sentences, dialogue share, adverbs and the English reading level per chapter, with the very long sentences; Repeated phrases finds tics (four-word phrases used three times or more, a word echoed within six words) with their lines; Names counts the names and flags ones spelled almost the same. They point at places to look; the writer and the agent decide. Nothing is changed or run. Word documents: pandoc or the Document formats tool.",
+  "binary": "php",
+  "version_args": "--version",
+  "website": "https://www.php.net",
+  "packages": {
+    "apt": "php-cli php-mbstring",
+    "dnf": "php-cli php-mbstring",
+    "pacman": "php",
+    "zypper": "php8 php8-mbstring",
+    "brew": "php"
+  },
+  "presets": [
+    {
+      "id": "stats",
+      "label": "Statistics (length, sentences, dialogue, reading level)",
+      "description": "Words, sentences, paragraphs, dialogue share, -ly adverbs and the English reading level, per chapter when you give a folder of .md/.txt files; lists the very long sentences with their line.",
+      "input_kinds": [
+        "text",
+        "file",
+        "document",
+        "folder"
+      ],
+      "output_kind": "text",
+      "output_ext": "md",
+      "output_stem": "{NAME}_stats",
+      "command": "php {WEBROOT}/write_tool stats {INPUT} {OUTPUT}",
+      "timeout_seconds": 300
+    },
+    {
+      "id": "repeats",
+      "label": "Repeated phrases and echoes",
+      "description": "Phrases of four words used three or more times and a word used again within six words, each with its file and line. Some are on purpose; look at each.",
+      "input_kinds": [
+        "text",
+        "file",
+        "document",
+        "folder"
+      ],
+      "output_kind": "text",
+      "output_ext": "md",
+      "output_stem": "{NAME}_repeats",
+      "command": "php {WEBROOT}/write_tool repeats {INPUT} {OUTPUT}",
+      "timeout_seconds": 300
+    },
+    {
+      "id": "names",
+      "label": "Names and spelling slips",
+      "description": "Counts the capitalised names (not sentence starts) and lists the ones spelled almost the same, such as Catherine and Katherine, which are often a slip in a long manuscript.",
+      "input_kinds": [
+        "text",
+        "file",
+        "document",
+        "folder"
+      ],
+      "output_kind": "text",
+      "output_ext": "md",
+      "output_stem": "{NAME}_names",
+      "command": "php {WEBROOT}/write_tool names {INPUT} {OUTPUT}",
+      "timeout_seconds": 300
+    }
+  ]
+}

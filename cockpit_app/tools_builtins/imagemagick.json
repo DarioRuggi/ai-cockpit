@@ -1,0 +1,65 @@
+{
+  "id": "imagemagick",
+  "name": "ImageMagick (convert)",
+  "binary": "/usr/bin/convert",
+  "version_args": "--version",
+  "description": "Image conversion, resizing, and format changes via ImageMagick's convert. Use for thumbnails, format conversion, and basic edits. Falls back to 'magick' on newer installs.",
+  "presets": [
+    {
+      "id": "to-png",
+      "name": "Convert to PNG",
+      "args_template": "{INPUT} {OUTPUT}",
+      "output_ext": ".png",
+      "output_kind": "image",
+      "description": "Convert any supported image to PNG"
+    },
+    {
+      "id": "to-jpg",
+      "name": "Convert to JPG (quality 90)",
+      "args_template": "{INPUT} -quality 90 {OUTPUT}",
+      "output_ext": ".jpg",
+      "output_kind": "image",
+      "description": "Convert any supported image to JPEG at quality 90"
+    },
+    {
+      "id": "to-webp",
+      "name": "Convert to WebP",
+      "args_template": "{INPUT} -quality 85 {OUTPUT}",
+      "output_ext": ".webp",
+      "output_kind": "image",
+      "description": "Convert to WebP (smaller files, good for web)"
+    },
+    {
+      "id": "thumbnail",
+      "name": "Thumbnail (max 512px)",
+      "args_template": "{INPUT} -resize 512x512> {OUTPUT}",
+      "output_ext": ".png",
+      "output_kind": "image",
+      "description": "Resize so the longest side is at most 512px (keeps aspect ratio)"
+    },
+    {
+      "id": "resize-custom",
+      "name": "Resize (custom — pass WxH in args)",
+      "args_template": "{INPUT} -resize {ARGS} {OUTPUT}",
+      "output_ext": ".png",
+      "output_kind": "image",
+      "description": "Resize with a custom geometry, e.g. args = 800x600 or 50%"
+    },
+    {
+      "id": "grayscale",
+      "name": "Grayscale",
+      "args_template": "{INPUT} -colorspace Gray {OUTPUT}",
+      "output_ext": ".png",
+      "output_kind": "image",
+      "description": "Convert to grayscale"
+    }
+  ],
+  "packages": {
+    "apt": "imagemagick",
+    "dnf": "ImageMagick",
+    "pacman": "imagemagick",
+    "zypper": "ImageMagick",
+    "apk": "imagemagick",
+    "brew": "imagemagick"
+  }
+}

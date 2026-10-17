@@ -1,0 +1,39 @@
+{
+  "id": "translation",
+  "name": "Translation",
+  "icon": "translate",
+  "description": "Translating and localising text between languages.",
+  "detect": [],
+  "note": "This is a translation project. Keep the meaning, register and formatting of the source, keep names and terms translated the same way throughout, and flag anything ambiguous instead of guessing.",
+  "verify": "back-check of key passages",
+  "group": "Writing & documents",
+  "details": "Keeps the meaning, register and formatting of the source, translates names and terms the same way every time, and says when something is ambiguous instead of guessing. The translate tools (LibreTranslate, on your machine) can make a first pass that the agent then checks, and key passages can be translated back as a test. The Translation tool does the first pass on whole files, keeps code, links and placeholders exactly, and reports any line it could not translate safely.",
+  "examples": [
+    "An English user manual into French",
+    "The strings of a web site into Portuguese, with a glossary",
+    "A letter between two languages, keeping its tone",
+    "Back-checking a translation by translating the key sentences back"
+  ],
+  "tools": [
+    {
+      "tool": "translate",
+      "why": "translate a .txt, .md, .srt or .vtt file with the LibreTranslate on this machine: code, links and placeholders are kept, a line that cannot be kept safe is left in the original and reported"
+    },
+    {
+      "tool": "pandoc",
+      "why": "translate documents without losing their structure: convert to Markdown and back"
+    },
+    {
+      "tool": "office",
+      "why": "Word and LibreOffice files in and out"
+    },
+    {
+      "tool": "poppler",
+      "why": "the text of a PDF to translate"
+    },
+    {
+      "tool": "subs",
+      "why": "translate subtitles: check and re-time them afterwards"
+    }
+  ]
+}

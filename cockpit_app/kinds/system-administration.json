@@ -1,0 +1,20 @@
+{
+  "id": "system-administration",
+  "name": "System administration",
+  "icon": "dns",
+  "description": "Diagnosing a machine: read-only, findings first.",
+  "detect": [],
+  "group": "System & servers",
+  "note": "This is a system-administration project. Diagnose first, read-only: use the System administration tools and look-only commands (df, free, ps, ss, systemctl status, journalctl, cat of a config file). Do NOT run anything that changes the machine (install, remove, restart, stop, enable, edit a config, change permissions, firewall rules, delete files) unless the user asks for that exact change in this conversation; when a fix is needed, write the exact commands for the user to run themselves, say what each does and how to undo it, and which need sudo. Never read or print passwords, keys or tokens from config files; say where they are instead. Report findings in order of risk: what is failing now, what will fail soon (disks over 90 percent, memory, certificates), what is exposed to the network, then tidiness. Say which account the tools ran as, because they see only what that account can see.",
+  "verify": "sysadmin report",
+  "details": "Reading the state of a machine without changing it. The System administration tool reports the system, load, memory, every disk and its inodes, the busiest processes, failed services, listening ports, clock sync and whether a reboot is needed, with the warnings first; shows where the disk space went; shows failed units and the state of units you name; lists what listens on which address and warns about ports open to the network that usually should not be (VNC, SMB, databases, Redis, Docker API, Ollama); digests any log file (repeated errors with numbers masked, out of memory, disk and I/O errors, crashes, password guessing); and groups this boot's journal errors by program. Every command only looks, nothing needs sudo, and the fixes are left to you with the findings in hand.",
+  "examples": [
+    "Why is this server slow",
+    "What is listening on the network, and should it be",
+    "Where did the disk space go",
+    "Read this log file and tell me what keeps failing"
+  ],
+  "tools": [
+    {"tool": "sysadmin", "why": "report, disk, services, ports, log reader, journal: all read only"}
+  ]
+}

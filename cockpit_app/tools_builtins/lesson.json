@@ -1,0 +1,79 @@
+{
+    "id": "lesson",
+    "name": "Teaching",
+    "description": "Check lesson plans and worksheets, build rubrics and summarise a gradebook, from plain files. Plan checks that objectives exist, that the minutes of the activities add up to the lesson length, and that each objective has something in the assessment that mentions it (by shared keywords). Rubric reads a CSV of criteria and levels (best level first) with weights that must sum to 100 and writes the table with points per level. Grades reads a gradebook CSV (one student per row, one assessment per column, optional \"weight\" and \"max\" rows): weighted averages, missing grades, the distribution and the students below a threshold. Answers checks a worksheet's numbered questions against its answer key (missing, extra, duplicate, out of order, a multiple-choice letter that is not an option). Reading and arithmetic aids: they do not mark student work or decide who passes. The original is never changed.",
+    "binary": "php",
+    "version_args": "--version",
+    "website": "https://pandoc.org",
+    "packages": {
+        "apt": "php-cli php-mbstring pandoc",
+        "dnf": "php-cli php-mbstring pandoc",
+        "pacman": "php pandoc",
+        "zypper": "php8 php8-mbstring pandoc",
+        "brew": "php pandoc"
+    },
+    "presets": [
+        {
+            "id": "plan",
+            "label": "Check a lesson plan",
+            "description": "Objectives present, activity minutes against the lesson length (a \"Length: 50 minutes\" line or minutes=50 in the extra arguments), each objective matched to the assessment by keywords. Problems come back as file(line), with Fix with agent.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_plancheck",
+            "command": "php {WEBROOT}/lesson_tool plan {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "rubric",
+            "label": "Check and lay out a rubric (CSV)",
+            "description": "CSV with a criterion column, a weight column and the level columns best first. Weights must add up to 100; empty level cells and repeated criteria are reported. Writes the rubric table with points per level.",
+            "input_kinds": [
+                "csv",
+                "file",
+                "spreadsheet",
+                "text"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_rubric",
+            "command": "php {WEBROOT}/lesson_tool rubric {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "grades",
+            "label": "Gradebook summary (CSV)",
+            "description": "Weighted averages (from a \"weight\" row, else equal), missing grades, the distribution, the mean per assessment and the students below a threshold (type below=60 in the extra arguments). Missing grades are left out of an average, not counted as zero.",
+            "input_kinds": [
+                "csv",
+                "file",
+                "spreadsheet",
+                "text"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_grades",
+            "command": "php {WEBROOT}/lesson_tool grades {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "answers",
+            "label": "Worksheet against its answer key",
+            "description": "Numbered questions before an \"Answer key\" heading, numbered answers after it: missing, extra, duplicate or out-of-order numbers, and multiple-choice answers whose letter is not among the options.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_answers",
+            "command": "php {WEBROOT}/lesson_tool answers {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        }
+    ]
+}

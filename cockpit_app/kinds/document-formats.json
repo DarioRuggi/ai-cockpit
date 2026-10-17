@@ -1,0 +1,21 @@
+{
+  "id": "document-formats",
+  "name": "Document formats",
+  "icon": "swap_horiz",
+  "description": "Convert office files between Microsoft, LibreOffice and others, keeping the macros in mind.",
+  "detect": ["*.docm", "*.xlsm", "*.pptm", "*.xls", "*.doc", "*.ods", "*.odt"],
+  "note": "This is a document-conversion project: office files move between Microsoft Office (doc docx docm xls xlsx xlsm ppt pptx pptm), LibreOffice and OpenOffice (odt ods odp), and others. Macros are the valuable part: VBA does not survive every conversion (LibreOffice drops it going to .doc, .docx and .xlsx, and LibreOffice Basic never becomes VBA), so NEVER convert a file that has macros without first running the Macros tool, extracting them as text, and telling the user which formats keep them. The conversion tool refuses a lossy conversion; do not work around it with drop-macros unless the user asks for that. To port a macro, read the extracted source, keep the logic and the procedure names, replace Windows-only calls (Shell, CreateObject, API Declares) with portable ones or flag them, and put the result into an .ods/.odt/.odp with the inject tool (VBA source runs under Option VBASupport 1). Never run a macro from a file you did not write; the tools only read macros. After any conversion, run Inspect on the result and Verify to compare text, cell values and macros.",
+  "verify": "office verify",
+  "group": "Writing & documents",
+  "details": "Moving office files between Microsoft Office, LibreOffice, OpenOffice, Gnumeric and others, in both directions, with the macros in mind. A conversion that would silently lose VBA macros is refused unless you ask for it. The Document formats tool lists the macros of any file, extracts them as text for review and porting, puts a module into a LibreOffice document, inspects what is inside (formulas, comments, tracked changes, links, protection) and what a conversion could lose, and checks a conversion by going there and back and comparing the text, the cell values and the macros. Everything runs in a throw-away LibreOffice profile with macro security at its maximum: nothing is ever executed.",
+  "examples": [
+    "Convert an .xlsm with VBA to .ods and keep the macros as Basic",
+    "List what a .docm macro does before opening it",
+    "Port a VBA function to LibreOffice Basic and put it in a spreadsheet",
+    "Check an .xls to .xlsx conversion loses no cell values"
+  ],
+  "tools": [
+    {"tool": "office", "why": "convert in any direction, refusing to lose macros silently; list, extract and inject macros; inspect and verify"},
+    {"tool": "vb6", "why": "if the macros are classic VB6/VBA, the VB6 tools and cheat sheet help port them to Pascal"}
+  ]
+}

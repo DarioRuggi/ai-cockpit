@@ -1,0 +1,37 @@
+{
+  "id": "podcast",
+  "name": "Podcast",
+  "icon": "mic",
+  "description": "Recording to episode: cleaned, levelled, checked, tagged, with a transcript.",
+  "detect": [],
+  "note": "This is a podcast or voice project: recordings become episodes. Keep the raw recordings untouched and write every processed file beside them with a new name. The usual targets are about -16 LUFS integrated loudness for stereo (-19 for mono), a true peak under -1 dBTP, a sample rate of 44.1 or 48 kHz, speech at 96 kbit/s mono or 128 stereo, no long silence at either end. After any change to the audio, run the Podcast check and fix what it lists. A transcript and show notes come from the Whisper tool (Transcribe to SRT) and the Meeting notes tools can structure them; never invent what a guest said, quote the transcript. Chapter points come from the Chapters preset (the pauses), titled from the transcript.",
+  "verify": "podcast check",
+  "group": "Media",
+  "details": "Turning a recording into an episode. The Podcast tool checks the loudness (LUFS), true peak, loudness range, silences, channels, sample rate and bit rate against podcast norms and reports each problem with the second it occurs; normalises to -16 LUFS in two passes; cleans up a voice recording (high-pass, noise reduction, light compression); trims the silence at both ends and shortens long pauses; lists the pauses as candidate chapters; and sets the title, artist and album tags without re-encoding. The Whisper tool makes the transcript and the ffmpeg tool converts and mixes. The originals are never changed.",
+  "examples": [
+    "Check an episode before publishing it",
+    "Clean up and level a raw interview",
+    "Make chapter points and show notes from the transcript",
+    "Tag a season of episodes with the same album and artist"
+  ],
+  "tools": [
+    {
+      "tool": "podcast",
+      "why": "check loudness and format, normalise, clean up the voice, trim silence, find chapter points, set tags"
+    },
+    {
+      "tool": "whisper",
+      "why": "transcribe the episode (Transcribe to SRT) for show notes and chapters"
+    },
+    {
+      "tool": "ffmpeg",
+      "why": "convert, mix and cut audio"
+    }
+  ],
+  "starter": [
+    {
+      "path": "episodes/TEMPLATE.md",
+      "content": "# Episode title\n\nGuest / topic: \nRecorded: \n\n## Show notes\n\n## Chapters\n00:00 Intro\n\n## Links\n"
+    }
+  ]
+}

@@ -1,0 +1,92 @@
+{
+    "id": "arduino",
+    "name": "Arduino sketches",
+    "binary": "arduino-cli",
+    "version_args": "version",
+    "website": "https://arduino.github.io/arduino-cli/",
+    "install_note": "Fetch the official release (github.com/arduino/arduino-cli, arduino-cli_X_Linux_64bit.tar.gz, about 18 MB) into ~/.local/share/cockpit/tools/arduino-cli/ and link it from ~/.local/bin. To COMPILE for a board you also need that board's core (a separate download that this tool never makes): the Cores preset prints the exact commands.",
+    "description": "Check and compile Arduino sketches. Lint reads the sketch and finds the common mistakes without any board core: no setup() or loop(), Serial used before Serial.begin, digitalWrite with no pinMode, delay() or Serial output inside an interrupt handler, String concatenation (heap fragmentation), Serial.print(\"text\") that eats RAM on AVR boards, big global arrays on a 2 KB board; Info lists libraries, pins, baud rate, interrupt handlers and global memory; Compile runs arduino-cli for the board you name (fqbn=arduino:avr:uno) and reports errors as file(line,col) with program and RAM use, or, if the board's core is not installed, says which core and the one command to add it; Cores lists what is installed; New sketch starts a blink with serial. Nothing is downloaded or uploaded by this tool.",
+    "packages": {
+        "apt": "php-cli",
+        "dnf": "php-cli",
+        "pacman": "php",
+        "zypper": "php8",
+        "brew": "arduino-cli php"
+    },
+    "presets": [
+        {
+            "id": "lint",
+            "label": "Lint the sketch (no board core needed)",
+            "description": "Reads the .ino and its files: no setup()/loop() (error); Serial before Serial.begin, digitalWrite without pinMode, delay or Serial in an interrupt handler, several baud rates (warnings); String use, Serial.print(\"text\") without F(), malloc/new, while(!Serial), long delays, big arrays (notes). With Fix with agent.",
+            "input_kinds": [
+                "code",
+                "file",
+                "folder"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_lint",
+            "command": "php {WEBROOT}/arduino_tool lint {INPUT} {OUTPUT}",
+            "timeout_seconds": 120
+        },
+        {
+            "id": "info",
+            "label": "Info: libraries, pins, baud, memory",
+            "description": "The libraries included (and which need installing), the pins set with pinMode, the baud rate, interrupt handlers, functions, and how much RAM the global arrays take.",
+            "input_kinds": [
+                "code",
+                "file",
+                "folder"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_info",
+            "command": "php {WEBROOT}/arduino_tool info {INPUT} {OUTPUT}",
+            "timeout_seconds": 120
+        },
+        {
+            "id": "compile",
+            "label": "Compile for a board (arduino-cli)",
+            "description": "Give the board in the extra arguments: fqbn=arduino:avr:uno (vendor:architecture:board). Errors and warnings as file(line,col), the program size and RAM use. If that board's core is not installed it says which core and the command to add it: nothing is downloaded by this tool.",
+            "input_kinds": [
+                "code",
+                "file",
+                "folder"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_compile",
+            "command": "php {WEBROOT}/arduino_tool compile {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "cores",
+            "optional_input": "/",
+            "label": "Cores and libraries installed (and how to add one)",
+            "description": "What arduino-cli has installed (in ~/.local/share/cockpit/arduino) and the exact commands to add a board family or a library. Needs no input.",
+            "input_kinds": [
+                "folder",
+                "file",
+                "text"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "arduino_cores",
+            "command": "php {WEBROOT}/arduino_tool cores {INPUT} {OUTPUT}",
+            "timeout_seconds": 120
+        },
+        {
+            "id": "new-sketch",
+            "label": "New sketch (blink + serial)",
+            "description": "Creates NAME/NAME.ino in the folder you give: a non-blocking blink with serial output. Type the name in the extra arguments (letters, digits, _). Never overwrites.",
+            "input_kinds": [
+                "folder"
+            ],
+            "output_kind": "text",
+            "output_ext": "txt",
+            "output_stem": "arduino_new",
+            "command": "php {WEBROOT}/arduino_tool new {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 60
+        }
+    ]
+}

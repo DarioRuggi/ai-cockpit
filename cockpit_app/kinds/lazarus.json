@@ -1,0 +1,35 @@
+{
+  "id": "lazarus",
+  "name": "Lazarus / Free Pascal",
+  "icon": "code",
+  "description": "A Lazarus or Free Pascal project (.lpi / .lpr / .lpk). The compiler is the judge, not the model.",
+  "detect": [
+    "*.lpi",
+    "*.lpr",
+    "*.lpk"
+  ],
+  "note": "This is a Lazarus / Free Pascal project. Work in small steps that compile: the compiler (fpc, lazbuild) is the judge, not your confidence. State which FPC/Lazarus version and widgetset you assume, because LCL and RTL APIs differ between versions. Change a .pas unit and its .lfm form together so event handlers, declarations and component names stay consistent.",
+  "verify": "lazbuild / fpc",
+  "group": "Software & games",
+  "details": "A Lazarus or Free Pascal project. The compiler is the judge, not the model: the agent works in small steps that compile, states which FPC and Lazarus version it assumes, and changes a unit together with its form. The Lazarus and Free Pascal tools build the project, list the errors with file and line, and offer Fix with agent; the Standards check reads the whole project.",
+  "examples": [
+    "A form application: build, read the errors, fix, repeat",
+    "A console utility in Free Pascal",
+    "Move a unit to a newer LCL",
+    "Check a project against the four house rules"
+  ],
+  "tools": [
+    {
+      "tool": "lazarus",
+      "why": "create, build and rebuild Lazarus projects"
+    },
+    {
+      "tool": "fpc",
+      "why": "check and compile plain Free Pascal units"
+    },
+    {
+      "tool": "git",
+      "why": "status, diff and commit your work in small steps"
+    }
+  ]
+}

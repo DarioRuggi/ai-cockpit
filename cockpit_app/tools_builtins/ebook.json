@@ -1,0 +1,74 @@
+{
+    "id": "ebook",
+    "name": "E-books (EPUB)",
+    "binary": "php",
+    "version_args": "--version",
+    "website": "https://www.w3.org/publishing/epubcheck/",
+    "install_note": "Check needs epubcheck and Java: fetch the official epubcheck-X.zip (github.com/w3c/epubcheck, about 33 MB) into ~/.local/share/cockpit/tools/epubcheck/ with a wrapper \"epubcheck\" in ~/.local/bin that runs java -jar .../epubcheck.jar \"$@\"; Java: sudo apt install default-jre-headless. Build needs pandoc.",
+    "description": "Write, build and validate an EPUB book. The markdown source stays the master: Build makes an EPUB 3 from a folder of chapters (every .md in number order, a metadata.yaml, a style.css, an optional cover) with pandoc; Check runs epubcheck, the official validator that stores and libraries use, and reports each problem as file(line,col) with its code (RSC-012, OPF-003 ...); Inspect shows what is inside an EPUB (version, title, author, language, chapters, images, fonts, scripts, remote resources, cover, accessibility metadata); New book starts a skeleton. Markdown that refers to files outside the book folder or to the network is refused at build time, so a build cannot pull a file from elsewhere into the book.",
+    "packages": {
+        "apt": "pandoc default-jre-headless php-cli php-zip",
+        "dnf": "pandoc java-latest-openjdk-headless php-cli",
+        "pacman": "pandoc jre-openjdk-headless php",
+        "zypper": "pandoc java-17-openjdk-headless php8 php8-zip",
+        "brew": "pandoc openjdk php"
+    },
+    "presets": [
+        {
+            "id": "check",
+            "label": "Validate the EPUB (epubcheck)",
+            "description": "The official validator: every error and warning as file(line,col) with the epubcheck code. A book that fails here is refused by most stores.",
+            "input_kinds": [
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_epubcheck",
+            "command": "php {WEBROOT}/ebook_tool check {INPUT} {OUTPUT}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "inspect",
+            "label": "Inspect: what is inside the EPUB",
+            "description": "EPUB version, title, author, language, identifier, date, rights, reading order, navigation document, cover, chapters, images, fonts, CSS, scripts, size, and what is worth a look (no cover, scripts, remote resources, images over 1 MB, no accessibility metadata).",
+            "input_kinds": [
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_inspect",
+            "command": "php {WEBROOT}/ebook_tool inspect {INPUT} {OUTPUT}",
+            "timeout_seconds": 120
+        },
+        {
+            "id": "build",
+            "label": "Build an EPUB from markdown",
+            "description": "The input is the book folder (every .md in number order, metadata.yaml, style.css) or one .md file. Type options in the extra arguments: title=\"My Book\" author=\"A. Name\" lang=en cover=cover.png. A table of contents is made from the headings; each # heading starts a new chapter file.",
+            "input_kinds": [
+                "folder",
+                "file",
+                "text"
+            ],
+            "output_kind": "document",
+            "output_ext": "epub",
+            "output_stem": "{NAME}",
+            "command": "php {WEBROOT}/ebook_tool build {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "new-book",
+            "label": "New book (skeleton)",
+            "description": "Creates NAME/ in the folder you give: metadata.yaml (title, author, language, date, rights, an identifier), two chapters and a style.css. Type the name in the extra arguments. Never overwrites.",
+            "input_kinds": [
+                "folder"
+            ],
+            "output_kind": "text",
+            "output_ext": "txt",
+            "output_stem": "ebook_new",
+            "command": "php {WEBROOT}/ebook_tool new {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 60
+        }
+    ]
+}

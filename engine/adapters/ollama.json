@@ -1,0 +1,20 @@
+{
+  "id": "ollama", "display": "Ollama (local models)", "kind": "model-api", "transport": "http",
+  "url": "http://127.0.0.1:11434/api/generate",
+  "detect_url": "http://127.0.0.1:11434/api/tags",
+  "body": {"model": "{model}", "prompt": "{prompt}", "stream": true},
+  "parser": "ollama_ndjson",
+  "limits": {"timeout_s": 300},
+  "notes": "A model API has no tools, so permission tiers do not apply. Needs a model name per request.",
+  "docs_checked": "2026-10-05",
+  "tests": [
+    {"name": "local model streams text and reports token counts",
+     "request": {"prompt": "Reply with the single word OK.", "model": "qwen2.5-coder:1.5b", "timeout_s": 120},
+     "live": true,
+     "expect": {"exit": 0, "error_code": "none", "events_include": ["text", "usage"], "events_order": ["start", "text", "usage", "done"]}},
+    {"name": "an unknown model ends cleanly as error(http_error)",
+     "request": {"prompt": "hi", "model": "no-such-model-xyz", "timeout_s": 30},
+     "live": true,
+     "expect": {"error_code": "http_error"}}
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "id": "codex", "display": "Codex CLI", "kind": "agent", "transport": "process",
+  "command": "codex",
+  "args": ["exec", "--skip-git-repo-check", {"when": "model", "args": ["-m", "{model}"]}, "-"],
+  "prompt_via": "stdin",
+  "parser": "plain",
+  "tiers": {
+    "read_only": ["-s", "read-only"],
+    "edit": ["-s", "workspace-write"],
+    "shell": ["--dangerously-bypass-approvals-and-sandbox"]
+  },
+  "detect": {"cmd": "codex", "version_args": ["--version"]},
+  "cwd_policy": "project",
+  "limits": {"timeout_s": 900},
+  "notes": "Prompt goes through stdin (the '-' argument) so a long Cockpit context never hits an argument limit. `codex exec --json` exists but its event schema has not been recorded from a real run yet; until then the plain parser keeps the final answer.",
+  "docs_checked": "2026-10-05"
+}

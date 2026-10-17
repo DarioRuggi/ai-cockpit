@@ -1,0 +1,16 @@
+{
+  "id": "general",
+  "name": "General",
+  "icon": "folder",
+  "description": "An ordinary project: chats, files and a goal. No special behaviour.",
+  "detect": [],
+  "note": "",
+  "verify": "",
+  "group": "General",
+  "details": "Use this when the project is none of the other kinds, or when you do not want any standing note at all. Nothing is added to your prompts except the goal (if you set one).",
+  "examples": [
+    "A scratch project for quick questions",
+    "A folder of mixed notes and files",
+    "Anything you have not sorted yet"
+  ]
+}

@@ -1,0 +1,24 @@
+{
+    "id": "filesystem",
+    "name": "Filesystem access",
+    "description": "Read, write, and list files within the current project directory.",
+    "tags": ["files", "io", "essential"],
+    "scopes": ["per-project"],
+    "implementations": {
+        "claude": {
+            "type": "mcp",
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-filesystem", "${PROJECT_DIR}"]
+        },
+        "gemini": {
+            "type": "mcp",
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-filesystem", "${PROJECT_DIR}"]
+        },
+        "ollama": {
+            "type": "tool-shim",
+            "shim": "filesystem_shim.sh",
+            "system_prompt_addition": "FS_READ:<path>, FS_WRITE:<path>:<content>, FS_LIST:<path>, FS_DELETE:<path> — operate on files within the project. Path is relative to project root."
+        }
+    }
+}

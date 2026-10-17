@@ -1,0 +1,102 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// docs_tool — the Documentation site tools' work, for the tool presets (tools_builtins/docsite.json). A command-line program, never reachable over the web.
+//
+//   php docs_tool check  FOLDER OUTPUT       the markdown pages: broken links between pages and to #anchors, missing images, empty pages, no title, skipped heading levels,
+//                                            duplicate headings (same anchor), pages nothing links to. Problems as file(line) Error/Warning, then [exit code N]
+//   php docs_tool toc    FOLDER OUTPUT       an index (SUMMARY.md style) of every page, in folder and number-prefix order, titles from the first heading
+//   php docs_tool build  FOLDER OUTPUT.zip   a static site: one HTML page per markdown page with a sidebar, previous/next links, a search box (client side), links rewritten .md -> .html,
+//                                            images and other files copied. Open index.html, or put the folder on any web server. No network, no scripts from elsewhere.
+//   php docs_tool single FOLDER OUTPUT.html  all the pages in one self-contained HTML file with a table of contents (to print or send)
+//
+// Pages are .md files (GitHub-flavoured markdown) read with pandoc. README.md or index.md is the home page. Folders named node_modules, .git, _site, site, build are skipped.
+// The source is never changed.
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "docs_tool: $m\n"); exit($rc); }
+[$sub, $in, $out] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? ''];
+if (!in_array($sub, ['check', 'toc', 'build', 'single'], true) || $in === '' || $out === '') fail('usage: docs_tool check|toc|build|single FOLDER OUTPUT', 2);
+if (!is_dir($in)) fail("not a folder: $in"); $root = rtrim(realpath($in) ?: $in, '/');
+function sh(string $cmd, ?int &$rc = null): string { $o = []; exec($cmd . ' 2>&1', $o, $rc); return implode("\n", $o); }
+function have(string $b): bool { return trim((string)shell_exec('command -v ' . escapeshellarg($b) . ' 2>/dev/null')) !== ''; }
+
+// ---- the pages ---------------------------------------------------------------------------------------------------------------------------------
+$pages = []; $skip = ['node_modules', '.git', '_site', 'site', 'build', 'vendor', '.github'];
+$it = new RecursiveIteratorIterator(new RecursiveCallbackFilterIterator(new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS), function ($f) use ($skip) { return !in_array($f->getFilename(), $skip, true) && !$f->isLink(); }));
+foreach ($it as $f) if ($f->isFile() && preg_match('/\.(md|markdown)$/i', $f->getFilename()) && $f->getSize() < 5000000) $pages[] = substr($f->getPathname(), strlen($root) + 1);
+if (!$pages) fail('no .md pages found');
+usort($pages, function ($a, $b) { $ka = explode('/', mb_strtolower($a)); $kb = explode('/', mb_strtolower($b)); $ia = in_array(basename($a), ['README.md', 'readme.md', 'index.md'], true); $ib = in_array(basename($b), ['README.md', 'readme.md', 'index.md'], true); if (count($ka) === count($kb)) { if ($ia !== $ib) return $ia ? -1 : 1; } return strnatcmp(implode('/', $ka), implode('/', $kb)); });
+if (count($pages) > 1000) fail('more than 1000 pages: give a sub-folder');
+$src = []; foreach ($pages as $p) { $t = (string)file_get_contents("$root/$p"); if (strncmp($t, "\xEF\xBB\xBF", 3) === 0) $t = substr($t, 3); $src[$p] = str_replace(["\r\n", "\r"], "\n", $t); }
+/** front matter title/body split */
+function split_fm(string $t): array { if (preg_match('/\A---\n(.*?)\n---\n(.*)\z/s', $t, $m)) { $title = preg_match('/^title:\s*["\']?(.+?)["\']?\s*$/m', $m[1], $x) ? $x[1] : null; return [$title, $m[2], substr_count(substr($t, 0, strlen($t) - strlen($m[2])), "\n")]; } return [null, $t, 0]; }
+function title_of(string $t, string $fallback): string { [$ft, $body] = split_fm($t); if ($ft) return $ft; if (preg_match('/^#\s+(.+?)\s*#*\s*$/m', $body, $m)) return trim($m[1]); return ucfirst(trim(preg_replace('/^\d+[-_.\s]*/', '', str_replace(['-', '_'], ' ', pathinfo($fallback, PATHINFO_FILENAME))))); }
+function slug(string $h): string { $h = mb_strtolower(trim(preg_replace('/[*_`\[\]()]|<[^>]+>/u', '', $h))); $h = preg_replace('/[^\p{L}\p{N}\- _]/u', '', $h); return preg_replace('/\s+/u', '-', $h); }
+function resolve(string $from, string $ref): ?string { $d = dirname($from); $parts = $d === '.' ? [] : explode('/', $d); foreach (explode('/', $ref) as $seg) { if ($seg === '' || $seg === '.') continue; if ($seg === '..') { if (!$parts) return null; array_pop($parts); } else $parts[] = $seg; } return implode('/', $parts); }
+$titles = []; foreach ($pages as $p) $titles[$p] = title_of($src[$p], $p);
+$home = null; foreach ($pages as $p) if (in_array(strtolower($p), ['readme.md', 'index.md'], true)) { $home = $p; break; }
+
+if ($sub === 'toc') {
+    $o = "# Contents\n\n"; $lastDir = null;
+    foreach ($pages as $p) { $dir = dirname($p); $depth = $dir === '.' ? 0 : substr_count($dir, '/') + 1; if ($dir !== '.' && $dir !== $lastDir) { $o .= str_repeat('  ', max(0, $depth - 1)) . '- **' . ucfirst(trim(preg_replace('/^\d+[-_.\s]*/', '', str_replace(['-', '_'], ' ', basename($dir))))) . "**\n"; } $lastDir = $dir; $o .= str_repeat('  ', $depth) . '- [' . $titles[$p] . '](' . str_replace(' ', '%20', $p) . ")\n"; }
+    file_put_contents($out, $o); echo "Wrote $out (" . count($pages) . " pages)\n"; exit(0);
+}
+
+if ($sub === 'check') {
+    $msgs = []; $err = 0; $warn = 0; $add = function (string $k, string $f, int $l, string $m) use (&$msgs, &$err, &$warn) { $msgs[] = "$f($l) $k: $m"; if ($k === 'Error') $err++; elseif ($k === 'Warning') $warn++; };
+    $anchors = []; $linked = []; $allFiles = [];
+    foreach (new RecursiveIteratorIterator(new RecursiveCallbackFilterIterator(new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS), function ($f) use ($skip) { return !in_array($f->getFilename(), $skip, true) && !$f->isLink(); })) as $f) if ($f->isFile()) $allFiles[substr($f->getPathname(), strlen($root) + 1)] = 1;
+    foreach ($pages as $p) { [$ft, $body, $off] = split_fm($src[$p]); $seen = []; $inCode = false; foreach (explode("\n", $body) as $i => $l) { if (preg_match('/^\s*(```|~~~)/', $l)) { $inCode = !$inCode; continue; } if ($inCode) continue; if (preg_match('/^(#{1,6})\s+(.+?)\s*#*\s*$/', $l, $m)) { $s = slug($m[2]); if (isset($seen[$s])) { $seen[$s]++; $s .= '-' . ($seen[$s] - 1); $add('Note', $p, $i + 1 + $off, 'a second heading "' . $m[2] . '" in this page: its anchor is #' . $s); } else $seen[$s] = 1; $anchors[$p][$s] = 1; } } }
+    foreach ($pages as $p) {
+        [$ft, $body, $off] = split_fm($src[$p]); $lines = explode("\n", $body); $inCode = false; $first = null; $prevLevel = 0; $hasH1 = false;
+        if (trim($body) === '') { $add('Error', $p, 1, 'the page is empty'); continue; }
+        foreach ($lines as $i => $l) { $ln = $i + 1 + $off; if (preg_match('/^\s*(```|~~~)/', $l)) { $inCode = !$inCode; continue; } if ($inCode) continue;
+            if (preg_match('/^(#{1,6})\s+\S/', $l, $m)) { $lv = strlen($m[1]); if ($lv === 1) $hasH1 = true; if ($prevLevel && $lv > $prevLevel + 1) $add('Note', $p, $ln, "the heading level jumps from $prevLevel to $lv"); $prevLevel = $lv; }
+            if (preg_match_all('/(!?)\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/', $l, $mm, PREG_SET_ORDER)) foreach ($mm as $x) { $ref = $x[2]; if (preg_match('~^(https?:|mailto:|tel:|ftp:|data:|//)~i', $ref)) continue; $img = $x[1] === '!';
+                [$path, $frag] = array_pad(explode('#', $ref, 2), 2, ''); $path = rawurldecode($path); if (strpos($path, '/') === 0 && $path !== '') { $add('Note', $p, $ln, "the absolute link $ref only works if the site sits at the web root"); continue; }
+                $t = $path === '' ? $p : resolve($p, $path); if ($t === null) { $add('Error', $p, $ln, "the link $ref goes outside the folder"); continue; }
+                if (!$img && $path !== '') { $linked[$t] = 1; } if ($path === '' && $frag !== '') $linked[$p] = $linked[$p] ?? 0;
+                if (!isset($allFiles[$t]) && !is_dir("$root/$t")) { $add('Error', $p, $ln, ($img ? 'the image ' : 'the link ') . "$ref points to a file that does not exist" . (($c = array_values(array_filter(array_keys($allFiles), fn($f) => strcasecmp($f, $t) === 0))) ? " (the file is '" . $c[0] . "': the case differs, which breaks on Linux)" : '')); continue; }
+                if ($frag !== '' && !$img && isset($anchors[$t]) && !isset($anchors[$t][mb_strtolower(rawurldecode($frag))]) && !isset($anchors[$t][slug(rawurldecode($frag))])) $add('Error', $p, $ln, "the link $ref: there is no heading #$frag in " . ($t === $p ? 'this page' : $t)); } }
+        if (!$hasH1 && !$ft) $add('Warning', $p, 1, 'the page has no title (no # heading and no front-matter title)');
+    }
+    foreach ($pages as $p) { if ($p === $home || isset($linked[$p])) continue; $add('Note', $p, 1, 'no other page links to this one'); }
+    $rep = "# Docs check: " . basename($root) . "\n\n- Pages: " . count($pages) . "; home page: " . ($home ?? 'none (a README.md or index.md)') . "\n\n" . ($msgs ? "## Problems ($err errors, $warn warnings)\n\n" . implode("\n", array_slice($msgs, 0, 400)) . "\n" : "No problems found.\n") . "\n[exit code " . ($err > 0 ? 1 : 0) . "]\n";
+    file_put_contents($out, $rep); echo "Wrote $out ($err errors, $warn warnings)\n"; exit(0);
+}
+
+if (!have('pandoc')) fail('pandoc is not installed (sudo apt install pandoc)');
+$md2html = function (string $md, string $page): string { $tmp = tempnam(sys_get_temp_dir(), 'docs_'); file_put_contents($tmp, $md); $o = sh('pandoc --sandbox -f gfm -t html5 --wrap=none ' . escapeshellarg($tmp), $rc); @unlink($tmp); if ($rc !== 0) fail("pandoc failed on $page: " . trim(substr($o, 0, 200))); return $o; };
+$linkfix = function (string $html, string $page) use ($pages): string {
+    return preg_replace_callback('/(<(?:a|img)\b[^>]*?\b(?:href|src)=")([^"]+)(")/i', function ($m) use ($page) { $ref = $m[2]; if (preg_match('~^(https?:|mailto:|tel:|ftp:|data:|//|#)~i', $ref)) return $m[0]; [$path, $frag] = array_pad(explode('#', $ref, 2), 2, ''); if (preg_match('/\.(md|markdown)$/i', $path)) $path = preg_replace('/\.(md|markdown)$/i', '.html', $path); if (strtolower(basename($path)) === 'readme.html') $path = substr($path, 0, -11) . 'index.html'; return $m[1] . $path . ($frag !== '' ? '#' . $frag : '') . $m[3]; }, $html);
+};
+function esc(string $s): string { return htmlspecialchars($s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
+$htmlName = function (string $p): string { $h = preg_replace('/\.(md|markdown)$/i', '.html', $p); if (strtolower(basename($h)) !== 'readme.html') return $h; $d = dirname($h); return ($d === '.' ? '' : $d . '/') . 'index.html'; };
+
+if ($sub === 'single') {
+    $all = ''; foreach ($pages as $p) { [$ft, $body] = split_fm($src[$p]); $id = 'page-' . substr(md5($p), 0, 8); $all .= "\n\n<section id=\"$id\">\n" . $md2html($body, $p) . "\n</section>\n"; }
+    $toc = '<nav class="toc"><h2>Contents</h2><ul>'; foreach ($pages as $p) $toc .= '<li><a href="#page-' . substr(md5($p), 0, 8) . '">' . esc($titles[$p]) . '</a></li>'; $toc .= '</ul></nav>';
+    $css = 'body{font:16px/1.55 system-ui,sans-serif;max-width:52rem;margin:2rem auto;padding:0 1rem;color:#1b1b1b}pre,code{font-family:ui-monospace,monospace;background:#f3f3f3}pre{padding:.7rem;overflow:auto}table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:.3rem .6rem}img{max-width:100%}section{border-top:2px solid #ddd;margin-top:2.5rem;padding-top:1rem}.toc{background:#fafafa;border:1px solid #ddd;padding:.5rem 1.2rem}@media print{section{page-break-before:always}}';
+    file_put_contents($out, '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' . esc(basename($root)) . '</title><style>' . $css . '</style></head><body><h1>' . esc(basename($root)) . '</h1>' . $toc . $all . '</body></html>');
+    echo "Wrote $out (" . count($pages) . " pages in one file)\n"; exit(0);
+}
+
+// ---- build: the static site ----------------------------------------------------------------------------------------------------------------------
+if (strtolower(pathinfo($out, PATHINFO_EXTENSION)) !== 'zip') fail('the output must be a .zip'); if (!class_exists('ZipArchive')) fail('php zip is not installed');
+$z = new ZipArchive(); @unlink($out); if ($z->open($out, ZipArchive::CREATE) !== true) fail('cannot write the zip');
+$nav = function (string $current) use ($pages, $titles, $htmlName): string { $depth = substr_count($current, '/'); $up = str_repeat('../', $depth); $o = '<nav class="side"><input id="q" type="search" placeholder="Search…" autocomplete="off"><div id="hits"></div><ul class="tree">'; foreach ($pages as $p) { $h = $htmlName($p); $o .= '<li class="d' . substr_count($p, '/') . ($p === $current ? ' on' : '') . '"><a href="' . $up . esc(str_replace(' ', '%20', $h)) . '">' . esc($titles[$p]) . '</a></li>'; } return $o . '</ul></nav>'; };
+$css = ':root{--bg:#fff;--fg:#1b1b1b;--mut:#666;--ac:#0b57d0;--bd:#ddd;--cb:#f3f3f3}@media(prefers-color-scheme:dark){:root{--bg:#161616;--fg:#e6e6e6;--mut:#999;--ac:#8ab4f8;--bd:#333;--cb:#222}}*{box-sizing:border-box}body{margin:0;font:16px/1.6 system-ui,sans-serif;background:var(--bg);color:var(--fg);display:flex;min-height:100vh}a{color:var(--ac)}.side{width:18rem;flex:none;border-right:1px solid var(--bd);padding:1rem;overflow:auto;position:sticky;top:0;height:100vh}.side input{width:100%;padding:.4rem;border:1px solid var(--bd);border-radius:6px;background:var(--bg);color:var(--fg)}.tree{list-style:none;padding:0;margin:.8rem 0}.tree li{margin:.15rem 0}.tree li.d1{padding-left:1rem}.tree li.d2{padding-left:2rem}.tree li.d3{padding-left:3rem}.tree li.on>a{font-weight:700;color:var(--fg)}main{flex:1;max-width:50rem;padding:1.5rem 2rem}pre,code{font-family:ui-monospace,monospace;background:var(--cb)}pre{padding:.8rem;overflow:auto;border-radius:6px}code{padding:.1rem .3rem;border-radius:4px}pre code{padding:0}table{border-collapse:collapse}td,th{border:1px solid var(--bd);padding:.3rem .6rem}img{max-width:100%}.pn{display:flex;justify-content:space-between;margin-top:3rem;border-top:1px solid var(--bd);padding-top:1rem}#hits a{display:block;padding:.2rem 0}@media(max-width:800px){body{display:block}.side{width:auto;height:auto;position:static;border:0;border-bottom:1px solid var(--bd)}main{padding:1rem}}';
+$js = 'var Q=document.getElementById("q"),H=document.getElementById("hits");fetch(UP+"search.json").then(function(r){return r.json()}).then(function(D){Q.addEventListener("input",function(){var t=Q.value.toLowerCase().trim();H.innerHTML="";if(t.length<2)return;D.filter(function(d){return d.t.toLowerCase().indexOf(t)>=0||d.x.toLowerCase().indexOf(t)>=0}).slice(0,12).forEach(function(d){var a=document.createElement("a");a.href=UP+d.u;a.textContent=d.t;H.appendChild(a)})})}).catch(function(){Q.style.display="none"});';
+$index = []; $n = count($pages);
+foreach ($pages as $i => $p) {
+    [$ft, $body] = split_fm($src[$p]); $content = $linkfix($md2html($body, $p), $p); $up = str_repeat('../', substr_count($p, '/'));
+    $prev = $i > 0 ? '<a href="' . $up . esc(str_replace(' ', '%20', $htmlName($pages[$i - 1]))) . '">← ' . esc($titles[$pages[$i - 1]]) . '</a>' : '<span></span>'; $next = $i < $n - 1 ? '<a href="' . $up . esc(str_replace(' ', '%20', $htmlName($pages[$i + 1]))) . '">' . esc($titles[$pages[$i + 1]]) . ' →</a>' : '<span></span>';
+    $page = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' . esc($titles[$p]) . ' — ' . esc(basename($root)) . '</title><style>' . $css . '</style></head><body>' . $nav($p) . '<main>' . $content . '<div class="pn">' . $prev . $next . '</div></main><script>var UP="' . $up . '";' . $js . '</script></body></html>';
+    $z->addFromString($htmlName($p), $page); $index[] = ['t' => $titles[$p], 'u' => $htmlName($p), 'x' => mb_substr(trim(preg_replace('/\s+/u', ' ', strip_tags($content))), 0, 4000)];
+}
+if ($home === null) { $z->addFromString('index.html', '<!doctype html><meta charset="utf-8"><title>' . esc(basename($root)) . '</title><meta http-equiv="refresh" content="0;url=' . esc(str_replace(' ', '%20', $htmlName($pages[0]))) . '">'); }
+$z->addFromString('search.json', json_encode($index, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+$files = 0; foreach (new RecursiveIteratorIterator(new RecursiveCallbackFilterIterator(new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS), function ($f) use ($skip) { return !in_array($f->getFilename(), $skip, true) && !$f->isLink(); })) as $f) {
+    if (!$f->isFile() || preg_match('/\.(md|markdown|php|sh|env|bak|swp)$/i', $f->getFilename()) || $f->getFilename()[0] === '.' || $f->getSize() > 25 * 1048576) continue; $z->addFile($f->getPathname(), substr($f->getPathname(), strlen($root) + 1)); $files++; }
+$z->close(); echo "Wrote $out: $n pages, $files other file(s) copied (images, downloads)\n";

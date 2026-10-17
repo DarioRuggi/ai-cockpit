@@ -1,0 +1,19 @@
+{
+    "id": "plain-language",
+    "name": "Plain language",
+    "icon": "segment",
+    "colour": "",
+    "description": "Short sentences, common words, no jargon.",
+    "prompt": "Rewrite the text in plain language: short sentences, common words, no jargon, the same meaning. Use the language of the text. Return only the rewritten text.",
+    "skill": "",
+    "supplier": {
+        "type": "ollama",
+        "model": ""
+    },
+    "input": "clipboard",
+    "output": "clipboard",
+    "tools": "none",
+    "confirm": "first",
+    "allow_secrets": false,
+    "starter": true
+}

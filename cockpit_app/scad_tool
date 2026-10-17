@@ -1,0 +1,124 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// scad_tool — the 3D printing / CAD tools' work, for the tool presets (tools_builtins/scad.json). A command-line program, never reachable over the web.
+//
+//   php scad_tool check  FILE.scad OUTPUT            compile in a sandbox; errors and warnings as file(line), the model's size and whether it is a valid solid, then [exit code N]
+//   php scad_tool stl    FILE.scad OUTPUT.stl|3mf|off   the model exported
+//   php scad_tool png    FILE.scad OUTPUT.png        a picture of the model (rendered without a screen)
+//   php scad_tool info   FILE.stl|FILE.scad OUTPUT   triangles, bounding box in mm, volume, surface area, and whether the mesh is watertight (a .scad is compiled first)
+//   php scad_tool print  FILE.stl|FILE.scad OUTPUT [bed=220x220x250]   will it print: fits the bed, watertight, how much overhangs (needs supports), tiny dimensions
+//   php scad_tool params FILE.scad OUTPUT            the top-level parameters (name, value, comment) that the model is built from
+//   php scad_tool new    FOLDER OUTPUT NAME          a parametric part NAME.scad; never overwrites
+//
+// SAFETY: OpenSCAD can read any file the account can (include, import, surface, text files), so every run happens inside bubblewrap: no network, no home folder, a read-only system,
+// only a scratch copy of the model's folder writable. Without bwrap this tool refuses to run OpenSCAD. The original is never changed.
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "scad_tool: $m\n"); exit($rc); }
+[$sub, $in, $out] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? '']; $args = array_slice($argv, 4);
+if (!in_array($sub, ['check', 'stl', 'png', 'info', 'print', 'params', 'new'], true) || $in === '' || $out === '') fail('usage: scad_tool check|stl|png|info|print|params|new INPUT OUTPUT [ARGS]', 2);
+$opt = []; foreach ($args as $a) foreach (preg_split('/[\s;]+(?=\w+=)/', trim($a)) as $p) if (strpos($p, '=') !== false) { [$k, $v] = explode('=', $p, 2); $opt[strtolower(trim($k))] = trim($v); }
+function sh(string $cmd, ?int &$rc = null): string { $o = []; exec($cmd . ' 2>&1', $o, $rc); return implode("\n", $o); }
+function have(string $b): bool { return trim((string)shell_exec('command -v ' . escapeshellarg($b) . ' 2>/dev/null')) !== ''; }
+
+if ($sub === 'new') {
+    if (!is_dir($in)) fail('new: give the folder to create the part in'); $nm = preg_replace('/[^A-Za-z0-9_-]/', '', preg_split('/\s+/', trim($args[0] ?? ''))[0] ?? ''); if ($nm === '' || strpos($args[0] ?? '', '=') !== false) fail('new: type the part\'s name in the extra arguments (letters, digits, - and _)');
+    $f = rtrim($in, '/') . '/' . $nm . '.scad'; if (file_exists($f)) fail("new: $f already exists, nothing was changed");
+    file_put_contents($f, "// $nm: a parametric box with a lid recess and a corner radius. Change the numbers at the top; everything else follows.\n\n/* [Size in mm] */\nwidth = 60;      // outside width\ndepth = 40;      // outside depth\nheight = 25;     // outside height\nwall = 2;        // wall thickness (at least 1.2 for a 0.4 mm nozzle)\n\n/* [Shape] */\nradius = 4;      // corner radius\nsmooth = 48;     // facets on curves (higher is smoother and slower)\n\n\$fn = smooth;\n\nmodule rounded_box(w, d, h, r) {\n    hull() for (x = [r, w - r], y = [r, d - r]) translate([x, y, 0]) cylinder(h = h, r = r);\n}\n\ndifference() {\n    rounded_box(width, depth, height, radius);\n    translate([wall, wall, wall]) rounded_box(width - 2 * wall, depth - 2 * wall, height, max(radius - wall, 0.01));\n}\n");
+    file_put_contents($out, "Created $f: a parametric rounded box. Next: Check, then Export STL.\n[exit code 0]\n"); echo "Created $f\n"; exit(0);
+}
+if (!is_file($in)) fail("no such file: $in"); $ext = strtolower(pathinfo($in, PATHINFO_EXTENSION)); $oext = strtolower(pathinfo($out, PATHINFO_EXTENSION));
+if ($sub === 'params') { if ($ext !== 'scad') fail('give a .scad file'); }
+elseif (in_array($sub, ['info', 'print'], true)) { if (!in_array($ext, ['stl', 'scad'], true)) fail('give a .stl or a .scad file'); }
+elseif ($ext !== 'scad') fail('the input must be a .scad file');
+
+if ($sub === 'params') {
+    $o = "# Parameters of " . basename($in) . "\n\nTop-level assignments (what the model is built from). A \"/* [Group] */\" comment starts a group in OpenSCAD's Customizer.\n\n| Group | Name | Value | Comment |\n|---|---|---|---|\n"; $group = ''; $n = 0; $depth = 0;
+    foreach (explode("\n", (string)file_get_contents($in)) as $l) { if (preg_match('~^\s*/\*\s*\[(.+?)\]\s*\*/~', $l, $m)) { $group = $m[1]; continue; } if ($depth === 0 && preg_match('/^[A-Za-z_\$][A-Za-z0-9_]*\s*=/', $l)) { $cm = preg_match('~//\s*(.*)$~', $l, $cc) ? trim($cc[1]) : ''; $code = preg_replace('~//.*$~', '', $l); if (preg_match_all('/([A-Za-z_\$][A-Za-z0-9_]*)\s*=\s*([^;]+);/', $code, $as, PREG_SET_ORDER)) foreach ($as as $k => $m) { $o .= "| $group | {$m[1]} | " . str_replace('|', '/', trim($m[2])) . ' | ' . str_replace('|', '/', $k === count($as) - 1 ? $cm : '') . " |\n"; $n++; } } $depth += substr_count($l, '{') + substr_count($l, '(') - substr_count($l, '}') - substr_count($l, ')'); if ($depth < 0) $depth = 0; }
+    if (!$n) $o .= "| | (no top-level parameters found) | | |\n"; file_put_contents($out, $o . "\n[exit code 0]\n"); echo "Wrote $out ($n parameters)\n"; exit(0);
+}
+
+// ---- STL analysis (no OpenSCAD needed) ---------------------------------------------------------------------------------------------------------
+/** [[x,y,z],[x,y,z],[x,y,z]] per triangle, from an ASCII or binary STL */
+function read_stl(string $f): array {
+    $b = (string)file_get_contents($f); $n = strlen($b); $tris = [];
+    if ($n >= 84) { $cnt = unpack('V', substr($b, 80, 4))[1]; if (84 + 50 * $cnt === $n) { for ($i = 0; $i < $cnt; $i++) { $v = unpack('f9', substr($b, 84 + 50 * $i + 12, 36)); $tris[] = [[$v[1], $v[2], $v[3]], [$v[4], $v[5], $v[6]], [$v[7], $v[8], $v[9]]]; } return $tris; } }
+    if (preg_match_all('/vertex\s+(\S+)\s+(\S+)\s+(\S+)/', $b, $m, PREG_SET_ORDER)) { for ($i = 0; $i + 2 < count($m); $i += 3) $tris[] = [[(float)$m[$i][1], (float)$m[$i][2], (float)$m[$i][3]], [(float)$m[$i + 1][1], (float)$m[$i + 1][2], (float)$m[$i + 1][3]], [(float)$m[$i + 2][1], (float)$m[$i + 2][2], (float)$m[$i + 2][3]]]; }
+    return $tris;
+}
+function mesh_stats(array $tris): array {
+    $min = [INF, INF, INF]; $max = [-INF, -INF, -INF]; $vol = 0.0; $area = 0.0; $deg = 0; $down = 0.0; $edges = []; $ids = [];
+    $vid = function (array $p) use (&$ids): int { $k = round($p[0], 4) . ',' . round($p[1], 4) . ',' . round($p[2], 4); return $ids[$k] ??= count($ids); };
+    foreach ($tris as [$a, $b, $c]) { for ($i = 0; $i < 3; $i++) foreach ([$a, $b, $c] as $p) { $min[$i] = min($min[$i], $p[$i]); $max[$i] = max($max[$i], $p[$i]); }
+        $vol += ($a[0] * ($b[1] * $c[2] - $b[2] * $c[1]) - $a[1] * ($b[0] * $c[2] - $b[2] * $c[0]) + $a[2] * ($b[0] * $c[1] - $b[1] * $c[0])) / 6;
+        $u = [$b[0] - $a[0], $b[1] - $a[1], $b[2] - $a[2]]; $v = [$c[0] - $a[0], $c[1] - $a[1], $c[2] - $a[2]]; $nx = $u[1] * $v[2] - $u[2] * $v[1]; $ny = $u[2] * $v[0] - $u[0] * $v[2]; $nz = $u[0] * $v[1] - $u[1] * $v[0]; $len = sqrt($nx * $nx + $ny * $ny + $nz * $nz); $ar = $len / 2; $area += $ar;
+        if ($ar < 1e-9) { $deg++; continue; } if ($nz / $len < -0.7071 && $a[2] > $min[2] + 0.0) $down += $ar;      // faces looking more than 45 degrees downward
+        $ia = $vid($a); $ib = $vid($b); $ic = $vid($c); foreach ([[$ia, $ib], [$ib, $ic], [$ic, $ia]] as [$p, $q]) { $k = $p < $q ? "$p:$q" : "$q:$p"; $edges[$k] = ($edges[$k] ?? 0) + 1; } }
+    $open = 0; $over = 0; foreach ($edges as $c) { if ($c === 1) $open++; elseif ($c > 2) $over++; }
+    return ['n' => count($tris), 'min' => $min, 'max' => $max, 'vol' => abs($vol), 'neg' => $vol < 0, 'area' => $area, 'deg' => $deg, 'open' => $open, 'over' => $over, 'down' => $down, 'verts' => count($ids)];
+}
+
+// ---- the sandbox ------------------------------------------------------------------------------------------------------------------------------
+$tmp = null; $box = null; $main = null;
+function start_box(string $in): array {
+    if (!have('bwrap')) fail("bwrap (bubblewrap) is not installed, and OpenSCAD is not run without it: a model can read any file this account can (include, import, surface). Install it: sudo apt install bubblewrap");
+    if (!have('openscad')) fail('OpenSCAD is not installed (sudo apt install openscad)');
+    $tmp = sys_get_temp_dir() . '/scad_' . getmypid() . '_' . mt_rand(1000, 9999); mkdir("$tmp/work", 0700, true);
+    register_shutdown_function(function () use ($tmp) { if (strpos(basename($tmp), 'scad_') !== 0 || !is_dir($tmp)) return; $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($tmp, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::CHILD_FIRST); foreach ($it as $f) { $f->isDir() && !$f->isLink() ? @rmdir($f->getPathname()) : @unlink($f->getPathname()); } @rmdir($tmp); });
+    $root = dirname($in); $size = 0; foreach (new DirectoryIterator($root) as $f) { if ($f->isDot() || $f->isLink() || $f->isDir()) continue; if (!preg_match('/\.(scad|stl|dxf|svg|png|csv|json|txt|off|3mf|amf)$/i', $f->getFilename())) continue; $size += $f->getSize(); if ($size > 50 * 1048576) fail('the folder holds more than 50 MB of model files'); copy($f->getPathname(), "$tmp/work/" . $f->getFilename()); }
+    foreach (['lib', 'libs', 'modules', 'include'] as $d) if (is_dir("$root/$d") && !is_link("$root/$d")) { @mkdir("$tmp/work/$d"); foreach (new DirectoryIterator("$root/$d") as $f) if (!$f->isDot() && $f->isFile() && !$f->isLink() && $f->getSize() < 5 * 1048576) copy($f->getPathname(), "$tmp/work/$d/" . $f->getFilename()); }
+    $bw = 'bwrap --unshare-all --die-with-parent --new-session --ro-bind /usr /usr --symlink usr/lib /lib --symlink usr/lib64 /lib64 --symlink usr/bin /bin --symlink usr/sbin /sbin --ro-bind-try /etc/fonts /etc/fonts --ro-bind-try /etc/ld.so.cache /etc/ld.so.cache --ro-bind-try /etc/alternatives /etc/alternatives --ro-bind-try /var/cache/fontconfig /var/cache/fontconfig --proc /proc --dev /dev --tmpfs /tmp --bind ' . escapeshellarg("$tmp/work") . ' /work --chdir /work --setenv HOME /tmp --setenv PATH /usr/bin:/bin --setenv LANG C.UTF-8 --setenv LC_ALL C.UTF-8 ';
+    return [$tmp, $bw];
+}
+function run_openscad(string $bw, string $outName, string $mainName, int $secs = 240, string $extra = '', bool $xvfb = false): array {
+    $rc = 0; $cmd = 'timeout ' . $secs . ' ' . $bw . ($xvfb ? 'xvfb-run -a ' : '') . 'openscad ' . $extra . ' -o /work/' . escapeshellarg($outName) . ' ' . escapeshellarg($mainName); $o = sh($cmd, $rc); return [$rc, $o];
+}
+/** errors/warnings from OpenSCAD's text: [[kind, file, line, message]] and the geometry facts */
+function parse_log(string $log, string $main): array {
+    $res = ['msgs' => [], 'facts' => []];
+    foreach (explode("\n", $log) as $l) {
+        if (preg_match('/^(ERROR|WARNING|DEPRECATED):\s*(.*?)(?:,? in file ([^,]+),? line (\d+))?\s*$/', $l, $m)) { $k = $m[1] === 'ERROR' ? 'Error' : 'Warning'; $res['msgs'][] = [$k, isset($m[3]) && $m[3] !== '' ? basename($m[3]) : $main, isset($m[4]) ? (int)$m[4] : 1, trim($m[2])]; }
+        elseif (preg_match('/^\s*(Simple|Vertices|Facets|Volumes|Top level object is a)\s*:?\s*(.*)$/', $l, $m)) $res['facts'][$m[1]] = trim($m[2]);
+    }
+    return $res;
+}
+function report_mesh(array $s, string $title, array &$warn, ?array $bed = null): string {
+    $dx = $s['max'][0] - $s['min'][0]; $dy = $s['max'][1] - $s['min'][1]; $dz = $s['max'][2] - $s['min'][2];
+    $o = "- Triangles: {$s['n']}; vertices: {$s['verts']}\n- Bounding box: " . round($dx, 2) . ' x ' . round($dy, 2) . ' x ' . round($dz, 2) . " mm (from " . implode(', ', array_map(fn($x) => round($x, 2), $s['min'])) . ")\n- Volume: " . round($s['vol'] / 1000, 3) . " cm³ (" . round($s['vol'], 1) . " mm³); surface area: " . round($s['area'] / 100, 2) . " cm²\n- Watertight: " . (($s['open'] === 0 && $s['over'] === 0) ? 'yes' : "NO ({$s['open']} open edge(s), {$s['over']} edge(s) shared by more than two triangles)") . "\n";
+    if ($s['open'] > 0 || $s['over'] > 0) $warn[] = 'the mesh is not watertight (' . $s['open'] . ' open edges, ' . $s['over'] . ' non-manifold): slicers may refuse it or print holes';
+    if ($s['deg'] > 0) $warn[] = $s['deg'] . ' degenerate (zero-area) triangle(s)'; if ($s['neg']) $warn[] = 'the triangles face inwards (negative volume): the model is inside out';
+    if ($dz > 0 && $s['area'] > 0) { $pct = round(100 * $s['down'] / $s['area'], 1); $o .= "- Overhang: $pct% of the surface faces more than 45° downward (needs supports unless it is the bottom face)\n"; }
+    return $o;
+}
+
+if (in_array($sub, ['info', 'print'], true) && $ext === 'stl') {
+    $tris = read_stl($in); if (!$tris) fail('no triangles found: not a readable STL');
+    $s = mesh_stats($tris); $warn = []; $o = ($sub === 'info' ? "# Mesh: " : "# Printability: ") . basename($in) . "\n\n" . report_mesh($s, basename($in), $warn);
+} else { $s = null; $warn = []; $o = ''; }
+
+if ($sub === 'check' || $sub === 'stl' || $sub === 'png' || ($ext === 'scad' && in_array($sub, ['info', 'print'], true))) {
+    [$tmp, $bw] = start_box($in); $main = basename($in); $name = $sub === 'png' ? 'result.png' : ($sub === 'stl' ? 'result.' . $oext : 'result.stl');
+    if ($sub === 'stl' && !in_array($oext, ['stl', '3mf', 'off'], true)) fail('the output must be .stl, .3mf or .off');
+    $extra = $sub === 'png' ? '--imgsize=900,700 --autocenter --viewall --colorscheme=Cornfield' : '';
+    [$rc, $log] = run_openscad($bw, $name, $main, 240, $extra, $sub === 'png' && have('xvfb-run')); $P = parse_log($log, $main); $made = is_file("$tmp/work/$name") && filesize("$tmp/work/$name") > 0; $errs = array_filter($P['msgs'], fn($m) => $m[0] === 'Error');
+    if ($sub === 'stl' || $sub === 'png') { if (!$made) fail("nothing was made:\n" . implode("\n", array_map(fn($e) => "  $e[1]($e[2]) Error: $e[3]", array_slice(array_values($errs), 0, 5)))); copy("$tmp/work/$name", $out); echo "Wrote $out" . ($P['msgs'] ? ' (' . count($P['msgs']) . ' messages: run Check)' : '') . "\n"; exit(0); }
+    if ($sub === 'check') {
+        $lines = []; $ne = 0; $nw = 0; $seen = []; foreach ($P['msgs'] as [$k, $f, $l, $m]) { $key = "$k|$f|$l|$m"; if (isset($seen[$key])) continue; $seen[$key] = 1; $lines[] = "$f($l) $k: $m"; $k === 'Error' ? $ne++ : $nw++; }
+        $rep = "# OpenSCAD check: $main\n\n- Run in a sandbox: no network, no home folder, read-only system.\n- Result: " . ($made ? 'a solid was made' : 'NO model was made') . (!empty($P['facts']['Simple']) ? '; valid solid (2-manifold): ' . $P['facts']['Simple'] : '') . (!empty($P['facts']['Vertices']) ? '; vertices ' . $P['facts']['Vertices'] : '') . (!empty($P['facts']['Facets']) ? ', facets ' . $P['facts']['Facets'] : '') . "\n\n";
+        if ($made && ($P['facts']['Simple'] ?? 'yes') === 'no') { $lines[] = "$main(1) Warning: the model is not a simple (2-manifold) solid: it may need repair before printing"; $nw++; }
+        $rep .= ($lines ? "## Problems ($ne errors, $nw warnings)\n\n" . implode("\n", $lines) . "\n" : "No problems found.\n") . "\n[exit code " . (($ne > 0 || !$made) ? 1 : 0) . "]\n"; file_put_contents($out, $rep); echo "Wrote $out ($ne errors, $nw warnings)\n"; exit(0);
+    }
+    if (!$made) fail('the model could not be compiled: ' . ($errs ? array_values($errs)[0][3] : trim(substr($log, -200)))); $tris = read_stl("$tmp/work/result.stl"); if (!$tris) fail('the model is empty (no 3D geometry)'); $s = mesh_stats($tris); $warn = array_map(fn($m) => "$m[1]($m[2]) $m[0]: $m[3]", $P['msgs']);
+    $o = ($sub === 'info' ? "# Mesh of " : "# Printability of ") . $main . " (compiled in a sandbox)\n\n" . report_mesh($s, $main, $warn); $warn = array_filter($warn, fn($w) => !preg_match('/^\S+\(\d+\) /', $w)) + array_filter($warn, fn($w) => preg_match('/^\S+\(\d+\) /', $w));
+}
+if ($sub === 'info') { file_put_contents($out, $o . "\n[exit code 0]\n"); echo "Wrote $out\n"; exit(0); }
+// print
+$dx = $s['max'][0] - $s['min'][0]; $dy = $s['max'][1] - $s['min'][1]; $dz = $s['max'][2] - $s['min'][2]; $bed = [220, 220, 250]; if (!empty($opt['bed']) && preg_match('/^(\d+)x(\d+)x(\d+)$/', $opt['bed'], $m)) $bed = [(int)$m[1], (int)$m[2], (int)$m[3]]; elseif (!empty($opt['bed'])) fail('bed must look like 220x220x250 (mm)');
+$lines = []; $b = basename($in);
+if ($dx > $bed[0] || $dy > $bed[1] || $dz > $bed[2]) { $sorted = [$dx, $dy, $dz]; $bs = $bed; rsort($sorted); rsort($bs); $fitsRot = $sorted[0] <= $bs[0] && $sorted[1] <= $bs[1] && $sorted[2] <= $bs[2]; $lines[] = "$b(1) " . ($fitsRot ? "Warning" : "Error") . ": " . round($dx, 1) . 'x' . round($dy, 1) . 'x' . round($dz, 1) . " mm does not fit a {$bed[0]}x{$bed[1]}x{$bed[2]} mm bed" . ($fitsRot ? ' as it stands, but it would if turned' : ' in any direction: scale it or split it'); }
+foreach ($warn as $w) $lines[] = preg_match('/^\S+\(\d+\) /', $w) ? $w : "$b(1) Warning: $w"; if (min($dx, $dy, $dz) < 0.8) $lines[] = "$b(1) Warning: the thinnest dimension is " . round(min($dx, $dy, $dz), 2) . ' mm: thinner than two nozzle widths, it may not print';
+if ($dz > 0 && $s['area'] > 0 && 100 * $s['down'] / $s['area'] > 25) $lines[] = "$b(1) Note: " . round(100 * $s['down'] / $s['area']) . '% of the surface overhangs more than 45°: expect supports, or turn the part';
+$ne = count(array_filter($lines, fn($l) => strpos($l, ' Error:') !== false)); $nw = count(array_filter($lines, fn($l) => strpos($l, ' Warning:') !== false));
+$o .= "\n## Will it print? (bed {$bed[0]} x {$bed[1]} x {$bed[2]} mm)\n\n" . ($lines ? implode("\n", $lines) . "\n" : "Nothing found against a {$bed[0]}x{$bed[1]}x{$bed[2]} bed: it fits, it is watertight, and it has no thin parts or large overhangs.\n") . "\nThis is arithmetic on the mesh, not a slicer: layer height, nozzle and material decide the rest.\n";
+file_put_contents($out, $o . "\n[exit code " . ($ne > 0 ? 1 : 0) . "]\n"); echo "Wrote $out ($ne errors, $nw warnings)\n";

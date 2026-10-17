@@ -1,0 +1,23 @@
+{
+  "id": "data-analysis",
+  "name": "Data Analysis",
+  "icon": "monitoring",
+  "description": "Tables, numbers and charts: cleaning, calculating, summarising.",
+  "detect": [],
+  "note": "This is a data analysis project. State where each number comes from, never alter the source data (work on copies), show how a figure was calculated, and mention rows or values that were dropped or look wrong.",
+  "verify": "recompute a sample by hand; the Data tools",
+  "group": "Data & numbers",
+  "details": "Tables, numbers and charts. The agent says where each number comes from, never changes your source data (it works on copies), shows how a figure was calculated, and recomputes a sample by hand to check itself. The Data tools do the work on CSV files: describe every column, ask a question in SQL, count the most frequent values, draw a bar, line, scatter or histogram chart, and turn a spreadsheet into CSV. Nothing is sent anywhere and your file is never changed.",
+  "examples": [
+    "Clean a messy CSV export and summarise it by month",
+    "Which customers account for 80 percent of sales?",
+    "A chart of a year of measurements",
+    "Check that two spreadsheets agree"
+  ],
+  "tools": [
+    {
+      "tool": "data",
+      "why": "SQL over a CSV file, summaries and charts"
+    }
+  ]
+}

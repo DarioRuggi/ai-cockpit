@@ -1,0 +1,157 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// web_check — look after a static web site: find what is wrong in it, list its pages, pack it. For the Web Site tools
+// (tools_builtins/website.json). Nothing is fetched from the network and nothing in the site is changed.
+//
+//   php web_check check   FOLDER|FILE.html OUTPUT    problems in the HTML and CSS: markup, missing title / lang / alt, duplicate ids,
+//                                                    broken relative links, images, scripts, styles and #anchors, wrong-case file names
+//   php web_check links   FOLDER|FILE.html OUTPUT    only the broken relative links and anchors (external links are counted, never visited)
+//   php web_check sitemap FOLDER|FILE.html OUTPUT    the pages with their titles (markdown)
+//   php web_check pack    FOLDER OUTPUT.zip          a zip of the site without dot-files, .git, node_modules and backups
+//
+// check / links write one line per problem in the form the Pascal compiler uses, so the Tools panel can count them, list the first ones
+// and offer "Fix with agent":      path/to/page.html(LINE) Error|Warning|Hint: message        and finish with   [exit code N]
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+$sub = $argv[1] ?? ''; $in = $argv[2] ?? ''; $out = $argv[3] ?? '';
+function fail(string $m): void { fwrite(STDERR, "web_check: $m\n"); exit(1); }
+if (!in_array($sub, ['check', 'links', 'sitemap', 'pack'], true) || $in === '' || $out === '') fail('usage: web_check check|links|sitemap|pack FOLDER|FILE OUTPUT');
+if (!file_exists($in)) fail("no such file or folder: $in");
+$root = is_dir($in) ? rtrim(realpath($in), '/') : dirname(realpath($in));
+$only = is_file($in) ? realpath($in) : null;
+const SKIP_DIRS = ['node_modules', 'vendor', '__MACOSX', 'bower_components'];
+function walk(string $dir, int &$count): array {
+    $res = [];
+    foreach (scandir($dir) ?: [] as $e) {
+        if ($e === '.' || $e === '..' || $e[0] === '.') continue;
+        $p = $dir . '/' . $e;
+        if (is_link($p)) continue;
+        if (is_dir($p)) { if (in_array($e, SKIP_DIRS, true)) continue; $res = array_merge($res, walk($p, $count)); }
+        else { if (++$count > 5000) return $res; $res[] = $p; }
+    }
+    return $res;
+}
+$count = 0; $all = walk($root, $count);
+if ($count > 5000) fail('more than 5000 files: point the tool at a smaller folder');
+$rel = fn(string $p) => ltrim(substr($p, strlen($root)), '/');
+$isHtml = fn(string $p) => (bool)preg_match('/\.html?$/i', $p);
+$pages = array_values(array_filter($all, $isHtml)); if ($only) $pages = [$only];
+if (!$pages && in_array($sub, ['check', 'links', 'sitemap'], true)) fail('no web pages (.html or .htm) found in ' . $in . ': point the tool at the site\'s folder, or at one page');
+
+// ---------------------------------------------------------------------------------------------------------------- pack
+if ($sub === 'pack') {
+    if (!is_dir($in)) fail('pack needs a folder');
+    if (!class_exists('ZipArchive')) fail('PHP has no zip support here (install php-zip)');
+    $z = new ZipArchive(); if ($z->open($out, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) fail("could not write $out");
+    $n = 0; foreach ($all as $p) { $b = basename($p); if (preg_match('/(~|\.bak|\.orig|\.swp|\.tmp)$/i', $b)) continue; $z->addFile($p, $rel($p)); $n++; }
+    $z->close(); echo "Wrote $out ($n files)\n"; exit(0);
+}
+// ------------------------------------------------------------------------------------------------------------- sitemap
+function page_title(string $html): string { return preg_match('~<title[^>]*>(.*?)</title>~is', $html, $m) ? trim(html_entity_decode(preg_replace('/\s+/', ' ', $m[1]))) : ''; }
+if ($sub === 'sitemap') {
+    $o = ["| page | title |", "|------|-------|"];
+    foreach ($pages as $p) $o[] = '| ' . $rel($p) . ' | ' . str_replace('|', '\\|', page_title((string)file_get_contents($p))) . ' |';
+    $o[] = ''; $o[] = '(' . count($pages) . ' pages)';
+    file_put_contents($out, implode("\n", $o) . "\n"); echo "Wrote $out\n"; exit(0);
+}
+
+// -------------------------------------------------------------------------------------------------------- check / links
+$problems = []; $external = 0;
+$add = function (string $file, int $line, string $sev, string $msg) use (&$problems) { $problems[] = [$file, $line, $sev, $msg]; };
+$html5 = ['header','footer','nav','main','section','article','aside','figure','figcaption','time','mark','details','summary','dialog','picture','source','video','audio','canvas','svg','template','slot','data','bdi','bdo','output','progress','meter','datalist','track','embed','wbr','menu','search','hgroup','rp','rt','ruby','math'];
+function find_ci(string $dir, string $name): ?string {      // an entry whose name matches regardless of case ('Logo.PNG' for 'logo.png')
+    foreach (scandir($dir) ?: [] as $e) if (strcasecmp($e, $name) === 0) return $e;
+    return null;
+}
+/** the file a relative reference points to, or null with the reason in $why. A path is followed from the site root, one name at a time. */
+function resolve_ref(string $ref, string $fromDir, string $root, ?string &$why): ?string {
+    $path = rawurldecode(preg_replace('/[?#].*$/', '', $ref));
+    if ($path === '') { $why = ''; return null; }
+    $parts = [];
+    if ($path[0] !== '/') foreach (explode('/', trim(substr($fromDir, strlen($root)), '/')) as $seg) if ($seg !== '') $parts[] = $seg;     // start in the page's own folder
+    foreach (explode('/', ltrim($path, '/')) as $seg) {
+        if ($seg === '' || $seg === '.') continue;
+        if ($seg === '..') { if (!$parts) { $why = 'leaves the site folder'; return null; } array_pop($parts); continue; }
+        $parts[] = $seg;
+    }
+    $cur = $root;
+    foreach ($parts as $i => $seg) {
+        $try = $cur . '/' . $seg;
+        if (file_exists($try)) { $cur = $try; continue; }
+        $ci = is_dir($cur) ? find_ci($cur, $seg) : null;
+        if ($ci !== null) { $why = "file name differs in case: the page says '$seg', the file is '$ci' (this breaks on Linux)"; return null; }
+        $why = "no such file: " . implode('/', array_slice($parts, 0, $i + 1)); return null;
+    }
+    if (is_dir($cur)) { foreach (['index.html', 'index.htm', 'index.php'] as $ix) if (file_exists($cur . '/' . $ix)) return $cur . '/' . $ix; $why = 'a folder with no index page'; return null; }
+    return $cur;
+}
+$idCache = [];
+$ids_of = function (string $file) use (&$idCache): array {
+    if (isset($idCache[$file])) return $idCache[$file];
+    $ids = []; $h = (string)@file_get_contents($file);
+    if (preg_match_all('/\s(?:id|name)\s*=\s*["\']([^"\']+)["\']/i', $h, $m)) foreach ($m[1] as $x) $ids[$x] = true;
+    return $idCache[$file] = $ids;
+};
+libxml_use_internal_errors(true);
+foreach ($pages as $p) {
+    $f = $rel($p); $htmlSrc = (string)file_get_contents($p); $dir = dirname($p);
+    $doc = new DOMDocument(); libxml_clear_errors(); $doc->loadHTML('<?xml encoding="UTF-8">' . $htmlSrc);
+    if ($sub === 'check') {
+        foreach (libxml_get_errors() as $e) {
+            $msg = trim($e->message);
+            if ($e->code === 801 && preg_match('/Tag (\S+) invalid/', $msg, $m)) { $tag = strtolower($m[1]); if (in_array($tag, $html5, true) || strpos($tag, '-') !== false) continue; $add($f, $e->line, 'Warning', "unknown tag <$tag>"); continue; }
+            if ($e->code === 68 || $e->code === 76 || strpos($msg, 'Unexpected end tag') !== false) { $add($f, $e->line, 'Error', $msg); continue; }
+            if (strpos($msg, 'mismatch') !== false || strpos($msg, 'Premature end') !== false) { $add($f, $e->line, 'Error', $msg); continue; }
+            if (preg_match('/^ID .* already defined/', $msg)) continue;      // reported below with both lines
+            if ($e->level >= LIBXML_ERR_ERROR && strpos($msg, 'htmlParseEntityRef') === false) $add($f, $e->line, 'Warning', $msg);
+        }
+        $html = $doc->getElementsByTagName('html')->item(0);
+        if ($html && !$html->getAttribute('lang')) $add($f, 1, 'Hint', 'the <html> tag has no lang attribute (screen readers and search engines use it)');
+        if (!$doc->getElementsByTagName('title')->length || trim($doc->getElementsByTagName('title')->item(0)->textContent) === '') $add($f, 1, 'Warning', 'the page has no <title>');
+        $hasCharset = false; $hasViewport = false;
+        foreach ($doc->getElementsByTagName('meta') as $mt) { if ($mt->hasAttribute('charset') || stripos($mt->getAttribute('http-equiv'), 'content-type') !== false) $hasCharset = true; if (strtolower($mt->getAttribute('name')) === 'viewport') $hasViewport = true; }
+        if (!$hasCharset) $add($f, 1, 'Warning', 'no <meta charset>: non-English text may display wrongly');
+        if (!$hasViewport) $add($f, 1, 'Hint', 'no <meta name="viewport">: the page will not scale on a phone');
+        foreach ($doc->getElementsByTagName('img') as $im) { if (!$im->hasAttribute('alt')) $add($f, $im->getLineNo(), 'Warning', 'image without alt text: ' . mb_substr($im->getAttribute('src'), 0, 60)); }
+        foreach (['font', 'center', 'marquee', 'blink', 'frame', 'frameset'] as $old) foreach ($doc->getElementsByTagName($old) as $nd) $add($f, $nd->getLineNo(), 'Hint', "old tag <$old>: use CSS instead");
+        $seen = []; foreach ($doc->getElementsByTagName('*') as $nd) { $id = $nd->getAttribute('id'); if ($id === '') continue; if (isset($seen[$id])) $add($f, $nd->getLineNo(), 'Error', "duplicate id '$id' (first used on line {$seen[$id]})"); else $seen[$id] = $nd->getLineNo(); }
+        foreach ($doc->getElementsByTagName('a') as $a) { if ($a->hasAttribute('href') && trim($a->getAttribute('href')) === '') $add($f, $a->getLineNo(), 'Warning', 'a link with an empty href'); if ($a->getAttribute('target') === '_blank' && stripos($a->getAttribute('rel'), 'noopener') === false && preg_match('~^https?://~i', $a->getAttribute('href'))) $add($f, $a->getLineNo(), 'Hint', 'target="_blank" without rel="noopener"'); }
+    }
+    // references (both modes)
+    $refs = [['a', 'href'], ['link', 'href'], ['script', 'src'], ['img', 'src'], ['source', 'src'], ['video', 'src'], ['video', 'poster'], ['audio', 'src'], ['iframe', 'src'], ['embed', 'src']];
+    $localIds = $ids_of($p);
+    foreach ($refs as [$tag, $attr]) foreach ($doc->getElementsByTagName($tag) as $nd) {
+        $v = trim($nd->getAttribute($attr)); if ($v === '' || $nd->getLineNo() < 1) { if ($v === '' ) continue; }
+        $line = max(1, $nd->getLineNo());
+        if (preg_match('~^(https?:)?//~i', $v)) { $external++; continue; }
+        if (preg_match('~^(mailto:|tel:|javascript:|data:|sms:|blob:)~i', $v)) continue;
+        if ($v[0] === '#') { $id = rawurldecode(substr($v, 1)); if ($id !== '' && $id !== 'top' && !isset($localIds[$id])) $add($f, $line, 'Error', "no element with id '$id' on this page (link $v)"); continue; }
+        $why = ''; $target = resolve_ref($v, $dir, $root, $why);
+        if ($target === null) { if ($why !== '') $add($f, $line, 'Error', "broken link $v: $why"); continue; }
+        if (($pos = strpos($v, '#')) !== false && $isHtml($target)) { $id = rawurldecode(substr($v, $pos + 1)); if ($id !== '' && $id !== 'top' && !isset($ids_of($target)[$id])) $add($f, $line, 'Error', "link $v: the page " . $rel($target) . " has no element with id '$id'"); }
+    }
+}
+if ($sub === 'check') {
+    foreach ($all as $p) {
+        if (!preg_match('/\.css$/i', $p)) continue; $f = $rel($p); $css = (string)file_get_contents($p);
+        $noc = preg_replace_callback('~/\*.*?\*/~s', fn($m) => preg_replace('/[^\n]/', ' ', $m[0]), $css, -1);
+        if (($cpos = strpos($noc, '/*')) !== false) { $add($f, substr_count($css, "\n", 0, $cpos) + 1, 'Error', 'a comment is never closed'); continue; }
+        $depth = 0; $openLine = 0; $line = 1; $len = strlen($noc);
+        for ($i = 0; $i < $len; $i++) { $ch = $noc[$i]; if ($ch === "\n") $line++; elseif ($ch === '{') { if ($depth === 0) $openLine = $line; $depth++; } elseif ($ch === '}') { if ($depth === 0) { $add($f, $line, 'Error', "a } with no matching {"); break; } $depth--; } }
+        if ($depth > 0) $add($f, $openLine, 'Error', "a { is never closed");
+        if (preg_match_all('~url\(\s*[\'"]?([^\'")]+)~i', $noc, $mm, PREG_OFFSET_CAPTURE)) foreach ($mm[1] as [$u, $off]) {
+            $u = trim($u); if ($u === '' || preg_match('~^(https?:)?//|^data:|^#~i', $u)) continue;
+            $why = ''; if (resolve_ref($u, dirname($p), $root, $why) === null && $why !== '') $add($f, substr_count($css, "\n", 0, $off) + 1, 'Error', "url($u): $why");
+        }
+    }
+}
+usort($problems, fn($a, $b) => [$a[0], $a[1]] <=> [$b[0], $b[1]]);
+$errors = 0; $warnings = 0; $hints = 0; $lines = [];
+foreach ($problems as [$f, $l, $sev, $msg]) { if ($sev === 'Error') $errors++; elseif ($sev === 'Warning') $warnings++; else $hints++; $lines[] = "$f($l) $sev: $msg"; }
+$lines[] = '';
+$lines[] = count($pages) . ' pages' . ($sub === 'check' ? ', ' . count(array_filter($all, fn($p) => preg_match('/\.css$/i', $p))) . ' style sheets' : '') . " checked in $root: $errors errors, $warnings warnings, $hints hints" . ($external ? "; $external external links were not visited" : '');
+$lines[] = '[exit code ' . ($errors ? 1 : 0) . ']';
+file_put_contents($out, implode("\n", $lines) . "\n");
+echo "Wrote $out ($errors errors, $warnings warnings, $hints hints)\n";
+exit(0);

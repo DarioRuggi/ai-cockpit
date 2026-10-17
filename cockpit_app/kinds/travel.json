@@ -1,0 +1,22 @@
+{
+  "id": "travel",
+  "name": "Travel planning",
+  "icon": "flight_takeoff",
+  "description": "Itineraries, connections, trip budgets and packing lists, checked.",
+  "detect": [],
+  "note": "This is a travel-planning project: itineraries, bookings, budgets and packing lists. Never invent a flight number, time, price, address, booking reference, exchange rate or opening hour: every one comes from the user's files or documents, and anything you assume you state. Keep the original files untouched and write new versions under new names. Time zones decide whether a connection works: ask for or read the UTC offsets of each departure and arrival, and say when the tool compared clock times as written. Exchange rates are the ones the user gives; never look one up or pretend a rate is current. Run the Trip Check after every change and fix what it lists. Visa, entry, health, safety and weather facts change: point to the official source and never state them as certain. This is arithmetic and lists on the user's data, not travel or legal advice.",
+  "verify": "trip check",
+  "group": "Home & life",
+  "details": "Planning a trip from plain files. The Trip tool checks an itinerary CSV: unreadable dates, items that end before they start, a connection that arrives after the next departure leaves, tight connections under a limit you choose, two lodgings for one night, nights with no lodging, and every duration as real elapsed time when UTC offsets are given (so a night flight across time zones is right). It totals the budget by day, category and currency using the exchange rates you supply (nothing is looked up), and builds a deduplicated packing list from the trip length, the climate and the activities, skipping what your list already has. Words for flights, trains and hotels are read in several languages. Pandoc or the Office tool make a printable version.",
+  "examples": [
+    "Check my itinerary for impossible or tight connections",
+    "Budget the trip by day and category in euros with these exchange rates",
+    "Packing list for ten days of hiking in the rain",
+    "Find the nights I have no hotel booked"
+  ],
+  "tools": [
+    {"tool": "trip", "why": "check an itinerary, budget it with your own rates, build a packing list"},
+    {"tool": "data", "why": "ask the itinerary or expenses free-form questions in SQL"},
+    {"tool": "pandoc", "why": "turn the plan into a printable Word or PDF document"}
+  ]
+}

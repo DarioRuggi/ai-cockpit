@@ -1,0 +1,35 @@
+{
+  "id": "document",
+  "name": "Document Creation",
+  "icon": "description",
+  "description": "Reports, letters, manuals, proposals: structure, drafting and polish.",
+  "detect": [],
+  "note": "This is a document project. Agree the audience, purpose and length first, keep one consistent structure and tone, and deliver complete sections rather than outlines unless an outline is asked for.",
+  "verify": "read-through against the brief",
+  "group": "Writing & documents",
+  "details": "For reports, letters, manuals and proposals. The agent agrees the audience, purpose and length with you first, keeps one structure and tone throughout, and delivers whole sections rather than fragments. The Tools list turns finished markdown into Word, PDF, HTML or an e-book (pandoc).",
+  "examples": [
+    "A ten-page project proposal for a client",
+    "An operations manual with numbered procedures",
+    "A cover letter tailored to a job advertisement, exported to docx",
+    "A policy document with fixed section headings"
+  ],
+  "tools": [
+    {
+      "tool": "office",
+      "why": "convert between Word, LibreOffice and PDF formats, and read macros"
+    },
+    {
+      "tool": "pandoc",
+      "why": "Markdown, Word, HTML and EPUB in both directions"
+    },
+    {
+      "tool": "pdfpages",
+      "why": "turn PDF pages into images"
+    },
+    {
+      "tool": "poppler",
+      "why": "pull the text out of a PDF"
+    }
+  ]
+}

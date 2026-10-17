@@ -1,0 +1,114 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// kicad_tool — the Electronics tools' work, for the tool presets (tools_builtins/kicad.json). A command-line program, never reachable over the web.
+//
+//   php kicad_tool info    FILE.kicad_sch|.kicad_pcb OUTPUT       what is in the file: symbols / footprints, nets, layers, tracks, vias, sheets
+//   php kicad_tool check   FILE.kicad_sch|.kicad_pcb OUTPUT       a "lite" ERC / DRC by reading the file: unannotated or duplicate references, no value, no footprint, labels used once,
+//                                                                 no board outline, parts off the board, tracks and vias too small. file(line) Error/Warning/Note
+//   php kicad_tool bom     FILE.kicad_sch OUTPUT.csv              the bill of materials: parts grouped by value and footprint with references and quantity
+//   php kicad_tool pdf     FILE.kicad_sch|.kicad_pcb OUTPUT.pdf   the schematic or the board as a PDF (kicad-cli)
+//   php kicad_tool netlist FILE.kicad_sch OUTPUT                  the netlist (kicad-cli; KiCad s-expression)
+//   php kicad_tool gerbers FILE.kicad_pcb OUTPUT.zip              Gerber files and the drill file for a board house, zipped (kicad-cli)
+//   php kicad_tool pos     FILE.kicad_pcb OUTPUT.csv              the component placement file for pick-and-place (kicad-cli)
+//
+// NOTE: KiCad 7's command-line tool has NO ERC or DRC (those arrived in KiCad 8), so Check is this tool's own reading of the file: it finds the common mistakes but is not KiCad's rule
+// checker; run ERC/DRC in KiCad before you order boards. Files are only read; the originals are never changed (exports run on a scratch copy).
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "kicad_tool: $m\n"); exit($rc); }
+[$sub, $in, $out] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? ''];
+if (!in_array($sub, ['info', 'check', 'bom', 'pdf', 'netlist', 'gerbers', 'pos'], true) || $in === '' || $out === '') fail('usage: kicad_tool info|check|bom|pdf|netlist|gerbers|pos FILE OUTPUT', 2);
+if (!is_file($in)) fail("no such file: $in"); $ext = strtolower(pathinfo($in, PATHINFO_EXTENSION)); $oext = strtolower(pathinfo($out, PATHINFO_EXTENSION));
+if (!in_array($ext, ['kicad_sch', 'kicad_pcb'], true)) fail('the input must be a .kicad_sch or a .kicad_pcb file');
+if (in_array($sub, ['bom', 'netlist'], true) && $ext !== 'kicad_sch') fail("$sub works on a .kicad_sch"); if (in_array($sub, ['gerbers', 'pos'], true) && $ext !== 'kicad_pcb') fail("$sub works on a .kicad_pcb");
+function sh(string $cmd, ?int &$rc = null, int $secs = 180): string { $o = []; exec('timeout ' . $secs . ' ' . $cmd . ' 2>&1', $o, $rc); return implode("\n", $o); }
+function have(string $b): bool { return trim((string)shell_exec('command -v ' . escapeshellarg($b) . ' 2>/dev/null')) !== ''; }
+
+// ---- the KiCad file format: s-expressions -------------------------------------------------------------------------------------------------------
+/** a node: ['t' => tag, 'l' => line, 'c' => [children: nodes or strings]] */
+function sx_parse(string $s): ?array {
+    $n = strlen($s); $i = 0; $line = 1; $stack = []; $root = null;
+    while ($i < $n) { $ch = $s[$i];
+        if ($ch === "\n") { $line++; $i++; } elseif ($ch === ' ' || $ch === "\t" || $ch === "\r") $i++;
+        elseif ($ch === '(') { $stack[] = ['t' => null, 'l' => $line, 'c' => []]; $i++; }
+        elseif ($ch === ')') { $nd = array_pop($stack); if ($nd === null) return null; if ($stack) $stack[count($stack) - 1]['c'][] = $nd; else $root = $nd; $i++; }
+        elseif ($ch === '"') { $j = $i + 1; $buf = ''; while ($j < $n && $s[$j] !== '"') { if ($s[$j] === '\\' && $j + 1 < $n) { $buf .= $s[$j + 1]; $j += 2; continue; } if ($s[$j] === "\n") $line++; $buf .= $s[$j++]; } $i = $j + 1; if ($stack) { $top = count($stack) - 1; if ($stack[$top]['t'] === null) $stack[$top]['t'] = $buf; else $stack[$top]['c'][] = $buf; } }
+        else { $j = $i; while ($j < $n && !ctype_space($s[$j]) && $s[$j] !== '(' && $s[$j] !== ')') $j++; $tok = substr($s, $i, $j - $i); $i = $j; if ($stack) { $top = count($stack) - 1; if ($stack[$top]['t'] === null) $stack[$top]['t'] = $tok; else $stack[$top]['c'][] = $tok; } }
+    }
+    return $stack ? null : $root;
+}
+function kids(array $nd, string $tag): array { return array_values(array_filter($nd['c'], fn($c) => is_array($c) && $c['t'] === $tag)); }
+function kid(array $nd, string $tag): ?array { foreach ($nd['c'] as $c) if (is_array($c) && $c['t'] === $tag) return $c; return null; }
+function strs(array $nd): array { return array_values(array_filter($nd['c'], fn($c) => !is_array($c))); }
+function prop(array $nd, string $name): ?string { foreach (kids($nd, 'property') as $p) { $s = strs($p); if (($s[0] ?? null) === $name) return $s[1] ?? ''; } return null; }
+function nat(string $a, string $b): int { return strnatcasecmp($a, $b); }
+
+$src = (string)file_get_contents($in); $root = sx_parse($src); $name = basename($in);
+if ($root === null || !in_array($root['t'], ['kicad_sch', 'kicad_pcb'], true)) fail('not a readable KiCad file (the s-expression does not parse, or the first word is not kicad_sch / kicad_pcb)');
+$ver = ($v = kid($root, 'version')) ? (strs($v)[0] ?? '?') : '?'; $isSch = $root['t'] === 'kicad_sch';
+
+/** the symbols placed in a schematic: [ref, unit, value, footprint, lib_id, line, isPower] */
+function sch_parts(array $root): array {
+    $res = [];
+    foreach (kids($root, 'symbol') as $sy) { $lib = ($l = kid($sy, 'lib_id')) ? (strs($l)[0] ?? '') : ''; if ($lib === '') continue; $ref = prop($sy, 'Reference') ?? '?'; $unit = ($u = kid($sy, 'unit')) ? (int)(strs($u)[0] ?? 1) : 1;
+        if (($ins = kid($sy, 'instances')) !== null) foreach (kids($ins, 'project') as $pr) foreach (kids($pr, 'path') as $pa) if (($r = kid($pa, 'reference')) !== null) { $ref = strs($r)[0] ?? $ref; if (($uu = kid($pa, 'unit')) !== null) $unit = (int)(strs($uu)[0] ?? $unit); break 2; }
+        $res[] = ['ref' => $ref, 'unit' => $unit, 'value' => prop($sy, 'Value') ?? '', 'fp' => prop($sy, 'Footprint') ?? '', 'lib' => $lib, 'line' => $sy['l'], 'power' => strpos($lib, 'power:') === 0 || strpos($ref, '#') === 0]; }
+    return $res;
+}
+
+if ($sub === 'bom') {
+    $groups = []; foreach (sch_parts($root) as $p) { if ($p['power']) continue; if ($p['unit'] > 1 && isset($seen[$p['ref']])) continue; $seen[$p['ref']] = 1; $k = $p['value'] . "\0" . $p['fp'] . "\0" . $p['lib']; $groups[$k]['refs'][] = $p['ref']; $groups[$k]['value'] = $p['value']; $groups[$k]['fp'] = $p['fp']; $groups[$k]['lib'] = $p['lib']; }
+    if (!$groups) fail('no components found in the schematic'); uasort($groups, fn($a, $b) => nat($a['refs'][0], $b['refs'][0])); $f = fopen($out, 'w'); fputcsv($f, ['Reference', 'Qty', 'Value', 'Footprint', 'Library symbol'], ',', '"', ''); $n = 0;
+    foreach ($groups as $g) { usort($g['refs'], 'nat'); fputcsv($f, [implode(', ', $g['refs']), count($g['refs']), $g['value'], $g['fp'], $g['lib']], ',', '"', ''); $n += count($g['refs']); } fclose($f);
+    echo "Wrote $out: " . count($groups) . " line(s), $n part(s)\n"; exit(0);
+}
+
+if ($sub === 'info' || $sub === 'check') {
+    $msgs = []; $err = 0; $warn = 0; $add = function (string $k, int $l, string $m) use (&$msgs, &$err, &$warn, $name) { $msgs[] = "$name($l) $k: $m"; if ($k === 'Error') $err++; elseif ($k === 'Warning') $warn++; }; $facts = [];
+    if ($isSch) {
+        $parts = sch_parts($root); $real = array_filter($parts, fn($p) => !$p['power']); $refs = []; $facts['Symbols (parts)'] = count($real) . ' placed; ' . (count($parts) - count($real)) . ' power symbols';
+        $labels = []; foreach (['label', 'global_label', 'hierarchical_label'] as $t) foreach (kids($root, $t) as $lb) { $nm = strs($lb)[0] ?? ''; $labels[$t][$nm][] = $lb['l']; }
+        $facts['Wires'] = count(kids($root, 'wire')); $facts['Junctions'] = count(kids($root, 'junction')); $facts['No-connect flags'] = count(kids($root, 'no_connect')); $facts['Sheets'] = count(kids($root, 'sheet')); $facts['Labels'] = array_sum(array_map(fn($x) => count($x), $labels['label'] ?? [])) . ' local, ' . array_sum(array_map(fn($x) => count($x), $labels['global_label'] ?? [])) . ' global';
+        foreach ($real as $p) { $k = $p['ref'] . '#' . $p['unit'];
+            if (substr($p['ref'], -1) === '?' || $p['ref'] === '') $add('Warning', $p['line'], "'{$p['lib']}' is not annotated (reference {$p['ref']}): annotate the schematic");
+            elseif (isset($refs[$k])) $add('Error', $p['line'], "the reference {$p['ref']} is used twice (also on line {$refs[$k]})"); else $refs[$k] = $p['line'];
+            if (trim($p['value']) === '' || $p['value'] === '~') $add('Warning', $p['line'], "{$p['ref']} has no value");
+            if (trim($p['fp']) === '') $add('Note', $p['line'], "{$p['ref']} ({$p['lib']}) has no footprint assigned: it cannot go on the board yet"); }
+        foreach ($labels['label'] ?? [] as $nm => $ls) if (count($ls) === 1 && !isset(($labels['global_label'] ?? [])[$nm])) $add('Warning', $ls[0], "the net label '$nm' appears only once: it connects to nothing else");
+        if (!$real) $add('Warning', 1, 'the schematic holds no components');
+        $hasPwr = false; foreach ($parts as $p) if (strpos($p['lib'], 'PWR_FLAG') !== false) $hasPwr = true; if (count($parts) - count($real) > 0 && !$hasPwr) $add('Note', 1, 'no PWR_FLAG: KiCad\'s own ERC will complain that power nets are not driven');
+    } else {
+        $fps = kids($root, 'footprint'); $facts['Footprints'] = count($fps); $nets = kids($root, 'net'); $facts['Nets'] = max(0, count($nets) - 1); $segs = kids($root, 'segment'); $vias = kids($root, 'via'); $zones = kids($root, 'zone'); $facts['Tracks (segments)'] = count($segs); $facts['Vias'] = count($vias); $facts['Zones'] = count($zones);
+        $layers = []; if (($ly = kid($root, 'layers')) !== null) foreach ($ly['c'] as $c) if (is_array($c)) { $s = strs($c); if (($s[1] ?? '') === 'signal' || ($s[1] ?? '') === 'power' || ($s[1] ?? '') === 'mixed') $layers[] = $c['t'] . ' ' . ($s[0] ?? ''); } $facts['Copper layers'] = count($layers) ? count($layers) . ' (' . implode(', ', array_map(fn($x) => explode(' ', $x, 2)[1], $layers)) . ')' : '?';
+        $minX = $minY = INF; $maxX = $maxY = -INF; $outline = 0; foreach (['gr_line', 'gr_rect', 'gr_arc', 'gr_circle', 'gr_poly', 'gr_curve'] as $t) foreach (kids($root, $t) as $g) { $lyr = ($l = kid($g, 'layer')) ? (strs($l)[0] ?? '') : ''; if ($lyr !== 'Edge.Cuts') continue; $outline++; foreach (['start', 'end', 'center', 'mid'] as $pt) if (($p = kid($g, $pt)) !== null) { $s = strs($p); $x = (float)($s[0] ?? 0); $y = (float)($s[1] ?? 0); $minX = min($minX, $x); $maxX = max($maxX, $x); $minY = min($minY, $y); $maxY = max($maxY, $y); } if (($pts = kid($g, 'pts')) !== null) foreach (kids($pts, 'xy') as $xy) { $s = strs($xy); $minX = min($minX, (float)$s[0]); $maxX = max($maxX, (float)$s[0]); $minY = min($minY, (float)$s[1]); $maxY = max($maxY, (float)$s[1]); } }
+        $facts['Board outline'] = $outline ? $outline . ' Edge.Cuts item(s), ' . round($maxX - $minX, 2) . ' x ' . round($maxY - $minY, 2) . ' mm' : 'none';
+        if (!$outline) $add('Error', 1, 'the board has no outline (nothing on the Edge.Cuts layer): a board house cannot make it'); $refs = [];
+        foreach ($fps as $fp) { $r = prop($fp, 'Reference'); if ($r === null) foreach (kids($fp, 'fp_text') as $ft) { $s = strs($ft); if (($s[0] ?? '') === 'reference') { $r = $s[1] ?? ''; break; } } $r = $r ?? '?'; $fpName = strs($fp)[0] ?? ''; $at = kid($fp, 'at'); $ax = $at ? (float)(strs($at)[0] ?? 0) : 0; $ay = $at ? (float)(strs($at)[1] ?? 0) : 0;
+            if ($r === '' || substr($r, -1) === '?') $add('Warning', $fp['l'], "the footprint $fpName has no proper reference ('$r')"); elseif (isset($refs[$r])) $add('Error', $fp['l'], "the reference $r is used twice (also on line {$refs[$r]})"); else $refs[$r] = $fp['l'];
+            if ($outline && ($ax < $minX - 0.01 || $ax > $maxX + 0.01 || $ay < $minY - 0.01 || $ay > $maxY + 0.01)) $add('Warning', $fp['l'], "$r (at " . round($ax, 1) . ', ' . round($ay, 1) . ') is outside the board outline'); }
+        foreach ($segs as $sg) { $w = ($ww = kid($sg, 'width')) ? (float)(strs($ww)[0] ?? 0) : 0; if ($w > 0 && $w < 0.15) $add('Warning', $sg['l'], "a track only $w mm wide: below what most board houses make (0.15 mm)"); }
+        foreach ($vias as $vi) { $sz = ($s = kid($vi, 'size')) ? (float)(strs($s)[0] ?? 0) : 0; $dr = ($d = kid($vi, 'drill')) ? (float)(strs($d)[0] ?? 0) : 0; if ($dr > 0 && $dr < 0.2) $add('Warning', $vi['l'], "a via with a $dr mm drill: below the usual 0.2 mm minimum"); if ($sz > 0 && $dr > 0 && ($sz - $dr) / 2 < 0.1) $add('Warning', $vi['l'], 'a via whose copper ring is under 0.1 mm'); }
+        if (!$fps) $add('Warning', 1, 'the board has no footprints');
+    }
+    $o = "# KiCad " . ($sub === 'info' ? 'file' : 'check') . ": $name\n\n- Format: " . ($isSch ? 'schematic' : 'board') . ", KiCad file version $ver\n"; foreach ($facts as $k => $v) $o .= "- $k: $v\n";
+    if ($sub === 'info') { file_put_contents($out, $o . "\n[exit code 0]\n"); echo "Wrote $out\n"; exit(0); }
+    $o .= "- This is a lite check by reading the file, NOT KiCad's ERC/DRC (KiCad 7's command line has neither): run ERC/DRC in KiCad before you order boards.\n\n" . ($msgs ? "## Problems ($err errors, $warn warnings)\n\n" . implode("\n", $msgs) . "\n" : "No problems found.\n") . "\n[exit code " . ($err > 0 ? 1 : 0) . "]\n";
+    file_put_contents($out, $o); echo "Wrote $out ($err errors, $warn warnings)\n"; exit(0);
+}
+
+// ---- kicad-cli exports, on a scratch copy ---------------------------------------------------------------------------------------------------------
+if (!have('kicad-cli')) fail('kicad-cli is not installed (sudo apt install kicad): the exports need it');
+$tmp = sys_get_temp_dir() . '/kicad_' . getmypid() . '_' . mt_rand(1000, 9999); mkdir("$tmp/home", 0700, true); mkdir("$tmp/out", 0700, true); copy($in, "$tmp/$name");
+register_shutdown_function(function () use ($tmp) { if (strpos(basename($tmp), 'kicad_') !== 0 || !is_dir($tmp)) return; $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($tmp, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::CHILD_FIRST); foreach ($it as $f) { $f->isDir() && !$f->isLink() ? @rmdir($f->getPathname()) : @unlink($f->getPathname()); } @rmdir($tmp); });
+$env = 'env HOME=' . escapeshellarg("$tmp/home") . ' XDG_CONFIG_HOME=' . escapeshellarg("$tmp/home") . ' ';
+$run = function (string $args) use ($env) { $rc = 0; $o = sh($env . 'kicad-cli ' . $args, $rc); return [$rc, $o]; }; $f = escapeshellarg("$tmp/$name");
+if ($sub === 'pdf') { [$rc, $o] = $run(($isSch ? 'sch' : 'pcb') . ' export pdf' . ($isSch ? '' : ' -l F.Cu,B.Cu,F.Silkscreen,B.Silkscreen,Edge.Cuts') . ' -o ' . escapeshellarg("$tmp/out/r.pdf") . ' ' . $f); if (!is_file("$tmp/out/r.pdf")) fail('kicad-cli made no PDF: ' . trim(substr($o, 0, 300))); copy("$tmp/out/r.pdf", $out); echo "Wrote $out\n"; exit(0); }
+if ($sub === 'netlist') { [$rc, $o] = $run('sch export netlist -o ' . escapeshellarg("$tmp/out/r.net") . ' ' . $f); if (!is_file("$tmp/out/r.net")) fail('kicad-cli made no netlist: ' . trim(substr($o, 0, 300))); copy("$tmp/out/r.net", $out); echo "Wrote $out\n"; exit(0); }
+if ($sub === 'pos') { [$rc, $o] = $run('pcb export pos --format csv --units mm -o ' . escapeshellarg("$tmp/out/r.csv") . ' ' . $f); if (!is_file("$tmp/out/r.csv")) fail('kicad-cli made no placement file: ' . trim(substr($o, 0, 300))); copy("$tmp/out/r.csv", $out); echo "Wrote $out\n"; exit(0); }
+if ($sub === 'gerbers') {
+    if ($oext !== 'zip' || !class_exists('ZipArchive')) fail('the output must be a .zip (and php zip must be installed)'); mkdir("$tmp/out/g", 0700, true);
+    [$rc, $o] = $run('pcb export gerbers -o ' . escapeshellarg("$tmp/out/g/") . ' ' . $f); [$rc2, $o2] = $run('pcb export drill -o ' . escapeshellarg("$tmp/out/g/") . ' ' . $f); $files = glob("$tmp/out/g/*") ?: [];
+    if (!$files) fail('kicad-cli made no Gerber files: ' . trim(substr($o . ' ' . $o2, 0, 300))); $z = new ZipArchive(); @unlink($out); $z->open($out, ZipArchive::CREATE); foreach ($files as $g) $z->addFile($g, basename($g)); $z->close();
+    echo "Wrote $out: " . count($files) . " file(s) (" . implode(', ', array_map(fn($g) => pathinfo($g, PATHINFO_EXTENSION), array_slice($files, 0, 14))) . ")\n"; exit(0);
+}

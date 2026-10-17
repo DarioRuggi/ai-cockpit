@@ -1,0 +1,108 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// translate_tool — the Translation tools' work, for the tool presets (tools_builtins/translate.json). A command-line program, never reachable over the web.
+//
+//   php translate_tool text      FILE OUTPUT to=he [from=auto]   translate a .txt / .md / .srt / .vtt file (what is translated depends on the INPUT's extension)
+//   php translate_tool languages FILE OUTPUT                     which languages the local LibreTranslate offers (FILE is ignored)
+//   php translate_tool check     FILE OUTPUT                     is LibreTranslate reachable, and which languages are loaded
+//
+// Local only: the text goes to the LibreTranslate on this machine (paths.json "libretranslate", else http://localhost:5000; env COCKPIT_LT_URL wins) and nowhere else.
+// What it protects (never sent for translation, put back afterwards): fenced code blocks, `inline code`, URLs, link targets, <html tags>, {placeholders}, %s / %d.
+// Subtitles: cue numbers and time lines are untouched, only the text is translated. If a protected piece does not come back, that segment is left UNTRANSLATED and reported
+// (never a half-broken line). A report goes to OUTPUT.report.md and the problems are printed as  file(line) Warning: message.
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "translate_tool: $m\n"); exit($rc); }
+[$sub, $in, $out] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? ''];
+$kv = []; foreach (array_slice($argv, 4) as $a) if (preg_match('/^([a-z_]+)=(.*)$/s', trim($a), $m)) $kv[$m[1]] = $m[2];
+if (!in_array($sub, ['text', 'languages', 'check'], true) || $in === '' || $out === '') fail('usage: translate_tool text|languages|check FILE OUTPUT [to=he] [from=auto]', 2);
+
+function lt_conf(): array {
+    $url = 'http://localhost:5000'; $key = '';
+    $pj = __DIR__ . '/paths.json'; if (is_file($pj)) { $j = json_decode((string)@file_get_contents($pj), true); if (is_array($j)) { if (!empty($j['libretranslate'])) $url = (string)$j['libretranslate']; if (!empty($j['libretranslate_key'])) $key = (string)$j['libretranslate_key']; } }
+    if (($e = getenv('COCKPIT_LT_URL')) !== false && $e !== '') $url = $e;
+    if (($e = getenv('COCKPIT_LT_KEY')) !== false && $e !== '') $key = $e;
+    return [rtrim($url, '/'), $key];
+}
+function lt_call(string $url, ?array $payload = null, int $timeout = 60): array {
+    $ch = curl_init($url);
+    $o = [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => $timeout, CURLOPT_CONNECTTIMEOUT => 5];
+    if ($payload !== null) { $o[CURLOPT_POST] = true; $o[CURLOPT_HTTPHEADER] = ['Content-Type: application/json']; $o[CURLOPT_POSTFIELDS] = json_encode($payload, JSON_UNESCAPED_UNICODE); }
+    curl_setopt_array($ch, $o); $body = curl_exec($ch); $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE); $err = curl_error($ch); curl_close($ch);
+    return [$code, (string)$body, $err];
+}
+[$LT, $KEY] = lt_conf();
+
+if ($sub === 'check' || $sub === 'languages') {
+    [$c, $b, $e] = lt_call($LT . '/languages', null, 8);
+    $L = json_decode($b, true);
+    if ($c !== 200 || !is_array($L)) { file_put_contents($out, "# LibreTranslate\n\nNOT REACHABLE at $LT" . ($e !== '' ? " ($e)" : " (HTTP $c)") . ".\n\nStart it (the Cockpit installer sets it up as a local service) or set \"libretranslate\" in paths.json.\n\n[exit code 1]\n"); echo "LibreTranslate is not reachable at $LT\n"; exit(0); }
+    $o = "# LibreTranslate at $LT\n\nReachable. " . count($L) . " language(s) loaded:\n\n| Code | Name | Can translate to |\n|---|---|---|\n";
+    foreach ($L as $l) $o .= '| ' . ($l['code'] ?? '?') . ' | ' . ($l['name'] ?? '') . ' | ' . implode(', ', (array)($l['targets'] ?? [])) . " |\n";
+    file_put_contents($out, $o . "\n[exit code 0]\n"); echo "Wrote $out\n"; exit(0);
+}
+
+// ---- text ------------------------------------------------------------------------------------------------------------------------------------------------------
+if (!is_file($in)) fail("no such file: $in");
+if (filesize($in) > 5 * 1024 * 1024) fail('the file is over 5 MB: split it first');
+$to = strtolower(trim($kv['to'] ?? '')); $from = strtolower(trim($kv['from'] ?? 'auto')) ?: 'auto';
+if (!preg_match('/^[a-z]{2,3}(-[a-z]{2,4})?$/', $to)) fail('give the target language as to=he (or to=en, to=es ...)');
+if (!preg_match('/^(auto|[a-z]{2,3}(-[a-z]{2,4})?)$/', $from)) fail('from= must be auto or a language code');
+$raw = (string)file_get_contents($in); if (strncmp($raw, "\xEF\xBB\xBF", 3) === 0) $raw = substr($raw, 3);
+if (!mb_check_encoding($raw, 'UTF-8')) fail('the file is not valid UTF-8: convert it first');
+$raw = str_replace(["\r\n", "\r"], "\n", $raw); $lines = explode("\n", $raw); $ext = strtolower(pathinfo($in, PATHINFO_EXTENSION));
+$mode = in_array($ext, ['srt'], true) ? 'srt' : (in_array($ext, ['vtt'], true) ? 'vtt' : (in_array($ext, ['md', 'markdown'], true) ? 'md' : 'txt'));
+
+// segments: ['line' => n (1-based), 'prefix' => kept text before, 'text' => to translate, 'suffix' => kept after]; everything else is copied as it is
+$seg = []; $keep = [];   // $keep[i] = original line i when it is not a segment
+$inFence = false; $i = 0; $n = count($lines);
+$protect = function (string $s, array &$tokens): string {
+    $re = '~(`[^`\n]+`|https?://[^\s<>)\]]+|(?<=\])\([^)\s]+\)|<[^>\n]+>|\{[^{}\n]*\}|%[sdif]|%\d+\$[sd])~u';
+    return preg_replace_callback($re, function ($m) use (&$tokens) { $k = 'XQ' . count($tokens) . 'Z'; $tokens[$k] = $m[0]; return $k; }, $s);
+};
+for ($i = 0; $i < $n; $i++) {
+    $l = $lines[$i]; $t = trim($l);
+    if ($mode === 'srt') { if ($t === '' || preg_match('/^\d+$/', $t) || preg_match('/-->/', $t)) { $keep[$i] = $l; continue; } $seg[] = ['line' => $i + 1, 'idx' => $i, 'prefix' => '', 'text' => $l, 'suffix' => '']; continue; }
+    if ($mode === 'vtt') { if ($t === '' || $i === 0 && strncmp($t, 'WEBVTT', 6) === 0 || preg_match('/-->/', $t) || preg_match('/^(NOTE|STYLE|REGION)\b/', $t) || preg_match('/^[\w-]+$/', $t) && isset($lines[$i + 1]) && preg_match('/-->/', $lines[$i + 1])) { $keep[$i] = $l; continue; } $seg[] = ['line' => $i + 1, 'idx' => $i, 'prefix' => '', 'text' => $l, 'suffix' => '']; continue; }
+    if ($mode === 'md') {
+        if ($i === 0 && $t === '---') { $keep[0] = $l; while (++$i < $n && trim($lines[$i]) !== '---') $keep[$i] = $lines[$i]; if ($i < $n) $keep[$i] = $lines[$i]; continue; }   // front matter stays as it is
+        if (preg_match('/^\s*(```|~~~)/', $l)) { $inFence = !$inFence; $keep[$i] = $l; continue; }
+        if ($inFence || $t === '' || preg_match('/^(\s*[-*_]\s*){3,}$/', $l) || preg_match('/^\s{4,}\S/', $l) && !preg_match('/^\s*([-*+]|\d+[.)])\s/', $l)) { $keep[$i] = $l; continue; }
+        preg_match('/^(\s*(?:#{1,6}\s+|>\s*|[-*+]\s+(?:\[[ xX]\]\s+)?|\d+[.)]\s+)*)(.*)$/u', $l, $m); $seg[] = ['line' => $i + 1, 'idx' => $i, 'prefix' => $m[1], 'text' => $m[2], 'suffix' => '']; continue;
+    }
+    if ($t === '') { $keep[$i] = $l; continue; }
+    $seg[] = ['line' => $i + 1, 'idx' => $i, 'prefix' => '', 'text' => $l, 'suffix' => ''];
+}
+$work = []; foreach ($seg as $k => $s) { if (!preg_match('/\p{L}/u', $s['text'])) { $keep[$s['idx']] = $s['prefix'] . $s['text']; unset($seg[$k]); continue; } $tk = []; $work[$k] = ['t' => $protect($s['text'], $tk), 'tokens' => $tk]; }
+$res = []; $warn = []; $done = 0; $skipped = 0;
+$keys = array_keys($work); $batch = []; $size = 0;
+$flush = function () use (&$batch, &$res, &$warn, &$work, &$seg, $LT, $KEY, $to, $from, $in) {
+    if (!$batch) return;
+    $payload = ['q' => array_map(fn($k) => $work[$k]['t'], $batch), 'source' => $from, 'target' => $to, 'format' => 'text'] + ($KEY !== '' ? ['api_key' => $KEY] : []);
+    [$c, $b, $e] = lt_call($LT . '/translate', $payload, 120); $j = json_decode($b, true);
+    if ($c !== 200 || !is_array($j) || !isset($j['translatedText'])) { $msg = is_array($j) ? ($j['error'] ?? '') : ''; fail($c === 0 ? "LibreTranslate is not reachable at $LT ($e). Translation runs on a local LibreTranslate service: turn it on under Capabilities (LibreTranslate), or start the service, then run this again" : "LibreTranslate answered HTTP $c" . ($msg !== '' ? ": $msg" : '')); }
+    $tt = is_array($j['translatedText']) ? $j['translatedText'] : [$j['translatedText']];
+    foreach ($batch as $x => $k) $res[$k] = (string)($tt[$x] ?? '');
+    $batch = [];
+};
+foreach ($keys as $k) { $len = strlen($work[$k]['t']); if ($batch && ($size + $len > 4000 || count($batch) >= 40)) { $flush(); $size = 0; } $batch[] = $k; $size += $len; }
+$flush();
+$base = basename($in);
+foreach ($seg as $k => $s) {
+    if (!isset($work[$k])) continue;
+    $t = $res[$k] ?? ''; $ok = $t !== '';
+    foreach ($work[$k]['tokens'] as $tok => $orig) { if (substr_count($t, $tok) !== 1) { $ok = false; break; } }
+    // link text sits between [ and ]: both must survive too, or the Markdown link would be broken
+    if ($ok && preg_match('/\]\(/', $s['text']) && (substr_count($t, '[') !== substr_count($s['text'], '[') || substr_count($t, ']') !== substr_count($s['text'], ']'))) $ok = false;   // only for lines that hold a link
+    if ($ok) { foreach ($work[$k]['tokens'] as $tok => $orig) $t = str_replace($tok, $orig, $t); }
+    if (!$ok) { $warn[] = "$base({$s['line']}) Warning: left untranslated: a protected piece (code, link, tag or placeholder) did not come back from the translator (or its brackets did not)"; $keep[$s['idx']] = $s['prefix'] . $s['text']; $skipped++; continue; }
+    if (trim($t) === trim($s['text']) && strlen(trim($s['text'])) > 25) $warn[] = "$base({$s['line']}) Note: the translation is identical to the original (already in the target language, or a name?)";
+    $keep[$s['idx']] = $s['prefix'] . $t; $done++;
+}
+ksort($keep); $outTxt = implode("\n", $keep);
+$stem = $out; if (@file_put_contents($out, $outTxt) === false) fail("cannot write $out");
+$rep = "# Translation report: $base → $to\n\n- Source language: $from; target: $to; file type read as: $mode\n- Translator: LibreTranslate at $LT (local)\n- Segments translated: $done; left untranslated: $skipped\n\n" . ($warn ? "## Problems (" . count($warn) . ")\n\n" . implode("\n", $warn) . "\n" : "No problems found.\n") . "\n[exit code " . ($skipped ? 1 : 0) . "]\n";
+@file_put_contents($out . '.report.md', $rep);
+foreach ($warn as $w) echo $w . "\n";
+echo "Wrote $out ($done segment(s) translated" . ($skipped ? ", $skipped left untranslated" : '') . "); report: $out.report.md\n"; exit(0);

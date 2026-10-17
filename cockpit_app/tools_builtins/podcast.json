@@ -1,0 +1,127 @@
+{
+    "id": "podcast",
+    "name": "Podcast audio",
+    "description": "Check, clean up and prepare podcast audio. The check measures loudness (LUFS), true peak, range, silences, channels, sample rate and bit rate against podcast norms (-16 LUFS stereo, -19 mono, true peak under -1 dBTP) and reports problems with the second they occur. Normalise brings the loudness to -16 LUFS in two passes without clipping; Clean adds a high-pass, noise reduction and light compression first; Trim cuts the silence at both ends and shortens long pauses; Chapters lists the pauses of 3 seconds or more as candidate chapter points; Tag sets the title, artist and album without re-encoding. The original is never changed. Transcripts and show notes: the Whisper tool (Transcribe to SRT). Conversions: the ffmpeg tool.",
+    "binary": "ffmpeg",
+    "version_args": "-version",
+    "website": "https://ffmpeg.org",
+    "packages": {
+        "apt": "ffmpeg php-cli",
+        "dnf": "ffmpeg php-cli",
+        "pacman": "ffmpeg php",
+        "zypper": "ffmpeg php8",
+        "brew": "ffmpeg php"
+    },
+    "presets": [
+        {
+            "id": "check",
+            "label": "Check (loudness, peaks, silences, format)",
+            "description": "Measures the episode against podcast norms: integrated loudness (-16 LUFS stereo, -19 mono, give or take 2), true peak (under -1 dBTP), loudness range, leading and trailing silence, long pauses, sample rate and bit rate. Problems come back as file(second), with Fix with agent.",
+            "input_kinds": [
+                "audio",
+                "video"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_check",
+            "command": "php {WEBROOT}/podcast_tool check {INPUT} {OUTPUT}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "chapters",
+            "label": "Chapters (pauses as candidate chapter points)",
+            "description": "Lists every pause of 3 seconds or more with its time: a start for chapter markers and show notes. Add the titles from the transcript.",
+            "input_kinds": [
+                "audio",
+                "video"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_chapters",
+            "command": "php {WEBROOT}/podcast_tool chapters {INPUT} {OUTPUT}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "normalize-mp3",
+            "label": "Normalise loudness to the podcast level (MP3)",
+            "description": "Two-pass loudness normalisation to the podcast level (-16 LUFS for stereo, -19 for mono, the same levels the check expects) with a true-peak ceiling of -1.5 dB, to MP3 (96 kbit/s mono, 128 stereo, 44.1 kHz).",
+            "input_kinds": [
+                "audio",
+                "video"
+            ],
+            "output_kind": "audio",
+            "output_ext": "mp3",
+            "output_stem": "{NAME}_normalized",
+            "command": "php {WEBROOT}/podcast_tool normalize {INPUT} {OUTPUT}",
+            "timeout_seconds": 900
+        },
+        {
+            "id": "normalize-m4a",
+            "label": "Normalise loudness to the podcast level (M4A / AAC)",
+            "description": "The same, to AAC in an .m4a file (what Apple Podcasts likes).",
+            "input_kinds": [
+                "audio",
+                "video"
+            ],
+            "output_kind": "audio",
+            "output_ext": "m4a",
+            "output_stem": "{NAME}_normalized",
+            "command": "php {WEBROOT}/podcast_tool normalize {INPUT} {OUTPUT}",
+            "timeout_seconds": 900
+        },
+        {
+            "id": "clean-mp3",
+            "label": "Clean up the voice (MP3)",
+            "description": "High-pass at 80 Hz (rumble), noise reduction, light compression, then loudness to -16 LUFS. One pass, for a quick improvement of a raw recording.",
+            "input_kinds": [
+                "audio",
+                "video"
+            ],
+            "output_kind": "audio",
+            "output_ext": "mp3",
+            "output_stem": "{NAME}_clean",
+            "command": "php {WEBROOT}/podcast_tool clean {INPUT} {OUTPUT}",
+            "timeout_seconds": 900
+        },
+        {
+            "id": "trim-mp3",
+            "label": "Trim silence (MP3)",
+            "description": "Cuts the silence at both ends and shortens every pause longer than 2 seconds to 0.8 seconds.",
+            "input_kinds": [
+                "audio",
+                "video"
+            ],
+            "output_kind": "audio",
+            "output_ext": "mp3",
+            "output_stem": "{NAME}_trimmed",
+            "command": "php {WEBROOT}/podcast_tool trim {INPUT} {OUTPUT}",
+            "timeout_seconds": 900
+        },
+        {
+            "id": "tag-mp3",
+            "label": "Set the tags (MP3)",
+            "description": "Type the tags in the extra arguments: title=Episode 12;artist=Dario;album=My Show (also date, year, comment, genre, track, composer, description). The audio is copied, not re-encoded.",
+            "input_kinds": [
+                "audio"
+            ],
+            "output_kind": "audio",
+            "output_ext": "mp3",
+            "output_stem": "{NAME}_tagged",
+            "command": "php {WEBROOT}/podcast_tool tag {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "tag-m4a",
+            "label": "Set the tags (M4A)",
+            "description": "The same for an .m4a file.",
+            "input_kinds": [
+                "audio"
+            ],
+            "output_kind": "audio",
+            "output_ext": "m4a",
+            "output_stem": "{NAME}_tagged",
+            "command": "php {WEBROOT}/podcast_tool tag {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        }
+    ]
+}

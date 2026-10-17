@@ -1,0 +1,21 @@
+{
+  "id": "ebook-publishing",
+  "name": "E-book / publishing",
+  "icon": "auto_stories",
+  "description": "A book written in markdown, built into an EPUB, validated.",
+  "detect": ["*.epub", "metadata.yaml"],
+  "group": "Writing & documents",
+  "note": "This is a book-publishing project: the manuscript is a folder of markdown chapters (01-first-chapter.md, 02-...) with a metadata.yaml (title, author, language, date, rights, an identifier) and a style.css, built into an EPUB. Keep the markdown as the master and never edit the generated EPUB by hand. One # heading starts each chapter; keep chapter files numbered so they sort. Put images beside the chapters and refer to them by relative file name with a description (alt text) for each; the build refuses files outside the book folder and anything at a web address. Do not invent facts, quotations or citations: write what the author gave you and flag gaps. Set the language correctly (and dir=rtl styling for Arabic, Hebrew or other right-to-left languages), give the book a cover, and keep the identifier stable between editions. After every build, run the EPUB check (epubcheck): a book that fails it is refused by stores and libraries; fix what it lists. Run Inspect to see what is missing (cover, accessibility metadata, remote resources).",
+  "verify": "ebook check",
+  "details": "Writing and producing a book. The manuscript stays a folder of markdown chapters with a metadata file and a stylesheet; the E-books tool builds an EPUB 3 from it with pandoc (table of contents from the headings, a chapter file per # heading, an optional cover), validates it with epubcheck, the official validator that stores and libraries use, reporting each problem as file(line,col) with its code, and inspects any EPUB (version, title, author, language, chapters, images, fonts, scripts, remote resources, cover, accessibility metadata). A build refuses markdown that points outside the book folder or at the network. Conversion to other formats is in the Pandoc and Document formats tools.",
+  "examples": [
+    "Turn my chapters into an EPUB with a cover and a table of contents",
+    "Why does epubcheck reject this book",
+    "What is missing before I upload this to a store",
+    "Start a new book with metadata and two chapters"
+  ],
+  "tools": [
+    {"tool": "ebook", "why": "build an EPUB from markdown, validate it with epubcheck, inspect it, start a skeleton"},
+    {"tool": "pandoc", "why": "other formats: Word, HTML, PDF"}
+  ]
+}

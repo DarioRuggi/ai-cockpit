@@ -1,0 +1,11 @@
+AI Cockpit
+Copyright 2026 Dario Ruggi / Ruggi Software (https://ruggi.site)
+
+Licensed under the Apache License, Version 2.0, with the scope and additional
+conditions stated in LICENSE.md. This product includes software developed by
+Ruggi Software. Modified versions must be distributed under another name and
+must state, wherever they are presented: "Based on AI Cockpit by Ruggi Software
+(ruggi.site). This is a modified version and not an official AI Cockpit build."
+
+The cockpit_auth account client and the cockpit.ruggi.site server side are
+proprietary and are not part of the open-source grant.

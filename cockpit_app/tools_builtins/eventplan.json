@@ -1,0 +1,80 @@
+{
+    "id": "eventplan",
+    "name": "Non-profit and events",
+    "description": "Check volunteer rosters, event run-of-show timelines, budgets and grant drafts, from plain files. Roster finds double-booked people, uncovered shifts and understaffed ones, and adds up hours per person. Timeline finds overlaps and gaps in a run of show and gives the total length. Budget compares budget with actual by line and category, with variance and lines over budget. Grant checks a draft's headings and word counts against a checklist you type (\"Section | max words\"). Arithmetic and cross-checking on your own files; not financial, legal or grant-writing advice, and the tool does not know any funder's rules. The original is never changed.",
+    "binary": "php",
+    "version_args": "--version",
+    "website": "https://pandoc.org",
+    "packages": {
+        "apt": "php-cli php-mbstring pandoc",
+        "dnf": "php-cli php-mbstring pandoc",
+        "pacman": "php pandoc",
+        "zypper": "php8 php8-mbstring pandoc",
+        "brew": "php pandoc"
+    },
+    "presets": [
+        {
+            "id": "roster",
+            "label": "Volunteer roster check (CSV)",
+            "description": "Columns person, date, start, end, optional role and needed. Double-booked people, shifts with nobody assigned, shifts with fewer people than needed, hours per person, a day longer than maxday hours (default 8).",
+            "input_kinds": [
+                "csv",
+                "file",
+                "spreadsheet",
+                "text"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_roster",
+            "command": "php {WEBROOT}/eventplan_tool roster {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "timeline",
+            "label": "Run-of-show timeline check (CSV)",
+            "description": "Columns start, end (or minutes) and item. Overlaps are errors, gaps are notes (warnings from 15 minutes), and the total length is given.",
+            "input_kinds": [
+                "csv",
+                "file",
+                "spreadsheet",
+                "text"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_timeline",
+            "command": "php {WEBROOT}/eventplan_tool timeline {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "budget",
+            "label": "Event budget against actual (CSV)",
+            "description": "Columns line, budget, actual and optional category. Variance and percent by line, totals, lines more than 10% over, spending with no budget, and totals by category.",
+            "input_kinds": [
+                "csv",
+                "file",
+                "spreadsheet",
+                "text"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_budget",
+            "command": "php {WEBROOT}/eventplan_tool budget {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "grant",
+            "label": "Grant draft against a checklist",
+            "description": "The draft is a markdown file with a heading per section. Type the path of the checklist (one \"Section | max words\" per line) in the extra arguments. Missing or empty sections, sections over the word limit, very short ones and leftover TODO placeholders.",
+            "input_kinds": [
+                "text",
+                "file",
+                "document"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_grantcheck",
+            "command": "php {WEBROOT}/eventplan_tool grant {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        }
+    ]
+}

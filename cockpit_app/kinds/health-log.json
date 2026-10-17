@@ -1,0 +1,37 @@
+{
+    "id": "health-log",
+    "name": "Health and fitness log",
+    "icon": "fitness_center",
+    "description": "Training plan, meal diary, appointments and measurements checked and totalled. Not medical advice.",
+    "detect": [],
+    "note": "This is a personal health and fitness log kept in CSV files. This is NOT medical advice and you never give any: never diagnose, interpret symptoms, name a condition, a dose, a diet or a target weight, and never say the user's numbers are good or bad for their health. The tools only add up and compare the numbers the user wrote down; the 10% weekly rise is a common rule of thumb, not a safe limit, and a calorie target is whatever the user or their dietitian chose. For symptoms, pain, an eating disorder concern or an emergency, tell the user to contact a doctor or emergency services. Never invent a measurement, calorie value or date. Keep the originals and write new copies. Run the Training plan check after every change to the plan.",
+    "verify": "healthlog plan",
+    "group": "Home & life",
+    "details": "Personal logs in plain files. The Health log tool checks a training plan (weekly volume, rest days, long streaks, week-on-week rises above 10%), totals a meal diary from the calories and macros you wrote down (and notes labels whose numbers disagree), lists appointments as upcoming, overdue or clashing, and shows the trend of weight and other measurements. It does arithmetic on your own numbers; it does not diagnose, advise, or tell you what is healthy. Ask a doctor, dietitian or qualified coach about your body.",
+    "examples": [
+        "Is my 12-week running plan ramping up too fast?",
+        "Daily calorie and protein totals from my food diary",
+        "Which appointments are overdue and which are coming up?",
+        "Weight and waist trend over the last six months"
+    ],
+    "tools": [
+        {
+            "tool": "healthlog",
+            "why": "plan check, diary totals, appointments, measurement trends"
+        },
+        {
+            "tool": "data",
+            "why": "ask the logs free-form questions in SQL and draw charts"
+        }
+    ],
+    "starter": [
+        {
+            "path": "training_plan.csv",
+            "content": "date,activity,minutes\n"
+        },
+        {
+            "path": "measures.csv",
+            "content": "date,weight\n"
+        }
+    ]
+}

@@ -1,0 +1,23 @@
+{
+  "id": "claude", "display": "Claude Code", "kind": "agent", "transport": "process",
+  "command": "claude",
+  "args": ["-p", "{prompt}", "--output-format", "stream-json", "--verbose",
+           {"when": "model", "args": ["--model", "{model}"]}],
+  "session": {"resume_args": ["--resume", "{session}"]},
+  "parser": "claude_stream_json",
+  "tiers": {
+    "read_only": ["--permission-mode", "plan"],
+    "edit": ["--permission-mode", "acceptEdits"],
+    "shell": ["--dangerously-skip-permissions"]
+  },
+  "detect": {"cmd": "claude", "version_args": ["--version"]},
+  "cwd_policy": "project",
+  "limits": {"timeout_s": 900, "max_output_kb": 16384},
+  "notes": "Cockpit today runs claude with --dangerously-skip-permissions (= tier shell) and --output-format json, avoiding stream-json because plugin hooks print text that broke NDJSON consumers. This parser logs any non-JSON line as a 'raw' log instead of failing. Per-run CLAUDE_CONFIG_DIR isolation is passed with --env.",
+  "docs_checked": "2026-10-05", "terms_checked": "2026-10-05",
+  "tests": [
+    {"name": "REAL recorded output (not logged in): hooks + init + synthetic result becomes error(tool_error)",
+     "request": {"prompt": "x"}, "replay": "fixtures/claude_not_logged_in.jsonl", "live": false,
+     "expect": {"exit": 1, "error_code": "tool_error", "events_include": ["log"]}}
+  ]
+}

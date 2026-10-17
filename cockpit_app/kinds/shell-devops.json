@@ -1,0 +1,32 @@
+{
+  "id": "shell-devops",
+  "name": "Shell / DevOps",
+  "icon": "terminal",
+  "description": "Shell scripts and service files: linted, scanned, never run by the tools.",
+  "detect": [
+    "*.sh",
+    "*.bash",
+    "*.service",
+    "*.timer"
+  ],
+  "group": "System & servers",
+  "note": "This is a shell-scripting and DevOps project (bash and POSIX sh scripts, systemd units, cron jobs, install scripts). Start every bash script with #!/usr/bin/env bash and set -euo pipefail, quote every variable expansion, use [[ ]] in bash and [ ] in sh, use mktemp for temporary files and trap to clean them up, use command -v instead of which, never build a path for rm -rf from a variable that could be empty (use \"${VAR:?}\"), never pipe curl into a shell, and never put a password or token in a script: read it from the environment or a file with mode 600. Prefer a long, readable form of options in scripts. A script that must work with sh must not use bashisms. After every change run the ShellCheck check and the Syntax check and fix what they list; run the Habits scan before a script goes to another machine. The tools only READ scripts: do not run a script to find out what it does unless the user asks you to, and never run one that deletes, formats or reconfigures anything without saying exactly what it will do first.",
+  "verify": "shell check",
+  "details": "Writing and checking shell scripts and service files. The Shell tool runs ShellCheck, the standard linter, on every script of a file or folder and reports each finding as file(line,col) with its SC code and an explanation link; asks the script's own shell whether it parses (bash -n, sh -n, dash -n); reads for dangerous habits (curl piped into a shell, rm -rf of a variable, chmod 777, eval, curl -k, a fixed name in /tmp, no set -e, hard-coded secrets, sudo inside a script); and verifies systemd .service and .timer files with systemd-analyze. Nothing is ever executed.",
+  "examples": [
+    "Make this install script safe to run on another machine",
+    "Check a folder of scripts for quoting and portability faults",
+    "Why does this systemd service not start",
+    "Turn a long one-liner into a readable script with error handling"
+  ],
+  "tools": [
+    {
+      "tool": "shell",
+      "why": "ShellCheck, syntax, dangerous-habit scan, systemd unit check; reads only"
+    },
+    {
+      "tool": "sysadmin",
+      "why": "read-only look at the machine the script will run on"
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+#!/bin/bash
+# ollama_vision — wrapper for Ollama vision API, called by tools.php
+# Usage: ollama_vision <input_image> <output_txt> <mode>
+# Modes: describe, ocr
+
+INPUT="$1"
+OUTPUT="$2"
+MODE="${3:-describe}"
+
+OLLAMA_HOST="${OLLAMA_HOST:-http://127.0.0.1:11434}"
+MODEL="${COCKPIT_VISION_MODEL:-gemma3:4b}"
+
+if [ ! -f "$INPUT" ]; then
+    echo "Error: input file not found: $INPUT" >&2
+    exit 1
+fi
+
+B64=$(base64 -w0 "$INPUT")
+
+case "$MODE" in
+    ocr)
+        PROMPT="Read and extract ALL visible text from this image. Output only the extracted text, preserving layout where possible."
+        ;;
+    *)
+        PROMPT="Describe this image in detail. Include: main subject, colors, composition, any text visible, and notable details."
+        ;;
+esac
+
+PAYLOAD=$(jq -n \
+    --arg model "$MODEL" \
+    --arg prompt "$PROMPT" \
+    --arg img "$B64" \
+    '{model: $model, prompt: $prompt, images: [$img], stream: false}')
+
+RESP=$(curl -s --max-time 120 "${OLLAMA_HOST}/api/generate" \
+    -H "Content-Type: application/json" \
+    -d "$PAYLOAD")
+
+ERR=$(echo "$RESP" | jq -r '.error // empty' 2>/dev/null)
+if [ -n "$ERR" ]; then
+    echo "Ollama error: $ERR" >&2
+    exit 1
+fi
+
+echo "$RESP" | jq -r '.response // empty' > "$OUTPUT"
+
+if [ ! -s "$OUTPUT" ]; then
+    echo "Error: empty response from model" >&2
+    exit 1
+fi
+
+echo "OK"

@@ -1,0 +1,183 @@
+{
+    "id": "photo",
+    "name": "Photo tools",
+    "description": "Look after photos without exiftool: it reads EXIF with PHP and edits with ImageMagick. Info shows size, camera, date taken and GPS (one photo, or a table of a whole folder); Check warns about GPS locations hidden in files you may share, huge files, CMYK JPEGs, rotation tags that other tools ignore, tiny images and mixed formats; Strip metadata removes everything (GPS, camera, dates) after applying the rotation; Web-ready copy applies the rotation, removes metadata, converts to sRGB and shrinks to a size you choose (max=1600 quality=82); Enhance auto-levels and sharpens gently; Batch makes web-ready copies of a whole folder in one zip; Contact sheet shows a folder at a glance; Duplicates finds exact copies and near-duplicates (the same picture resized or re-saved); Rename plan proposes names by date taken (nothing is renamed). The type of a file is taken from its content and passed to ImageMagick as an explicit decoder, so a file named .jpg that is really an SVG or a script is refused. The originals are never changed. With exiftool installed it also shows every tag, writes artist, copyright, title, keywords and rating into a copy, and shifts all dates.",
+    "binary": "convert",
+    "version_args": "-version",
+    "website": "https://imagemagick.org",
+    "packages": {
+        "apt": "imagemagick php-cli php-zip",
+        "dnf": "ImageMagick php-cli",
+        "pacman": "imagemagick php",
+        "zypper": "ImageMagick php8 php8-zip",
+        "brew": "imagemagick php"
+    },
+    "presets": [
+        {
+            "id": "info",
+            "label": "Info: size, camera, date, GPS (a photo or a folder)",
+            "description": "One photo: pixels, megabytes, camera, date taken, orientation tag, GPS position. A folder: a table of every photo with the same columns and how many carry a GPS location.",
+            "input_kinds": [
+                "image",
+                "file",
+                "folder"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_info",
+            "command": "php {WEBROOT}/photo_tool info {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "check",
+            "label": "Check (GPS, size, colours, rotation)",
+            "description": "For a photo or a folder: a hidden GPS location (warning: privacy), files over 8 MB, CMYK JPEGs, rotation tags other tools ignore, images under 640 px, no date taken, mixed formats, and files that are not photos at all (judged by content).",
+            "input_kinds": [
+                "image",
+                "file",
+                "folder"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_check",
+            "command": "php {WEBROOT}/photo_tool check {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "strip",
+            "label": "Strip all metadata (GPS, camera, dates)",
+            "description": "A copy of the photo with ALL metadata removed, the rotation applied first so it still looks right. Choose .jpg, .png or .webp as the output.",
+            "input_kinds": [
+                "image",
+                "file"
+            ],
+            "output_kind": "image",
+            "output_ext": "jpg",
+            "output_stem": "{NAME}_clean",
+            "command": "php {WEBROOT}/photo_tool strip {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "web",
+            "label": "Web-ready copy (rotate, strip, sRGB, shrink)",
+            "description": "Applies the rotation, removes the metadata, converts to sRGB and shrinks the long side to at most 1600 pixels (never enlarges), JPEG quality 82. Change them in the extra arguments: max=1200 quality=75.",
+            "input_kinds": [
+                "image",
+                "file"
+            ],
+            "output_kind": "image",
+            "output_ext": "jpg",
+            "output_stem": "{NAME}_web",
+            "command": "php {WEBROOT}/photo_tool web {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "enhance",
+            "label": "Enhance (auto-levels, light sharpening)",
+            "description": "A conservative auto-fix: applies the rotation, stretches the levels and sharpens a little. Keeps the metadata.",
+            "input_kinds": [
+                "image",
+                "file"
+            ],
+            "output_kind": "image",
+            "output_ext": "jpg",
+            "output_stem": "{NAME}_enhanced",
+            "command": "php {WEBROOT}/photo_tool enhance {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "batch",
+            "label": "Batch: a whole folder web-ready (zip)",
+            "description": "Every photo of the folder as a web-ready JPEG (rotation applied, metadata removed, sRGB, long side at most 1600 px) in one zip. Extra arguments: max=1200 quality=75.",
+            "input_kinds": [
+                "folder"
+            ],
+            "output_kind": "document",
+            "output_ext": "zip",
+            "output_stem": "{NAME}_web",
+            "command": "php {WEBROOT}/photo_tool batch {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 1800
+        },
+        {
+            "id": "sheet",
+            "label": "Contact sheet (a folder at a glance)",
+            "description": "One picture with a thumbnail and the name of each photo (the first 60).",
+            "input_kinds": [
+                "folder"
+            ],
+            "output_kind": "image",
+            "output_ext": "png",
+            "output_stem": "{NAME}_sheet",
+            "command": "php {WEBROOT}/photo_tool sheet {INPUT} {OUTPUT}",
+            "timeout_seconds": 900
+        },
+        {
+            "id": "dupes",
+            "label": "Duplicates: exact and near",
+            "description": "Exact copies (same bytes) and near-duplicates (the same picture resized, re-saved or lightly edited, found by a picture fingerprint), largest first. Nothing is deleted or moved: look before removing.",
+            "input_kinds": [
+                "folder"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_duplicates",
+            "command": "php {WEBROOT}/photo_tool dupes {INPUT} {OUTPUT}",
+            "timeout_seconds": 900
+        },
+        {
+            "id": "plan",
+            "label": "Rename plan by date taken",
+            "description": "A list of current name to proposed name (2026-01-05_14-30-02.jpg) from the date taken. Nothing is renamed: apply it by hand or ask the agent.",
+            "input_kinds": [
+                "folder"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_rename_plan",
+            "command": "php {WEBROOT}/photo_tool plan {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "tags",
+            "label": "All metadata tags (exiftool)",
+            "description": "EVERY tag in the file (EXIF, XMP, IPTC, maker notes: lens, ISO, serial numbers, software, owner), privacy-sensitive ones first: location, who, which camera. Needs exiftool.",
+            "input_kinds": [
+                "image",
+                "file"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_tags",
+            "command": "php {WEBROOT}/photo_tool tags {INPUT} {OUTPUT}",
+            "timeout_seconds": 120
+        },
+        {
+            "id": "set",
+            "label": "Set tags in a copy (artist, copyright, title ...)",
+            "description": "A COPY of the photo with tags written: artist=\"A. Name\" copyright=\"© 2026 A. Name\" title=... description=... keywords=a,b rating=0-5 datetimeoriginal=\"2026:01:05 14:30:02\" in the extra arguments. Choose an output with the same extension as the photo. The original is untouched.",
+            "input_kinds": [
+                "image",
+                "file"
+            ],
+            "output_kind": "image",
+            "output_ext": "jpg",
+            "output_stem": "{NAME}_tagged",
+            "command": "php {WEBROOT}/photo_tool set {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 120
+        },
+        {
+            "id": "shift",
+            "label": "Shift every date (a camera clock that was wrong)",
+            "description": "A COPY with every date and time moved: type +2h, -30m, +1d or +1d2h30m in the extra arguments. The original is untouched.",
+            "input_kinds": [
+                "image",
+                "file"
+            ],
+            "output_kind": "image",
+            "output_ext": "jpg",
+            "output_stem": "{NAME}_shifted",
+            "command": "php {WEBROOT}/photo_tool shift {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 120
+        }
+    ]
+}

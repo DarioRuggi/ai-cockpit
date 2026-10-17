@@ -1,0 +1,93 @@
+{
+    "_comment": "AI Cockpit — free-tier quota config. Read by workers.php's usage_with_quota action. Edit any entry directly, or use the Edit Quota dialog in the UI. Schema: per-provider object with 'kind' (daily_requests | credit_based | consumption_only), 'anchor' (midnight_utc | calendar_first_of_month | rolling_24h), 'last_verified_at' (date string for the staleness badge), 'models' (per-model limits with optional '*' wildcard fallback). last_verified_at older than 30 days triggers an amber 'verify' hint in the UI.",
+    "_authoritative_source": "Groq's authoritative per-account limits live at https://console.groq.com/settings/limits — the values here are public defaults verified 2026-05-09.",
+    "groq": {
+        "kind": "daily_requests",
+        "anchor": "midnight_utc",
+        "last_verified_at": "2026-05-09",
+        "notes": "Free tier hits whichever cap arrives first: RPM, TPM, RPD. RPD is the binding constraint for most users. Limits are per-organization, NOT per API key.",
+        "models": {
+            "*": {
+                "rpm": 30,
+                "tpm": 6000,
+                "rpd": 1000,
+                "tpd": null,
+                "shared_across_models": false
+            },
+            "mixtral-8x7b-32768": {
+                "rpm": 30,
+                "tpm": 5000,
+                "rpd": 1000,
+                "tpd": null
+            },
+            "gemma2-9b-it": {
+                "rpm": 30,
+                "tpm": 15000,
+                "rpd": 1000,
+                "tpd": null,
+                "comment": "Gemma 2 9B has elevated TPM (15K vs 6K default)"
+            },
+            "openai/gpt-oss-20b": {
+                "rpm": 30,
+                "tpm": 8000,
+                "rpd": 1000,
+                "tpd": 200000,
+                "comment": "Groq free tier 2026-09; llama-3.x shut down 2026-08-16"
+            },
+            "openai/gpt-oss-120b": {
+                "rpm": 30,
+                "tpm": 8000,
+                "rpd": 1000,
+                "tpd": 200000,
+                "comment": "Groq free tier 2026-09; llama-3.x shut down 2026-08-16"
+            },
+            "qwen/qwen3.6-27b": {
+                "rpm": 30,
+                "tpm": 8000,
+                "rpd": 1000,
+                "tpd": 200000,
+                "comment": "Groq free tier 2026-09; llama-3.x shut down 2026-08-16"
+            }
+        }
+    },
+    "huggingface": {
+        "kind": "credit_based",
+        "anchor": "calendar_first_of_month",
+        "last_verified_at": null,
+        "notes": "HuggingFace Inference Providers uses monthly $-credit allowance. Free tier credits are small (~$0.10/mo). Set quota_dollars when you configure HF.",
+        "models": {
+            "*": {
+                "quota_dollars": null,
+                "comment": "Set to account's monthly free-credit allowance"
+            }
+        }
+    },
+    "openrouter": {
+        "kind": "daily_requests",
+        "anchor": "midnight_utc",
+        "last_verified_at": null,
+        "notes": "Only :free models are tracked (per-model rule, parent provider is paid). Verify exact limits at openrouter.ai per-model pages.",
+        "models": {
+            "meta-llama/llama-3.3-70b-instruct:free": {
+                "rpm": null,
+                "tpm": null,
+                "rpd": null,
+                "tpd": null,
+                "comment": "Set after verifying at openrouter.ai/models/meta-llama/llama-3.3-70b-instruct:free"
+            }
+        }
+    },
+    "together": {
+        "kind": "daily_requests",
+        "anchor": "midnight_utc",
+        "last_verified_at": null,
+        "notes": "Only FLUX.1-schnell-Free image-gen model is genuinely free.",
+        "models": {
+            "black-forest-labs/FLUX.1-schnell-Free": {
+                "rpm": null,
+                "rpd": null,
+                "comment": "Image generation; metered by image count, not tokens"
+            }
+        }
+    }
+}

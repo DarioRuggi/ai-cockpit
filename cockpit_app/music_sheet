@@ -1,0 +1,189 @@
+#!/bin/bash
+# =============================================================================
+# music_sheet — audio in, sheet music out; notation in, piano sound out.
+# Called by tools.php (tool "sheet"). Usage: music_sheet <input> <output> <mode>
+#
+#   transcribe : audio -> detected notes -> LilyPond -> PDF (+ a .ly beside it)
+#   play       : .ly / .mid / .midi / .xml / .musicxml -> piano audio (wav)
+#   notes      : audio -> a plain list of detected notes (no engraving)
+#
+# WHAT THIS DOES NOT DO, stated because the failure is otherwise silent:
+# transcription follows ONE melodic line. Humming, whistling, a solo instrument
+# or a single synth line work; a full mix of drums, bass, chords and vocals will
+# produce confident nonsense, because polyphonic transcription needs a model
+# that will not fit here. A photo or scan of sheet music is not input either —
+# that is optical music recognition, a different problem entirely.
+# =============================================================================
+set -u
+INPUT="${1:-}"; OUTPUT="${2:-/dev/stdout}"; MODE="${3:-transcribe}"
+[ -f "$INPUT" ] || { echo "music_sheet: no such file: $INPUT" > "$OUTPUT"; exit 1; }
+INPUT="$(cd "$(dirname "$INPUT")" && pwd)/$(basename "$INPUT")"      # absolute: the .ly/.xml branches cd into a temp dir
+HERE="$(cd "$(dirname "$0")" && pwd)"
+have(){ command -v "$1" >/dev/null 2>&1; }
+WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
+
+# ── MIDI pitch -> LilyPond note name ─────────────────────────────────────────
+# LilyPond writes octaves relative to middle C with ' and , marks.
+ly_note() {
+    # LilyPond absolute pitch: bare c is C3 (MIDI 48), c' is middle C (MIDI 60).
+    # So the number of marks is midi/12 - 4 — the first version used <= in the
+    # loop and wrote every note an octave high.
+    local m=$1 names=(c cis d dis e f fis g gis a ais b)
+    local pc=$(( m % 12 )) oct=$(( m / 12 - 4 ))
+    local n=${names[$pc]} marks="" i
+    if [ "$oct" -gt 0 ]; then for ((i=0;i<oct;i++)); do marks="${marks}'"; done
+    elif [ "$oct" -lt 0 ]; then for ((i=0;i<-oct;i++)); do marks="${marks},"; done; fi
+    printf '%s%s' "$n" "$marks"
+}
+
+# ── A duration in seconds -> the nearest note value at this tempo ────────────
+# Quantising matters more than it looks: without it every note is a tied mess
+# and the sheet is unreadable. Snapped to the usual values, never shorter than a
+# sixteenth, because aubio's note-off is not precise enough to justify more.
+ly_dur() {
+    awk -v s="$1" -v bpm="$2" 'BEGIN{
+        beat = 60.0/bpm; q = s/beat;                       # in quarter notes
+        split("4 2 1 0.5 0.25", v, " ");                   # whole..sixteenth
+        split("1 2 4 8 16", d, " ");
+        best=5; bd=99;
+        for (i=1;i<=5;i++) { diff = (q>v[i]? q-v[i] : v[i]-q); if (diff<bd) { bd=diff; best=i } }
+        printf "%d", d[best];
+    }'
+}
+
+case "$MODE" in
+# ─────────────────────────────────────────────────────────────── transcribe ──
+transcribe|notes)
+    have aubionotes || { echo "aubio is not installed — cannot detect notes." > "$OUTPUT"; exit 1; }
+    refuse() { echo "$1" | tee "$OUTPUT" >&2; exit 1; }          # stderr too: a failed run shows its log, not the output file
+    # (1) Not audio. A photo or scan of sheet music is optical music recognition — a different
+    # problem. Say so, instead of the generic "no clear notes" it used to fall through to.
+    if have ffprobe && [ "$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_type -of csv=p=0 "$INPUT" 2>/dev/null | head -1)" != "audio" ]; then
+        case "$(printf '%s' "${INPUT##*.}" | tr 'A-Z' 'a-z')" in
+            png|jpg|jpeg|gif|bmp|webp|tif|tiff|pdf|svg|heic)
+                refuse "This is a picture or document, not a recording. Reading notes from a photo or scan of sheet music is optical music recognition, which Cockpit does not do. Give it audio — humming, whistling or one instrument — or, to hear a score, use the Notation → piano preset on a .ly / .mid / MusicXML file." ;;
+            *) refuse "$(basename "$INPUT") is not an audio file — nothing to transcribe." ;;
+        esac
+    fi
+    # (2) Not ONE melodic line. aubio follows a single pitch; given a chord, a band or a drum kit it
+    # does not say so, it returns a confident wrong tune. music_poly.php looks for that first.
+    if have php && [ -f "$HERE/music_poly.php" ]; then
+        POLY=$(php "$HERE/music_poly.php" "$INPUT" 2>/dev/null)
+        VERDICT=$(printf '%s' "$POLY" | grep -o '"verdict":"[a-z]*"' | cut -d'"' -f4)
+        case "$VERDICT" in
+            polyphonic|noisy)
+                refuse "This is not a single melodic line: $(printf '%s' "$POLY" | grep -o '"why":"[^"]*"' | cut -d'"' -f4). Cockpit transcribes one line at a time — humming, whistling, a solo instrument or a single synth line — because several voices at once would come out as a confident but wrong tune. For this file the Audio analysis tool still gives tempo, loudness and silences." ;;
+            silent)
+                refuse "The recording is silent (or almost), so there are no notes to transcribe." ;;
+        esac
+    fi
+    # Tempo first: the note values are meaningless without it. Falls back to 100
+    # BPM and says so, rather than pretending to a precision it does not have.
+    BPM=""
+    if have aubiotrack; then
+        BPM=$(aubiotrack "$INPUT" 2>/dev/null | awk 'NR>1{d=$1-p; if(d>0.05&&d<2) print d} {p=$1}' \
+              | sort -n | awk '{a[NR]=$1} END{ if(NR>3){ b=60/a[int(NR/2)]; if (b>=40 && b<=220) printf "%.0f", b } }')
+    fi
+    GUESSED=0; [ -z "$BPM" ] && { BPM=100; GUESSED=1; }
+
+    aubionotes "$INPUT" 2>/dev/null | awk 'NF==3 && $1>0 {print $1, $2, $3}' > "$WORK/notes.txt"
+    COUNT=$(wc -l < "$WORK/notes.txt")
+    if [ "$COUNT" -lt 2 ]; then
+        echo "No clear notes found. This works on a single melodic line — humming, whistling, one instrument." > "$OUTPUT"
+        exit 0
+    fi
+
+    if [ "$MODE" = "notes" ]; then
+        { echo "tempo: ${BPM} BPM$([ "$GUESSED" = 1 ] && echo ' (guessed — no steady beat found)')"
+          echo "notes: $COUNT"
+          awk '{ printf "  %-5.2fs  midi %-4d  %.2fs\n", $2, $1, $3-$2 }' "$WORK/notes.txt"
+        } > "$OUTPUT"
+        exit 0
+    fi
+
+    # Build the LilyPond source.
+    { while read -r midi start end; do
+          dur=$(awk -v a="$end" -v b="$start" 'BEGIN{printf "%.3f", a-b}')
+          printf '%s%s ' "$(ly_note "${midi%.*}")" "$(ly_dur "$dur" "$BPM")"
+      done < "$WORK/notes.txt"
+    } > "$WORK/melody.txt"
+
+    TITLE=$(basename "$INPUT"); TITLE=${TITLE%.*}
+    cat > "$WORK/score.ly" <<LY
+\\version "2.24.0"
+\\header {
+  title = "${TITLE//\"/}"
+  subtitle = "transcribed by AI Cockpit — one melodic line, ${BPM} BPM"
+  tagline = ##f
+}
+\\score {
+  \\new Staff {
+    \\tempo 4 = ${BPM}
+    \\clef treble
+    $(cat "$WORK/melody.txt")
+  }
+  \\layout { }
+  \\midi { }
+}
+LY
+    if ! have lilypond; then
+        { echo "LilyPond is not installed, so no sheet was engraved."
+          echo "The notes were detected — here is the LilyPond source; install lilypond to render it:"
+          echo; cat "$WORK/score.ly"
+        } > "$OUTPUT"
+        exit 0
+    fi
+    # Engrave into the work directory, then MOVE the pdf to OUTPUT. The first
+    # version pointed lilypond at OUTPUT's base and then wrote its summary to
+    # OUTPUT — overwriting the 50 KB engraved page with 439 bytes of prose named
+    # .pdf. The summary goes to stdout, where the tool result shows it.
+    (cd "$WORK" && lilypond --pdf -o score score.ly >/dev/null 2>&1)
+    OUTBASE="${OUTPUT%.*}"
+    cp "$WORK/score.ly" "${OUTBASE}.ly" 2>/dev/null
+    [ -f "$WORK/score.midi" ] && cp "$WORK/score.midi" "${OUTBASE}.midi" 2>/dev/null
+    if [ -f "$WORK/score.pdf" ]; then
+        cp "$WORK/score.pdf" "$OUTPUT"
+        echo "Engraved ${COUNT} notes at ${BPM} BPM$([ "$GUESSED" = 1 ] && echo ' (tempo guessed)')."
+        echo "sheet:  ${OUTPUT}"
+        [ -f "${OUTBASE}.midi" ] && echo "midi:   ${OUTBASE}.midi  (play it back with the Notation → piano preset)"
+        echo "source: ${OUTBASE}.ly  (edit and re-render to correct anything)"
+        echo "One melodic line only — a full mix will not transcribe sensibly."
+    else
+        echo "LilyPond could not engrave this; the source is at ${OUTBASE}.ly"
+    fi
+    ;;
+# ───────────────────────────────────────────────────────────────────── play ──
+play)
+    EXT="${INPUT##*.}"; EXT=$(printf '%s' "$EXT" | tr 'A-Z' 'a-z')
+    MID=""
+    case "$EXT" in
+        mid|midi) MID="$INPUT" ;;
+        ly)
+            have lilypond || { echo "LilyPond is not installed — cannot read a .ly file."; exit 1; }
+            (cd "$WORK" && cp "$INPUT" in.ly && lilypond -o out in.ly >/dev/null 2>&1)
+            MID=$(ls "$WORK"/out*.mid* 2>/dev/null | head -1)
+            [ -n "$MID" ] || { echo "That .ly produced no MIDI — it needs a \\midi { } block in its score."; exit 1; } ;;
+        xml|musicxml|mxl)
+            if have musicxml2ly && have lilypond; then
+                (cd "$WORK" && musicxml2ly -o in.ly "$INPUT" >/dev/null 2>&1 && lilypond -o out in.ly >/dev/null 2>&1)
+                MID=$(ls "$WORK"/out*.mid* 2>/dev/null | head -1)
+            fi
+            [ -n "$MID" ] || { echo "MusicXML needs musicxml2ly (ships with LilyPond) — not available."; exit 1; } ;;
+        *) echo "Play accepts .mid, .midi, .ly, or MusicXML. A picture of sheet music is a different problem (optical music recognition) and is not supported."; exit 1 ;;
+    esac
+    have timidity || { echo "timidity is not installed — cannot turn MIDI into sound."; exit 1; }
+    # Render straight to OUTPUT and report on stdout. Writing the summary to
+    # OUTPUT after the audio would overwrite it — which is exactly what the first
+    # version did, leaving a 120-byte "wav" of prose.
+    timidity -Ow -o "$OUTPUT" "$MID" >/dev/null 2>&1
+    if [ -s "$OUTPUT" ]; then
+        SECS=$(ffprobe -v quiet -show_entries format=duration -of csv=p=0 "$OUTPUT" 2>/dev/null | cut -d. -f1)
+        echo "Played as piano: ${OUTPUT}"
+        [ -n "${SECS:-}" ] && echo "length: ${SECS}s"
+    else
+        echo "timidity produced no audio from that file."
+    fi
+    ;;
+*) echo "music_sheet: unknown mode '$MODE'" > "$OUTPUT"; exit 1 ;;
+esac
+exit 0

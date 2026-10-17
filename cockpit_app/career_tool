@@ -1,0 +1,116 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// career_tool — the Job search and CV tools' work, for the tool presets (tools_builtins/career.json). A command-line program, never reachable over the web.
+//
+//   php career_tool cv        CV.md|txt   OUTPUT                  CV check: date gaps and overlaps in the experience list, mixed date formats, length, weak or passive phrasing, missing contact details
+//   php career_tool match     CV.md|txt   OUTPUT AD.txt           the job ad's terms against the CV: found and missing. It NEVER adds a skill: a missing term is only a prompt to ask "do I really have this?"
+//   php career_tool tracker   TRACKER.csv OUTPUT [today=YYYY-MM-DD]  applications: follow-ups due, status counts, response rate (columns found by name: company, role, applied, status, follow-up)
+//   php career_tool questions AD.txt      OUTPUT                  an interview-practice question bank from the ad's requirements, with empty answer fields for TRUE examples
+//
+// Reading and counting aids; they never write a CV. The original is never changed. Problems come back as file(line) Error|Warning|Note: ...
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "career_tool: $m\n"); exit($rc); }
+[$sub, $in, $out] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? '']; $args = array_slice($argv, 4);
+if (!in_array($sub, ['cv', 'match', 'tracker', 'questions'], true) || $in === '' || $out === '') fail('usage: career_tool cv|match|tracker|questions INPUT OUTPUT [AD.txt | today=YYYY-MM-DD]', 2);
+function load(string $f): string { if (!is_file($f)) fail("no such file: $f"); $r = (string)file_get_contents($f); if (strncmp($r, "\xEF\xBB\xBF", 3) === 0) $r = substr($r, 3); if (!mb_check_encoding($r, 'UTF-8')) fail("not valid UTF-8: $f"); $r = str_replace(["\r\n", "\r"], "\n", $r); if (trim($r) === '') fail("the file is empty: $f"); return $r; }
+$raw = load($in); $name = basename($in); $opt = []; foreach ($args as $a) if (preg_match('/^(\w+)=(.*)$/', trim($a), $m)) $opt[strtolower($m[1])] = trim($m[2]);
+$msgs = []; $nerr = 0; $nwarn = 0;
+$add = function (string $k, int $l, string $m) use (&$msgs, &$nerr, &$nwarn, $name) { $msgs[] = "$name($l) $k: $m"; if ($k === 'Error') $nerr++; elseif ($k === 'Warning') $nwarn++; };
+function finish(string $out, string $body, array $msgs, int $nerr, int $nwarn): void {
+    file_put_contents($out, $body . "\n## Problems found\n\n" . ($msgs ? implode("\n", $msgs) . "\n" : "None.\n") . "\n$nerr errors, $nwarn warnings.\n[exit code 0]\n"); echo "Wrote $out ($nerr errors, $nwarn warnings)\n"; exit(0);
+}
+$STOP = 'the and for with that this from have has are was were will would can could should must may our you your their they them its not but into than then also more any all each other such only own same very just about over under between through while during before after above below who what when where which how why one two three four five six seven eight nine ten etc per via within across able ability including include includes plus both either well new like get gets make makes work works working team teams role roles join looking seeking strong good great ideal candidate candidates company position job years year experience required requirements preferred responsibilities les des une dans pour avec sont sur par aux est nous vous der die das und mit von nicht ein eine für sind sie wir auf bei oder zum zur del los las una por con que para como pero más gli per che non sono nel della delle uma dos com não mais ser você nós';
+$stop = array_flip(explode(' ', $STOP));
+function words(string $t): array { preg_match_all('/[\p{L}\p{N}][\p{L}\p{N}+#.\/-]*[\p{L}\p{N}+#]|[\p{L}\p{N}]/u', mb_strtolower($t), $m); return $m[0]; }
+
+// ---- cv -----------------------------------------------------------------------------------------------------------------------------------------
+if ($sub === 'cv') {
+    $MON = ['jan'=>1,'gen'=>1,'feb'=>2,'fev'=>2,'fév'=>2,'mar'=>3,'mär'=>3,'apr'=>4,'avr'=>4,'abr'=>4,'may'=>5,'mai'=>5,'mag'=>5,'jun'=>6,'giu'=>6,'jul'=>7,'lug'=>7,'aug'=>8,'aou'=>8,'aoû'=>8,'ago'=>8,'sep'=>9,'set'=>9,'oct'=>10,'out'=>10,'ott'=>10,'okt'=>10,'nov'=>11,'dec'=>12,'dez'=>12,'dic'=>12,'déc'=>12];
+    $mre = '[A-Za-zäéûÄ]{3,9}\.?\s+\d{4}'; $D = "(?:$mre|\\d{1,2}[\\/.]\\d{4}|\\d{4}-\\d{1,2}|\\d{4})"; $NOW = 'present|now|current|today|ongoing|heute|aktuell|pr[ée]sent|actuel|aujourd.hui|oggi|presente|atual|actualidad|hoy|hasta hoy';
+    $SEP = '\s*(?:-|–|—|to|until|bis|à|au|al|a|fino a|até|hasta)\s*';
+    $parse = function (string $s, bool $end) use ($MON, $NOW): ?array {
+        $s = trim($s); if (preg_match("/^($NOW)$/iu", $s)) return [(int)date('Y') * 12 + (int)date('n'), 'present'];
+        if (preg_match('/^([A-Za-zäéûÄ]{3,9})\.?\s+(\d{4})$/u', $s, $m)) { $k = mb_strtolower(mb_substr($m[1], 0, 3)); if (!isset($MON[$k])) return null; return [(int)$m[2] * 12 + $MON[$k], 'Mon YYYY']; }
+        if (preg_match('/^(\d{1,2})[\/.](\d{4})$/', $s, $m) && $m[1] >= 1 && $m[1] <= 12) return [(int)$m[2] * 12 + (int)$m[1], 'MM/YYYY'];
+        if (preg_match('/^(\d{4})-(\d{1,2})$/', $s, $m) && $m[2] >= 1 && $m[2] <= 12) return [(int)$m[1] * 12 + (int)$m[2], 'YYYY-MM'];
+        if (preg_match('/^(\d{4})$/', $s, $m) && $m[1] >= 1950 && $m[1] <= 2100) return [(int)$m[1] * 12 + ($end ? 12 : 1), 'YYYY']; return null; };
+    $lines = explode("\n", $raw); $ranges = []; $fmts = [];
+    foreach ($lines as $i => $l) { $ln = $i + 1; if (!preg_match("/($D)$SEP($D|$NOW)(?![\\p{L}\\d])/iu", $l, $m)) continue;
+        $a = $parse($m[1], false); $b = $parse($m[2], true); if (!$a || !$b) continue;
+        if ($b[0] < $a[0]) { $add('Error', $ln, 'the end (' . trim($m[2]) . ') is before the start (' . trim($m[1]) . ')'); continue; }
+        $ranges[] = ['line' => $ln, 's' => $a[0], 'e' => $b[0], 'text' => trim(mb_substr($l, 0, 70))]; foreach ([$a, $b] as $x) if ($x[1] !== 'present') $fmts[$x[1]][] = $ln; }
+    $o = "# CV check: $name\n\n- Dated entries found: " . count($ranges) . "\n"; $wc = count(words($raw)); $o .= "- Words: $wc\n";
+    if (!$ranges) $add('Note', 1, 'no date ranges like "Mar 2019 - Jun 2022" found: the gap and overlap checks were skipped');
+    usort($ranges, fn($x, $y) => $x['s'] <=> $y['s']); $maxe = null; $maxr = null;
+    foreach ($ranges as $r) { if ($maxe !== null) { $gap = $r['s'] - $maxe - 1;
+        if ($gap > 3) $add('Warning', $r['line'], "a gap of $gap months before this entry (after the one on line " . $maxr['line'] . '): be ready to explain it, or fill it with what you did');
+        elseif ($r['s'] <= $maxe && $maxe - $r['s'] + 1 >= 2) $add('Note', $r['line'], 'overlaps the entry on line ' . $maxr['line'] . ' by ' . ($maxe - $r['s'] + 1) . ' months: fine for two jobs at once, otherwise check the dates'); }
+        if ($maxe === null || $r['e'] > $maxe) { $maxe = $r['e']; $maxr = $r; } }
+    if (count($fmts) > 1) { $o .= '- Date formats in use: ' . implode(', ', array_keys($fmts)) . "\n"; $first = null; foreach ($fmts as $f => $ls) { $first ??= $f; } uasort($fmts, fn($x, $y) => count($y) <=> count($x)); $main = array_key_first($fmts);
+        foreach ($fmts as $f => $ls) if ($f !== $main) foreach (array_unique($ls) as $ln) $add('Warning', $ln, "date written as $f while most are $main: use one format throughout"); }
+    elseif ($fmts) $o .= '- Date format: ' . array_key_first($fmts) . "\n";
+    if ($ranges && isset($fmts['YYYY'])) $add('Note', $fmts['YYYY'][0], 'a year-only date is read as January for a start and December for an end: gaps near it are approximate');
+    if ($wc > 900) $add('Warning', 1, "about $wc words: more than roughly two pages; most readers want it shorter"); elseif ($wc < 150) $add('Note', 1, "only $wc words: short; add concrete results if you have them");
+    $WEAK = ['responsible for','duties included','duties were','helped with','helped to','worked on','was involved in','assisted with','assisted in','participated in','tried to','various tasks','handled','responsable de','chargé de','en charge de','participé à','verantwortlich für','zuständig für','beteiligt an','mitgearbeitet','incaricato di','responsabile di','occupato di','responsável por','encarregado de','encargado de','a cargo de'];
+    foreach ($lines as $i => $l) { $ll = mb_strtolower($l); foreach ($WEAK as $w) if (mb_strpos($ll, $w) !== false) { $add('Warning', $i + 1, "weak phrase \"$w\": say what you did and what came of it, if true"); break; }
+        if (preg_match('/\b(?:was|were|been|being)\s+(?:\w+ly\s+)?(\w+ed|built|made|given|taken|done|led|run|written|chosen)\s+by\b/iu', $l, $m)) $add('Warning', $i + 1, "passive phrasing (\"" . trim($m[0]) . "\"): use an active verb"); }
+    if (!preg_match('/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/u', $raw)) $add('Error', 1, 'no e-mail address found'); $ph = false; if (preg_match_all('/\+?\d[\d ()\x{2013}-]{6,}\d/u', $raw, $pm)) foreach ($pm[0] as $cand) if (strlen(preg_replace('/\D/', '', $cand)) >= 8 && !preg_match('/^\d{4}\s*[-\x{2013}]\s*\d{4}$/u', $cand)) $ph = true; if (!$ph) $add('Warning', 1, 'no phone number found'); 
+    if (!preg_match('/linkedin\.|github\.|https?:\/\/|www\./iu', $raw)) $add('Note', 1, 'no web or profile link found (optional)');
+    if (!preg_match('/\n\s*#{0,6}\s*\**\s*(?:experience|employment|work history|exp[ée]rience|berufserfahrung|esperienza|experiencia|experi[êe]ncia)/iu', "\n" . $raw)) $add('Note', 1, 'no heading for work experience found');
+    finish($out, $o, $msgs, $nerr, $nwarn);
+}
+
+// ---- match --------------------------------------------------------------------------------------------------------------------------------------
+if ($sub === 'match') {
+    $adf = $args[0] ?? ''; if ($adf === '' || preg_match('/^\w+=/', $adf)) fail('match needs the job ad as the extra argument: the path of a text file', 2); $ad = load($adf);
+    $f = []; foreach (words($ad) as $w) { $w = rtrim($w, '.-/'); if (mb_strlen($w) < 3 || isset($stop[$w]) || ctype_digit($w)) continue; $f[$w] = ($f[$w] ?? 0) + 1; }
+    arsort($f); $terms = array_slice(array_keys($f), 0, 40); $cvw = array_flip(words($raw)); $cvl = mb_strtolower($raw); $fnd = []; $mis = [];
+    foreach ($terms as $t) { $hit = isset($cvw[$t]) || isset($cvw[$t . 's']) || (mb_substr($t, -1) === 's' && isset($cvw[mb_substr($t, 0, -1)])) || (mb_strlen($t) > 3 && preg_match('/(?<![\p{L}\p{N}])' . preg_quote($t, '/') . '(?![\p{L}\p{N}])/u', $cvl)); if ($hit) $fnd[] = $t; else $mis[] = $t; }
+    $o = "# CV against the ad: $name / " . basename($adf) . "\n\nThe " . count($terms) . " most frequent meaningful words of the ad (by frequency, ties in ad order), looked up in your CV as whole words. Only words, not skills: \"found\" does not mean you have shown the skill, and a word missing can be a synonym.\n\n";
+    $o .= "**Rule: never add a skill, tool, qualification or result to the CV because the ad lists it. Add only what you really have and have done.**\n\n";
+    $o .= '## Found in the CV (' . count($fnd) . ")\n\n" . ($fnd ? implode(', ', $fnd) : 'None.') . "\n\n## Not found in the CV (" . count($mis) . ")\n\nFor each, ask: do I really have this, under another name? If yes, say it in the ad's wording where that is true. If no, leave it out and be ready to say so.\n\n" . ($mis ? implode(', ', $mis) : 'None.') . "\n";
+    $pc = count($terms) ? round(100 * count($fnd) / count($terms)) : 0; $o .= "\nMatch: $pc% of the ad's key words appear in the CV (a rough guide, not a score of the candidate).\n";
+    finish($out, $o, $msgs, $nerr, $nwarn);
+}
+
+// ---- tracker ------------------------------------------------------------------------------------------------------------------------------------
+if ($sub === 'tracker') {
+    $first = strtok($raw, "\n"); $sep = ','; $best = substr_count($first, ','); foreach ([';', "\t"] as $c) if (substr_count($first, $c) > $best) { $sep = $c; $best = substr_count($first, $c); }
+    $h = fopen('php://temp', 'r+'); fwrite($h, $raw); rewind($h); $hd = null; $rows = []; $ln = 0;
+    while (($r = fgetcsv($h, 0, $sep, '"', '')) !== false) { $ln++; if ($r === [null]) continue; $r = array_map(fn($x) => trim((string)$x), $r); if ($hd === null) { $hd = array_map('mb_strtolower', $r); continue; } $rows[] = [$ln, $r]; }
+    $col = function (array $names) use ($hd) { foreach ($hd as $i => $x) foreach ($names as $n) if (mb_strpos($x, $n) !== false) return $i; return null; };
+    $ci = $col(['company', 'employer', 'entreprise', 'unternehmen', 'azienda', 'empresa']); $ri = $col(['role', 'position', 'title', 'poste', 'stelle', 'ruolo', 'puesto', 'cargo']); $di = $col(['applied', 'date', 'sent', 'postul', 'bewerb', 'candidat']); $si = $col(['status', 'statut', 'stato', 'estado']); $fi = $col(['follow', 'next', 'relance', 'nachfass', 'seguimiento', 'sollecito']);
+    if ($ci === null || $si === null) fail('the tracker needs a company column and a status column (found: ' . implode(', ', $hd) . ')');
+    $today = $opt['today'] ?? date('Y-m-d'); if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $today) || !checkdate((int)substr($today, 5, 2), (int)substr($today, 8, 2), (int)substr($today, 0, 4))) fail("today must be a date YYYY-MM-DD, not $today", 2);
+    $pd = function (string $s) { if (preg_match('/^(\d{4})-(\d{1,2})-(\d{1,2})$/', $s, $m) && checkdate((int)$m[2], (int)$m[3], (int)$m[1])) return sprintf('%04d-%02d-%02d', $m[1], $m[2], $m[3]); if (preg_match('/^(\d{1,2})[\/.](\d{1,2})[\/.](\d{4})$/', $s, $m) && checkdate((int)$m[2], (int)$m[1], (int)$m[3])) return sprintf('%04d-%02d-%02d', $m[3], $m[2], $m[1]); return null; };
+    $days = fn(string $a, string $b) => (int)round((strtotime($b . ' UTC') - strtotime($a . ' UTC')) / 86400);
+    $NOREPLY = '/^(applied|sent|submitted|waiting|no reply|no response|ghosted|postul[ée]?|envoy[ée]|gesendet|beworben|inviata|inviato|enviada|enviado|aplicado)$/iu'; $CLOSED = '/^(rejected|declined|withdrawn|closed|refus[ée]|abgelehnt|rifiutat[oa]|rechazad[oa]|rejeitad[oa]|retir[ée]|no thanks)$/iu';
+    $cnt = []; $resp = 0; $tot = 0; $due = []; $o = "# Application tracker: $name\n\nToday: $today. A follow-up is due when the follow-up date has come, or, with no follow-up date and no reply, 10 days after applying.\n\n";
+    foreach ($rows as [$l, $c]) { $co = $c[$ci] ?? ''; if ($co === '') { $add('Error', $l, 'a row without a company'); continue; } $stt = $c[$si] ?? ''; if ($stt === '') { $add('Warning', $l, "no status for $co"); $stt = '(none)'; }
+        $tot++; $k = mb_strtolower($stt); $cnt[$k] = ($cnt[$k] ?? 0) + 1; if (!preg_match($NOREPLY, $stt) && $stt !== '(none)') $resp++;
+        $ap = $di !== null ? $pd($c[$di] ?? '') : null; if ($di !== null && ($c[$di] ?? '') !== '' && !$ap) $add('Error', $l, 'the date "' . $c[$di] . '" cannot be read (use YYYY-MM-DD or DD/MM/YYYY)'); if ($ap && $ap > $today) $add('Warning', $l, "the application date $ap is in the future");
+        if (preg_match($CLOSED, $stt) || preg_match('/^(offer|accepted|hired|oferta|angebot|offerta|accepted)$/iu', $stt)) continue;
+        $fu = $fi !== null ? $pd($c[$fi] ?? '') : null; if ($fi !== null && ($c[$fi] ?? '') !== '' && !$fu) $add('Error', $l, 'the follow-up date "' . $c[$fi] . '" cannot be read');
+        if ($fu) { if ($fu <= $today) $due[] = [$l, $co, $c[$ri] ?? '', "follow-up date $fu" . ($fu < $today ? ' (' . $days($fu, $today) . ' days ago)' : ' (today)')]; }
+        elseif ($ap && preg_match($NOREPLY, $stt) && $days($ap, $today) >= 10) $due[] = [$l, $co, $c[$ri] ?? '', 'applied ' . $days($ap, $today) . ' days ago, no reply and no follow-up date']; }
+    if (!$tot) fail('no application rows found');
+    $o .= "- Applications: $tot\n- Replied (any status beyond applied/no reply): $resp; response rate: " . round(100 * $resp / $tot) . "%\n\n## Status counts\n\n| Status | Count |\n|---|---|\n"; arsort($cnt); foreach ($cnt as $s => $n) $o .= "| $s | $n |\n";
+    $o .= "\n## Follow-ups due (" . count($due) . ")\n\n"; if (!$due) $o .= "None.\n"; foreach ($due as [$l, $co, $ro, $why]) { $o .= "- $co" . ($ro !== '' ? " ($ro)" : '') . ": $why\n"; $add('Note', $l, "follow up with $co: $why"); }
+    finish($out, $o, $msgs, $nerr, $nwarn);
+}
+
+// ---- questions ----------------------------------------------------------------------------------------------------------------------------------
+$req = []; $inreq = false;
+foreach (explode("\n", $raw) as $i => $l) { $t = trim($l);
+    if (preg_match('/^#{0,6}\s*\**(requirements?|qualifications?|what you.?ll need|what we.?re looking for|must have|you have|skills|profile|anforderungen|profil|vous avez|profil recherch[ée]|requisiti|requisitos|perfil)\**\s*:?\s*$/iu', $t)) { $inreq = true; continue; }
+    if (preg_match('/^#{1,6}\s/', $t) || preg_match('/^\**(responsibilities|about|benefits|we offer|aufgaben|missions?|mansioni|funciones)\b/iu', $t)) $inreq = false;
+    if (preg_match('/^(?:[-*•·]|\d+[.)])\s+(.{8,})$/u', $t, $m)) { if ($inreq || !isset($hasHead)) $req[] = [$i + 1, $m[1], $inreq]; } }
+$hasReqSection = (bool)array_filter($req, fn($r) => $r[2]); if ($hasReqSection) $req = array_values(array_filter($req, fn($r) => $r[2]));
+if (!$req) foreach (explode("\n", $raw) as $i => $l) if (preg_match('/\b(experience|required|must|proficien|knowledge|skills?|exp[ée]rience|kenntnisse|esperienza|experiencia)\b/iu', $l) && mb_strlen(trim($l)) > 15) $req[] = [$i + 1, trim($l), false];
+if (!$req) fail('no requirements found in the ad: bullet lines or a "Requirements" section are expected');
+$req = array_slice($req, 0, 25); $o = "# Interview practice: $name\n\nOne block per requirement in the ad, then the standard questions. Under each question write a REAL example from your own work (what the situation was, what you did, what happened). Where you have none, write \"none\" and practise saying so honestly and what you would do to learn it. The questions come from templates: they do not know the employer.\n\n";
+$n = 0; foreach ($req as [$l, $t, $x]) { $n++; $t = rtrim(trim($t), '.;,'); $o .= "## $n. $t\n\n- Tell me about your experience with this.\n- Describe a time you used this and what the result was.\n- What was hardest about it, and what would you do differently?\n\nMy answer (true examples only):\n\n\n"; $add('Note', $l, "requirement $n: " . mb_substr($t, 0, 80)); }
+$o .= "## General\n\n"; foreach (['Tell me about yourself.', 'Why do you want this role?', 'Why are you leaving, or why did you leave, your last job?', 'What is your greatest strength, with an example?', 'Tell me about a mistake you made and what you did about it.', 'Describe a disagreement with a colleague and how it ended.', 'Where do you want to be in a few years?', 'What questions do you have for us?'] as $q) $o .= "- $q\n"; $o .= "\nMy answers:\n";
+finish($out, $o, $msgs, $nerr, $nwarn);

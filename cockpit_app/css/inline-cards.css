@@ -1,0 +1,51 @@
+/* Inline preview-strip card style — kept here so the editor's preview
+   is visually distinct and self-contained. */
+.tps-card {
+    font-size:9px;letter-spacing:0.04em;font-weight:700;
+    padding:3px 7px;border-radius:3px;
+    border:1px solid var(--border-mid);background:var(--bg-panel);
+    color:var(--text-base);
+}
+.tps-dot {
+    display:inline-block;width:7px;height:7px;border-radius:50%;
+    vertical-align:middle;margin-right:3px;
+}
+/* ── Prism token theme — scoped to the editor backdrop. We do NOT load the stock
+   prism.css (light theme, red/green tokens). Token colours are driven by the
+   cockpit THEME VARIABLES (so they follow whatever theme each user selects), with
+   protanopia-safe hex fallbacks for any theme that doesn't define a given var.
+   Meaning is also carried by italic/weight so it never depends on colour alone. */
+.float-hl-pre {
+    margin:0; padding:10px; border:0; background:transparent; overflow:hidden;
+    font-family:var(--font-mono); font-size:12px; line-height:1.5;
+    white-space:pre; pointer-events:none; box-sizing:border-box;
+}
+.float-hl-pre code { font-family:inherit; font-size:inherit; line-height:inherit; white-space:pre; }
+.float-hl-pre .token.comment,
+.float-hl-pre .token.prolog,
+.float-hl-pre .token.doctype,
+.float-hl-pre .token.cdata     { color:var(--text-muted,#8a93a3); font-style:italic; }
+.float-hl-pre .token.punctuation { color:var(--text-dim,#9aa7b8); }
+.float-hl-pre .token.keyword,
+.float-hl-pre .token.atrule,
+.float-hl-pre .token.important  { color:var(--accent-blue,#4a9eff); font-weight:700; }
+.float-hl-pre .token.boolean,
+.float-hl-pre .token.number,
+.float-hl-pre .token.constant,
+.float-hl-pre .token.symbol     { color:var(--accent-amber,#e0b84e); }
+.float-hl-pre .token.string,
+.float-hl-pre .token.char,
+.float-hl-pre .token.attr-value { color:var(--accent-cyan,#2ec4b6); }
+.float-hl-pre .token.function,
+.float-hl-pre .token.class-name { color:var(--accent-orange,#e08a3c); font-weight:600; }
+.float-hl-pre .token.operator,
+.float-hl-pre .token.entity,
+.float-hl-pre .token.url        { color:var(--text-dim,#9aa7b8); }
+.float-hl-pre .token.variable,
+.float-hl-pre .token.property,
+.float-hl-pre .token.tag,
+.float-hl-pre .token.selector   { color:var(--workers,#9d8fe8); }     /* violet accent */
+.float-hl-pre .token.attr-name  { color:var(--accent-cyan,#2ec4b6); }
+.float-hl-pre .token.regex      { color:var(--accent-orange,#e08a3c); }
+.float-hl-pre .token.bold       { font-weight:700; }
+.float-hl-pre .token.italic     { font-style:italic; }

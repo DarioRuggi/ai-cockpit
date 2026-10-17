@@ -1,0 +1,179 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// vb_tool — the VB6 migration tools' work, for the tool presets (tools_builtins/vb6.json). Reports are markdown, written to <output>.
+//
+//   php vb_tool detect     FOLDER OUTPUT    the encoding of every VB6 text file, how sure, which need a person's eye (never writes beside the sources)
+//   php vb_tool to-utf8    FOLDER OUTPUT    UTF-8 COPIES in the sibling folder FOLDER_utf8 (refused if it exists); binaries (.frx, images) are copied as they are
+//   php vb_tool verify     FOLDER OUTPUT    converts the UTF-8 copies back and compares with the originals byte for byte: proof that nothing was lost
+//   php vb_tool inventory  FOLDER OUTPUT    the project: forms, modules, classes, references and OCX controls, API declares, VB6 features that behave
+//                                           differently in Pascal, and an order to port in (leaf units first)
+//   php vb_tool cheatsheet FOLDER OUTPUT    the VB6 -> Free Pascal / Lazarus mapping tables (types, operators, strings, files, forms, controls, errors)
+//
+// The originals are never modified. Detection is vb_encoding.php's (BOM, ASCII, UTF-8, then script statistics for Windows-1255 Hebrew, 1251, 1253 and
+// 1252, with the form font's Charset as a tie-break); anything it is not sure of is flagged REVIEW with the same lines decoded each way.
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+require __DIR__ . '/vb_encoding.php';
+function fail(string $m): void { fwrite(STDERR, "vb_tool: $m\n"); exit(1); }
+$sub = $argv[1] ?? ''; $in = rtrim($argv[2] ?? '', '/'); $out = $argv[3] ?? '';
+if (!in_array($sub, ['detect', 'to-utf8', 'verify', 'inventory', 'cheatsheet'], true) || $in === '' || $out === '') fail('usage: vb_tool detect|to-utf8|verify|inventory|cheatsheet FOLDER OUTPUT');
+if (!is_dir($in)) fail("no such folder: $in");
+$in = realpath($in);
+if ($sub === 'cheatsheet') { $f = __DIR__ . '/vb6_cheatsheet.md'; if (!is_file($f)) fail('the cheat sheet file is missing'); copy($f, $out); echo "Wrote $out\n"; exit(0); }
+
+$priors = [];
+$scan = function () use ($in, &$priors): array {          // [rel, abs, bytes, detection] for every VB6 text file; other files counted
+    $rows = []; $frx = 0; $skipped = 0;
+    foreach (enc_walk($in) as $f) {
+        $rel = substr($f, strlen($in) + 1); $ext = strtolower(pathinfo($f, PATHINFO_EXTENSION));
+        if ($ext === 'frx' || $ext === 'ctx') { $frx++; continue; }
+        if (!in_array($ext, VB_TEXT_EXT, true)) { $skipped++; continue; }
+        $d = dirname($f); $priors[$d] ??= enc_project_prior($d);
+        $b = (string)file_get_contents($f);
+        $rows[] = ['rel' => $rel, 'abs' => $f, 'bytes' => $b, 'det' => enc_detect($b, $priors[$d]), 'ext' => $ext];
+    }
+    return [$rows, $frx, $skipped];
+};
+$md = fn(string $s) => str_replace('|', '\\|', $s);
+$review_lines = function (array $row): array {
+    $res = []; $shown = 0;
+    foreach (preg_split('/\r?\n/', $row['bytes']) as $ln) {
+        if (!preg_match('/[\x80-\xFF]/', $ln) || $shown >= 3) continue; $shown++;
+        foreach (array_unique(array_merge([$row['det']['enc']], $row['det']['cands'], ['windows-1255', 'windows-1252'])) as $c) { $t = @iconv(strtoupper($c), 'UTF-8//IGNORE', $ln); if ($t !== false) $res[] = sprintf('    %-13s %s', $c, trim(mb_substr($t, 0, 90))); }
+        $res[] = '    --';
+    }
+    return $res;
+};
+
+// ------------------------------------------------------------------------------------------------------------- detect / to-utf8
+if ($sub === 'detect' || $sub === 'to-utf8') {
+    [$rows, $frx, $skipped] = $scan();
+    if (!$rows) fail('no VB6 text files (.vbp .frm .bas .cls ...) found in ' . $in);
+    $dst = '';
+    if ($sub === 'to-utf8') {
+        $dst = $in . '_utf8';
+        if (file_exists($dst) && (!is_dir($dst) || count(scandir($dst)) > 2)) fail("$dst already exists: it is never overwritten. Move or delete it, then run again.");
+        @mkdir($dst, 0775, true);
+    }
+    $by = []; $review = []; $lines = [];
+    foreach ($rows as $r) {
+        $d = $r['det']; $by[$d['enc']] = ($by[$d['enc']] ?? 0) + 1; $status = '';
+        if ($sub === 'to-utf8') {
+            $u = enc_to_utf8($r['bytes'], $d['enc']);
+            if ($u === null) $status = 'not converted (binary)';
+            else { $o = $dst . '/' . $r['rel']; @mkdir(dirname($o), 0775, true); file_put_contents($o, $u); $status = 'written'; if (strpos($u, "\xEF\xBF\xBD") !== false) $d['review'] = true; }
+        }
+        if ($d['review']) $review[] = $r;
+        $lines[] = '| ' . $md($r['rel']) . ' | ' . strlen($r['bytes']) . ' | ' . $d['enc'] . ' | ' . $d['conf'] . ' | ' . ($d['review'] ? 'REVIEW' : '') . ' | ' . $status . ' | ' . $md($d['why']) . ' |';
+    }
+    $copied = 0;
+    if ($sub === 'to-utf8') foreach (enc_walk($in) as $f) {        // everything that is not a text source (forms' .frx, images, ...) goes along untouched
+        $rel = substr($f, strlen($in) + 1); $ext = strtolower(pathinfo($f, PATHINFO_EXTENSION));
+        if (in_array($ext, VB_TEXT_EXT, true)) continue;
+        $o = $dst . '/' . $rel; @mkdir(dirname($o), 0775, true); if (copy($f, $o)) $copied++;
+    }
+    ksort($by);
+    $o = [];
+    $o[] = $sub === 'detect' ? '# VB6 encodings (nothing was written)' : '# VB6 sources converted to UTF-8 (copies)';
+    $o[] = '';
+    $o[] = count($rows) . ' text files: ' . implode(', ', array_map(fn($k, $v) => "$k $v", array_keys($by), $by)) . '. ' . count($review) . ' need a person\'s eye. ' . $frx . ' .frx/.ctx binaries ' . ($sub === 'to-utf8' ? 'copied unchanged' : 'not touched') . '; ' . $skipped . ' other files ' . ($sub === 'to-utf8' ? 'copied unchanged' : 'ignored') . '.';
+    if ($sub === 'to-utf8') { $o[] = ''; $o[] = "**The UTF-8 copies are in:** `$dst`  (the originals in `$in` were not touched; $copied non-text files were copied beside them)."; $o[] = 'Check that the copy still means the same with the **Verify the round trip** preset.'; }
+    $o[] = ''; $o[] = '| file | bytes | encoding | confidence | review | output | evidence |'; $o[] = '|------|-------|----------|------------|--------|--------|----------|';
+    $o = array_merge($o, $lines);
+    if ($review) { $o[] = ''; $o[] = '## Files to look at'; $o[] = 'The same lines decoded under each candidate: the right one is the one that reads as words.'; foreach ($review as $r) { $o[] = ''; $o[] = '**' . $r['rel'] . '** [' . $r['det']['enc'] . ', ' . $r['det']['conf'] . '] ' . $r['det']['why']; $o[] = '```'; foreach ($review_lines($r) as $l) $o[] = $l; $o[] = '```'; } }
+    file_put_contents($out, implode("\n", $o) . "\n"); echo "Wrote $out (" . count($rows) . " files" . ($sub === 'to-utf8' ? ", copies in $dst" : '') . ")\n"; exit(0);
+}
+
+// ----------------------------------------------------------------------------------------------------------------- verify
+if ($sub === 'verify') {
+    $dst = $in . '_utf8'; if (!is_dir($dst)) fail("there is no $dst: run \"Convert to UTF-8 copies\" first");
+    [$rows] = $scan(); if (!$rows) fail('no VB6 text files found');
+    $same = 0; $bad = []; $missing = [];
+    foreach ($rows as $r) {
+        $e = $r['det']['enc']; $cp = $dst . '/' . $r['rel'];
+        if ($e === 'binary') continue;
+        if (!is_file($cp)) { $missing[] = $r['rel']; continue; }
+        $u = (string)file_get_contents($cp);
+        switch ($e) {
+            case 'ascii': case 'utf-8': $back = $u; break;
+            case 'utf-8-bom': $back = "\xEF\xBB\xBF" . $u; break;
+            case 'utf-16le': $back = "\xFF\xFE" . mb_convert_encoding($u, 'UTF-16LE', 'UTF-8'); break;
+            case 'utf-16be': $back = "\xFE\xFF" . mb_convert_encoding($u, 'UTF-16BE', 'UTF-8'); break;
+            default: $t = @iconv('UTF-8', strtoupper($e) . '//IGNORE', $u); $back = $t === false ? '' : $t;
+        }
+        if ($back === $r['bytes']) { $same++; continue; }
+        $a = $r['bytes']; $n = min(strlen($a), strlen($back)); $i = 0; while ($i < $n && $a[$i] === $back[$i]) $i++;
+        $bad[] = [$r['rel'], $e, $i, substr_count($a, "\n", 0, $i) + 1, strlen($a), strlen($back)];
+    }
+    $o = ['# Round trip: UTF-8 copy back to the original encoding, compared with the originals', '', "**$same files identical**, " . count($bad) . ' differ, ' . count($missing) . ' missing in the copy.'];
+    if (!$bad && !$missing) { $o[] = ''; $o[] = 'Nothing was lost: every converted file turns back into exactly the bytes it came from.'; }
+    if ($bad) { $o[] = ''; $o[] = '| file | encoding | first difference at byte | line | original bytes | round trip bytes |'; $o[] = '|------|----------|--------------------------|------|----------------|------------------|'; foreach ($bad as $b) $o[] = '| ' . $md($b[0]) . ' | ' . $b[1] . ' | ' . $b[2] . ' | ' . $b[3] . ' | ' . $b[4] . ' | ' . $b[5] . ' |'; $o[] = ''; $o[] = 'A difference means the encoding was guessed wrong, or the file mixes encodings, or a byte has no Unicode equivalent: look at it with the Encodings preset.'; }
+    if ($missing) { $o[] = ''; $o[] = 'Missing in the copy: ' . implode(', ', $missing); }
+    file_put_contents($out, implode("\n", $o) . "\n"); echo "Wrote $out ($same identical, " . count($bad) . " differ)\n"; exit(0);
+}
+
+// -------------------------------------------------------------------------------------------------------------- inventory
+[$rows, $frx, $skipped] = $scan();
+if (!$rows) fail('no VB6 text files found in ' . $in);
+$text = function (array $r): string { $u = enc_to_utf8($r['bytes'], $r['det']['enc']); return $u === null ? '' : $u; };
+$ctrlMap = ['TextBox' => 'TEdit / TMemo', 'Label' => 'TLabel', 'CommandButton' => 'TButton', 'ListBox' => 'TListBox', 'ComboBox' => 'TComboBox', 'CheckBox' => 'TCheckBox', 'OptionButton' => 'TRadioButton',
+    'Frame' => 'TGroupBox', 'PictureBox' => 'TImage / TPaintBox', 'Image' => 'TImage', 'Timer' => 'TTimer', 'Shape' => 'TShape', 'Line' => 'TShape / TBevel', 'HScrollBar' => 'TScrollBar', 'VScrollBar' => 'TScrollBar',
+    'DirListBox' => 'TShellTreeView', 'DriveListBox' => 'TComboBox + drives', 'FileListBox' => 'TShellListView', 'Menu' => 'TMainMenu / TMenuItem', 'Data' => 'SQLdb (TSQLQuery + TDataSource)', 'OLE' => 'no direct equivalent'];
+$vbp = []; $refs = []; $objs = []; $files = []; $api = []; $ctrls = [];
+foreach ($rows as $r) {
+    $t = $text($r); $ext = $r['ext']; $lines = substr_count($t, "\n") + 1;
+    if ($ext === 'vbp' || $ext === 'vbg') {
+        foreach (preg_split('/\r?\n/', $t) as $ln) {
+            if (preg_match('/^(Type|Startup|Title|Name|ExeName32|MajorVer|MinorVer|Form|Module|Class|UserControl)=(.*)$/', $ln, $m)) $vbp[$r['rel']][] = [$m[1], trim($m[2])];
+            elseif (preg_match('/^Reference=\*\\\\G\{([0-9A-Fa-f-]+)\}#([^#]*)#[^#]*#([^#]*)#(.*)$/', $ln, $m)) $refs[] = [trim($m[4]), $m[3], $m[2]];
+            elseif (preg_match('/^Object=\{([0-9A-Fa-f-]+)\}#([^#]*)#[^;]*;\s*(.*)$/', $ln, $m)) $objs[] = [trim($m[3]), $m[2]];
+        }
+        continue;
+    }
+    if (!in_array($ext, ['frm', 'bas', 'cls', 'ctl', 'dob', 'pag', 'dsr'], true)) continue;
+    $f = ['rel' => $r['rel'], 'ext' => $ext, 'lines' => $lines, 'enc' => $r['det']['enc'], 'controls' => 0, 'handlers' => 0, 'risk' => [], 'score' => 0];
+    $count = function (string $re, string $tag, int $w = 1) use ($t, &$f) { $n = preg_match_all($re, $t); if ($n) { $f['risk'][] = "$tag" . ($n > 1 ? " x$n" : ''); $f['score'] += $w * $n; } };
+    if (preg_match_all('/^\s*(?:(?:Public|Private)\s+)?Declare\s+(Function|Sub)\s+(\w+)\s+Lib\s+"([^"]+)"/mi', $t, $m, PREG_SET_ORDER)) foreach ($m as $d) { $api[strtolower($d[3])][] = $d[2]; $f['risk'][] = 'API ' . $d[2]; $f['score'] += 3; }
+    $count('/\bOn\s+Error\s+Resume\s+Next\b/i', 'On Error Resume Next', 2); $count('/\bOn\s+Error\s+GoTo\s+(?!0)\w+/i', 'On Error GoTo');
+    $count('/\bGoSub\b/i', 'GoSub', 3); $count('/\bResume\b(?!\s+Next)/i', 'Resume', 2); $count('/^\s*(?!On\s)\w+\s*:\s*$/m', 'labels', 1);
+    $count('/\bAs\s+Integer\b/i', '16-bit Integer', 1); $count('/\bAs\s+Currency\b/i', 'Currency'); $count('/\bAs\s+Variant\b|\bVariant\b/i', 'Variant', 2); $count('/\bDef(Int|Lng|Str|Dbl|Sng|Cur|Bool|Var)\b/i', 'DefType', 3);
+    $count('/\bOption\s+Base\s+1\b/i', 'Option Base 1', 3); $count('/\bReDim\s+Preserve\b/i', 'ReDim Preserve'); $count('/\bOpen\s+.+\s+For\s+(Input|Output|Append|Binary|Random)\b/i', 'file I/O (Open)', 2);
+    $count('/\b(ADODB|ADOX|DAO|Recordset|Connection)\b/', 'database objects', 3); $count('/\b(CreateObject|GetObject)\b/', 'COM objects (CreateObject)', 4); $count('/\bShell\s*\(/i', 'Shell', 2);
+    $count('/\bSendKeys\b/i', 'SendKeys', 4); $count('/\bImplements\b/i', 'Implements', 3); $count('/\bWithEvents\b/i', 'WithEvents', 2); $count('/\bMid\$?\([^)]*\)\s*=/i', 'Mid statement', 2);
+    $count('/\bLike\b/', 'Like operator', 2); $count('/\bStatic\b/i', 'Static', 1); $count('/\bDoEvents\b/i', 'DoEvents', 1); $count('/\b(Left|Right|Mid)\$?\s*\(/i', 'string slicing (1-based)', 0);
+    if ($ext === 'frm' || $ext === 'ctl' || $ext === 'dob') {
+        if (preg_match_all('/^\s*Begin\s+VB\.(\w+)\s+(\w+)/m', $t, $m, PREG_SET_ORDER)) foreach ($m as $c) { if ($c[1] === 'Form' || $c[1] === 'MDIForm' || $c[1] === 'UserControl') continue; $f['controls']++; $ctrls[$c[1]] = ($ctrls[$c[1]] ?? 0) + 1; }
+        if (preg_match_all('/^\s*Begin\s+(?!VB\.)([\w.]+)\s+(\w+)/m', $t, $m, PREG_SET_ORDER)) foreach ($m as $c) { $f['controls']++; $ctrls[$c[1]] = ($ctrls[$c[1]] ?? 0) + 1; $f['risk'][] = 'OCX ' . $c[1]; $f['score'] += 5; }
+        $f['handlers'] = preg_match_all('/^\s*(?:Private|Public)?\s*Sub\s+\w+_\w+\s*\(/mi', $t);
+        if (preg_match('/^\s*Begin\s+VB\.MDIForm/m', $t)) { $f['risk'][] = 'MDI form'; $f['score'] += 4; }
+        if (preg_match('/^\s*RightToLeft\s*=\s*-1/m', $t) || preg_match('/Charset\s*=\s*177/', $t)) $f['risk'][] = 'Hebrew / right-to-left';
+    }
+    $files[] = $f;
+}
+$order = ['bas' => 0, 'cls' => 1, 'ctl' => 2, 'pag' => 2, 'dsr' => 2, 'dob' => 3, 'frm' => 4];
+usort($files, fn($a, $b) => [$order[$a['ext']] ?? 9, $a['score'], $a['lines']] <=> [$order[$b['ext']] ?? 9, $b['score'], $b['lines']]);
+$o = ['# VB6 project inventory', '', count($files) . ' source files (' . count(array_filter($files, fn($f) => $f['ext'] === 'frm')) . ' forms, ' . count(array_filter($files, fn($f) => $f['ext'] === 'bas')) . ' modules, ' . count(array_filter($files, fn($f) => $f['ext'] === 'cls')) . ' classes), ' . $frx . ' .frx/.ctx binaries, ' . array_sum(array_column($files, 'lines')) . ' lines.'];
+foreach ($vbp as $pf => $kv) {
+    $o[] = ''; $o[] = "## Project `$pf`";
+    foreach ($kv as [$k, $v]) if (in_array($k, ['Type', 'Startup', 'Title', 'Name', 'ExeName32', 'MajorVer', 'MinorVer'], true)) $o[] = "- $k: $v";
+}
+if ($refs || $objs) {
+    $o[] = ''; $o[] = '## References and OCX controls (each needs a Pascal / Lazarus replacement)'; $o[] = '';
+    foreach ($refs as [$name, $path, $ver]) $o[] = '- reference: ' . trim($name) . ' (' . basename(str_replace('\\', '/', $path)) . ', version ' . $ver . ')';
+    foreach ($objs as [$ocx, $ver]) $o[] = '- OCX control: ' . $ocx . ' (version ' . $ver . ')';
+}
+if ($api) {
+    $o[] = ''; $o[] = '## Windows API declares (Declare ... Lib)'; $o[] = '';
+    foreach ($api as $lib => $fns) { $fns = array_unique($fns); sort($fns); $o[] = '- `' . $lib . '`: ' . implode(', ', $fns); }
+    $o[] = ''; $o[] = 'Use the FPC `Windows` unit on Windows, or an LCL / RTL equivalent to stay cross-platform.';
+}
+if ($ctrls) {
+    arsort($ctrls); $o[] = ''; $o[] = '## Controls used on forms'; $o[] = ''; $o[] = '| control | count | Lazarus equivalent |'; $o[] = '|---------|-------|--------------------|';
+    foreach ($ctrls as $c => $n) $o[] = "| $c | $n | " . ($ctrlMap[$c] ?? 'look it up (a third-party control)') . ' |';
+}
+$o[] = ''; $o[] = '## Port in this order (leaf modules and classes first, then controls, then forms; the lowest risk first inside each group)'; $o[] = '';
+$o[] = '| # | file | lines | encoding | controls | handlers | things to watch |'; $o[] = '|---|------|-------|----------|----------|----------|-----------------|';
+foreach ($files as $i => $f) $o[] = '| ' . ($i + 1) . ' | ' . $md($f['rel']) . ' | ' . $f['lines'] . ' | ' . $f['enc'] . ' | ' . ($f['controls'] ?: '') . ' | ' . ($f['handlers'] ?: '') . ' | ' . $md(implode(', ', array_slice($f['risk'], 0, 8))) . ' |';
+$o[] = ''; $o[] = 'Risk tags are places where VB6 and Free Pascal behave differently (see the cheat sheet preset): 16-bit Integer, Currency, Variant, On Error, GoSub, Option Base, Mid statement, the Like operator, COM objects, database objects, SendKeys. The count after "x" is how many times it occurs.';
+file_put_contents($out, implode("\n", $o) . "\n"); echo "Wrote $out (" . count($files) . " source files)\n"; exit(0);

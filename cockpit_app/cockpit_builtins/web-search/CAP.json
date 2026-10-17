@@ -1,0 +1,20 @@
+{
+    "id": "web-search",
+    "name": "Web search",
+    "description": "Search the web via Brave Search (primary) or DuckDuckGo (fallback). No API key needed.",
+    "tags": ["network", "search", "research"],
+    "scopes": ["per-project"],
+    "implementations": {
+        "claude": {
+            "type": "mcp",
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-brave-search"],
+            "env": {"BRAVE_API_KEY": "optional"}
+        },
+        "ollama": {
+            "type": "tool-shim",
+            "shim": "websearch_shim.sh",
+            "system_prompt_addition": "SEARCH:<query> — run a web search and return the top 5 results (titles, URLs, snippets). FETCH:<url> — fetch a URL's text content (HTML stripped, 16KB cap)."
+        }
+    }
+}

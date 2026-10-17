@@ -1,0 +1,133 @@
+{
+  "id": "ffmpeg",
+  "name": "FFmpeg",
+  "description": "Audio/video format conversion, extraction, resizing, and processing",
+  "binary": "ffmpeg",
+  "version_args": "-version",
+  "website": "https://ffmpeg.org",
+  "presets": [
+    {
+      "id": "to-mp3",
+      "label": "Convert to MP3",
+      "description": "Strip video, encode audio as VBR MP3 ~190 kbps",
+      "input_kinds": [
+        "audio",
+        "video"
+      ],
+      "output_kind": "audio",
+      "output_ext": "mp3",
+      "command": "ffmpeg -i {INPUT} -vn -acodec libmp3lame -q:a 2 {OUTPUT} -y"
+    },
+    {
+      "id": "to-flac",
+      "label": "Convert to FLAC (lossless)",
+      "description": "Lossless audio compression",
+      "input_kinds": [
+        "audio",
+        "video"
+      ],
+      "output_kind": "audio",
+      "output_ext": "flac",
+      "command": "ffmpeg -i {INPUT} -vn -acodec flac {OUTPUT} -y"
+    },
+    {
+      "id": "to-wav",
+      "label": "Convert to WAV (uncompressed)",
+      "description": "16-bit PCM uncompressed (good for processing)",
+      "input_kinds": [
+        "audio",
+        "video"
+      ],
+      "output_kind": "audio",
+      "output_ext": "wav",
+      "command": "ffmpeg -i {INPUT} -vn -acodec pcm_s16le -ar 16000 -ac 1 {OUTPUT} -y"
+    },
+    {
+      "id": "extract-audio",
+      "label": "Extract audio from video",
+      "description": "Pull audio track out of a video, keep original codec",
+      "input_kinds": [
+        "video"
+      ],
+      "output_kind": "audio",
+      "output_ext": "m4a",
+      "command": "ffmpeg -i {INPUT} -vn -acodec copy {OUTPUT} -y"
+    },
+    {
+      "id": "to-mp4-h264",
+      "label": "Convert video to MP4 (H.264)",
+      "description": "Re-encode to standard MP4 with H.264 + AAC. Wide compatibility.",
+      "input_kinds": [
+        "video"
+      ],
+      "output_kind": "video",
+      "output_ext": "mp4",
+      "command": "ffmpeg -i {INPUT} -c:v libx264 -preset medium -crf 23 -c:a aac -b:a 192k {OUTPUT} -y"
+    },
+    {
+      "id": "video-720p",
+      "label": "Resize video to 720p",
+      "description": "Downscale to 1280x720, keep aspect ratio",
+      "input_kinds": [
+        "video"
+      ],
+      "output_kind": "video",
+      "output_ext": "mp4",
+      "command": "ffmpeg -i {INPUT} -vf scale=-2:720 -c:v libx264 -preset medium -crf 23 -c:a copy {OUTPUT} -y"
+    },
+    {
+      "id": "video-1080p",
+      "label": "Resize video to 1080p",
+      "description": "Downscale to 1920x1080, keep aspect ratio",
+      "input_kinds": [
+        "video"
+      ],
+      "output_kind": "video",
+      "output_ext": "mp4",
+      "command": "ffmpeg -i {INPUT} -vf scale=-2:1080 -c:v libx264 -preset medium -crf 22 -c:a copy {OUTPUT} -y"
+    },
+    {
+      "id": "extract-frames-1fps",
+      "label": "Extract video frames (1 per second)",
+      "description": "Sample 1 frame per second as JPEG sequence",
+      "input_kinds": [
+        "video"
+      ],
+      "output_kind": "image-sequence",
+      "output_ext": "jpg",
+      "output_stem": "{NAME}_frame_%04d",
+      "command": "ffmpeg -i {INPUT} -vf fps=1 {OUTPUT} -y"
+    },
+    {
+      "id": "video-keyframes",
+      "label": "Extract keyframes (scene changes)",
+      "description": "Extract up to ~8 keyframes at scene changes for video analysis",
+      "input_kinds": [
+        "video"
+      ],
+      "output_kind": "image-sequence",
+      "output_ext": "jpg",
+      "output_stem": "{NAME}_key_%03d",
+      "command": "ffmpeg -i {INPUT} -vf select='gt(scene\\,0.3)',setpts=N/FRAME_RATE/TB -frames:v 8 -vsync vfr -q:v 3 {OUTPUT} -y"
+    },
+    {
+      "id": "burn-subtitles",
+      "label": "Burn subtitles into video",
+      "description": "Hard-code subtitles from a sidecar .srt with same basename. Pass extra path via {ARGS}.",
+      "input_kinds": [
+        "video"
+      ],
+      "output_kind": "video",
+      "output_ext": "mp4",
+      "command": "ffmpeg -i {INPUT} -vf subtitles={ARGS} -c:a copy {OUTPUT} -y"
+    }
+  ],
+  "packages": {
+    "apt": "ffmpeg",
+    "dnf": "ffmpeg",
+    "pacman": "ffmpeg",
+    "zypper": "ffmpeg",
+    "apk": "ffmpeg",
+    "brew": "ffmpeg"
+  }
+}

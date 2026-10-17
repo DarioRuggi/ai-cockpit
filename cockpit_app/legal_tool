@@ -1,0 +1,168 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// legal_tool — the Legal review tools' work, for the tool presets (tools_builtins/legal.json). A command-line program, never reachable over the web.
+//
+//   php legal_tool compare DOC OUTPUT with=OTHER    the two versions compared paragraph by paragraph and word by word: what was added, removed, changed, and the RISKY changes
+//                                                   (a number, a date, shall/may/must, a negation, and/or, any/all) listed first. DOC is the OLD version, OTHER the new one.
+//   php legal_tool check   DOC OUTPUT               placeholders left in ([•], ____, TBD), cross-references to clauses that do not exist, numbering gaps, defined terms never
+//                                                   used, capitalised terms never defined, "thirty (60)" mismatches between words and figures, mixed date formats
+//   php legal_tool clauses DOC OUTPUT               the outline of numbered clauses with their first words and where each is referred to
+//   php legal_tool terms   DOC OUTPUT               the key terms: money, percentages, durations, dates, and the lines on governing law, term and termination, liability,
+//                                                   indemnity, confidentiality, payment, assignment, notices
+//   php legal_tool text    DOC OUTPUT               the document as plain UTF-8 text (for reading, or for an agent)
+//
+// DOC is .txt .md .docx .odt .rtf .html (pandoc), .pdf (pdftotext) or an older office format (LibreOffice). English, Spanish and Hebrew wording is recognised.
+// A READING AID, not legal advice: it finds what a careful reader would check. The originals are never changed.
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+require_once __DIR__ . '/lo_lib.php';
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "legal_tool: $m\n"); exit($rc); }
+[$sub, $in, $out] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? ''];
+$args = array_slice($argv, 4);
+if (!in_array($sub, ['compare', 'check', 'clauses', 'terms', 'text'], true) || $in === '' || $out === '') fail('usage: legal_tool compare|check|clauses|terms|text DOC OUTPUT [with=OTHER]', 2);
+function sh(string $cmd, ?int &$rc = null): string { $o = []; exec($cmd . ' 2>&1', $o, $rc); return implode("\n", $o); }
+
+/** the text of a document, UTF-8, "\n" line ends */
+function text_of(string $f): string {
+    if (!is_file($f)) fail("no such file: $f");
+    $e = strtolower(pathinfo($f, PATHINFO_EXTENSION)); $t = null;
+    if (in_array($e, ['txt', 'md', 'markdown', 'text', ''], true)) $t = (string)file_get_contents($f);
+    elseif (in_array($e, ['docx', 'odt', 'rtf', 'html', 'htm', 'epub'], true) && trim((string)shell_exec('command -v pandoc 2>/dev/null'))) { $o = sh('pandoc -t plain --wrap=none ' . escapeshellarg($f), $rc); if ($rc === 0) $t = $o; }
+    elseif ($e === 'pdf') { if (!trim((string)shell_exec('command -v pdftotext 2>/dev/null'))) fail('pdftotext (poppler-utils) is needed to read a PDF'); $t = sh('pdftotext -nopgbrk ' . escapeshellarg($f) . ' -', $rc); if ($rc !== 0) $t = null; }
+    if ($t === null) { $tmp = sys_get_temp_dir() . '/legal_' . getmypid() . '_' . mt_rand(1000, 9999) . '.txt'; $err = lo_convert($f, 'txt:Text (encoded):UTF8', $tmp, 300); if ($err) fail("cannot read $f: $err"); $t = (string)file_get_contents($tmp); @unlink($tmp); }
+    if (strncmp($t, "\xEF\xBB\xBF", 3) === 0) $t = substr($t, 3);
+    if (!mb_check_encoding($t, 'UTF-8')) { $c = @mb_convert_encoding($t, 'UTF-8', 'CP1252'); if ($c === false) fail('the text is not valid UTF-8'); $t = $c; }
+    $t = str_replace(["\r\n", "\r", "\f", "\xC2\xA0"], ["\n", "\n", "\n", ' '], $t);
+    return $t;
+}
+$name = basename($in);
+if ($sub === 'text') { file_put_contents($out, text_of($in)); echo "Wrote $out\n"; exit(0); }
+$text = text_of($in); if (trim($text) === '') fail('the document has no text (a scanned PDF needs OCR first)');
+
+// ---- paragraphs, clause numbers ----------------------------------------------------------------------------------------------------------------
+/** [number label|null, text, 1-based line of the first line] */
+function paragraphs(string $t): array {
+    $res = []; $cur = ''; $ln = 0; $lines = explode("\n", $t);
+    $flush = function () use (&$res, &$cur, &$ln) { $c = trim(preg_replace('/\s+/u', ' ', $cur)); if ($c !== '') $res[] = [clause_no($c), $c, $ln]; $cur = ''; };
+    foreach ($lines as $i => $l) {
+        if (trim($l) === '') { $flush(); continue; }
+        if ($cur !== '' && preg_match('/^\s*(\d+[A-Z]?(?:\.\d+[A-Z]?)*[.)]?|\([a-z]{1,3}\)|\([ivxl]+\)|Article\s+[IVXLC\d]+|Section\s+\d+|Clause\s+\d+|סעיף\s+\d+)\s+\S/u', $l)) $flush();
+        if ($cur === '') $ln = $i + 1; $cur .= ($cur === '' ? '' : ' ') . trim($l);
+    }
+    $flush(); return $res;
+}
+function clause_no(string $p): ?string { return preg_match('/^\s*(?:(?:Article|Section|Clause|סעיף)\s+)?(\d+[A-Z]?(?:\.\d+[A-Z]?)*)(?:[.)]|\s)/u', $p, $m) ? $m[1] : null; }
+$tok = fn(string $s) => preg_split('/(\s+)/u', $s, -1, PREG_SPLIT_DELIM_CAPTURE | PREG_SPLIT_NO_EMPTY);
+$wd = fn(string $s) => mb_strtolower(trim($s, " \t\n.,;:()[]\"'“”‘’"));
+
+// ---- compare ---------------------------------------------------------------------------------------------------------------------------------
+if ($sub === 'compare') {
+    $other = ''; foreach ($args as $a) if (preg_match('/^with=(.+)$/s', trim($a), $m)) $other = $m[1];
+    if ($other === '') fail('give the NEW version in the extra arguments: with=/path/to/new_version.docx');
+    $A = paragraphs($text); $B = paragraphs(text_of($other)); $n = count($A); $m = count($B);
+    if ($n > 1200 || $m > 1200) fail('over 1200 paragraphs: compare the parts one at a time');
+    $key = fn($p) => mb_strtolower(preg_replace('/[^\p{L}\p{N}]+/u', ' ', $p[1]));
+    $ka = array_map($key, $A); $kb = array_map($key, $B);
+    $L = array_fill(0, $n + 1, array_fill(0, $m + 1, 0));
+    for ($i = $n - 1; $i >= 0; $i--) for ($j = $m - 1; $j >= 0; $j--) $L[$i][$j] = $ka[$i] === $kb[$j] ? $L[$i + 1][$j + 1] + 1 : max($L[$i + 1][$j], $L[$i][$j + 1]);
+    $i = 0; $j = 0; $gapA = []; $gapB = []; $ops = [];
+    $sim = function (string $x, string $y): float { $a = array_unique(preg_split('/\s+/u', $x, -1, PREG_SPLIT_NO_EMPTY)); $b = array_unique(preg_split('/\s+/u', $y, -1, PREG_SPLIT_NO_EMPTY)); $u = count(array_unique(array_merge($a, $b))); return $u ? count(array_intersect($a, $b)) / $u : 0; };
+    $closeGap = function () use (&$gapA, &$gapB, &$ops, $A, $B, $ka, $kb, $sim) {
+        $usedB = [];
+        foreach ($gapA as $ia) { $best = -1; $bs = 0.3; foreach ($gapB as $ib) { if (isset($usedB[$ib])) continue; $s = $sim($ka[$ia], $kb[$ib]); if ($s > $bs) { $bs = $s; $best = $ib; } } if ($best >= 0) { $usedB[$best] = 1; $ops[] = ['mod', $ia, $best]; } else $ops[] = ['del', $ia, null]; }
+        foreach ($gapB as $ib) if (!isset($usedB[$ib])) $ops[] = ['ins', null, $ib];
+        usort($ops, fn($x, $y) => 0); $gapA = []; $gapB = [];
+    };
+    while ($i < $n && $j < $m) { if ($ka[$i] === $kb[$j]) { $closeGap(); $ops[] = ['same', $i, $j]; $i++; $j++; } elseif ($L[$i + 1][$j] >= $L[$i][$j + 1]) { $gapA[] = $i++; } else { $gapB[] = $j++; } }
+    while ($i < $n) $gapA[] = $i++; while ($j < $m) $gapB[] = $j++; $closeGap();
+    $RISK = ['shall', 'may', 'must', 'will', 'should', 'not', 'no', 'never', 'and', 'or', 'any', 'all', 'only', 'unless', 'except', 'exclusively', 'jointly', 'severally', 'including', 'without', 'sole', 'best', 'reasonable', 'material', 'whichever', 'lesser', 'greater',
+             'debe', 'deberá', 'podrá', 'no', 'nunca', 'todos', 'salvo', 'excepto', 'solo', 'sólo', 'y', 'o', 'לא', 'חייב', 'רשאי', 'יהיה', 'כל', 'רק', 'אלא', 'למעט', 'ו'];
+    $words = fn($s) => array_values(array_filter(array_map('trim', preg_split('/\s+/u', $s, -1, PREG_SPLIT_NO_EMPTY)), fn($x) => $x !== ''));
+    $added = $removed = 0; $same = $mod = $del = $ins = 0; $changes = []; $risky = []; $lastLine = 1;
+    foreach ($ops as [$k, $ia, $ib]) {
+        if ($ib !== null) $lastLine = $B[$ib][2];
+        if ($k === 'same') { $same++; continue; }
+        $label = ($ib !== null ? ($B[$ib][0] ?? null) : null) ?? ($ia !== null ? ($A[$ia][0] ?? null) : null); $lab = $label ? "clause $label" : ($ib !== null ? 'paragraph ' . ($ib + 1) : 'paragraph ' . ($ia + 1)); $lineNew = $ib !== null ? $B[$ib][2] : $lastLine;
+        if ($k === 'del') { $del++; $removed += count($words($A[$ia][1])); $changes[] = "### Removed — $lab\n\n~~" . $A[$ia][1] . "~~\n"; $risky[] = [$lineNew, 'Warning', "removed: " . mb_substr($A[$ia][1], 0, 110) . (mb_strlen($A[$ia][1]) > 110 ? '…' : '')]; continue; }
+        if ($k === 'ins') { $ins++; $added += count($words($B[$ib][1])); $changes[] = "### Added — $lab\n\n**" . $B[$ib][1] . "**\n"; $risky[] = [$lineNew, 'Note', "added: " . mb_substr($B[$ib][1], 0, 110) . (mb_strlen($B[$ib][1]) > 110 ? '…' : '')]; continue; }
+        $mod++; $ta = $tok($A[$ia][1]); $tb = $tok($B[$ib][1]); $na = count($ta); $nb = count($tb); $wa = array_map($wd, $ta); $wb = array_map($wd, $tb);
+        if ($na * $nb > 6000000) { $changes[] = "### Changed — $lab\n\n~~" . $A[$ia][1] . "~~ **" . $B[$ib][1] . "**\n"; continue; }
+        $M = array_fill(0, $na + 1, array_fill(0, $nb + 1, 0));
+        for ($x = $na - 1; $x >= 0; $x--) for ($y = $nb - 1; $y >= 0; $y--) $M[$x][$y] = $wa[$x] === $wb[$y] ? $M[$x + 1][$y + 1] + 1 : max($M[$x + 1][$y], $M[$x][$y + 1]);
+        $x = 0; $y = 0; $line = ''; $dels = []; $inss = [];
+        $emit = function () use (&$line, &$dels, &$inss, &$risky, $RISK, $wd, $lineNew, $lab) {
+            if (!$dels && !$inss) return;
+            $d = trim(implode('', $dels)); $a = trim(implode('', $inss));
+            $line .= ($d !== '' ? '~~' . $d . '~~' : '') . ($d !== '' && $a !== '' ? ' ' : '') . ($a !== '' ? '**' . $a . '**' : '');
+            $isNum = fn($s) => (bool)preg_match('/\d|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty|sixty|ninety|hundred|thousand|million|uno|dos|tres|cinco|diez|quince|veinte|treinta|sesenta|noventa|cien|mil)\b/iu', $s); $dw = array_filter(array_map($wd, preg_split('/\s+/u', $d, -1, PREG_SPLIT_NO_EMPTY))); $aw = array_filter(array_map($wd, preg_split('/\s+/u', $a, -1, PREG_SPLIT_NO_EMPTY)));
+            if ($isNum($d) || $isNum($a)) $risky[] = [$lineNew, 'Warning', "$lab: " . ($d !== '' ? "\"$d\"" : '(nothing)') . ' became ' . ($a !== '' ? "\"$a\"" : '(nothing)') . ' (a figure or date)'];
+            elseif (array_intersect(array_merge($dw, $aw), $RISK)) $risky[] = [$lineNew, 'Warning', "$lab: " . ($d !== '' ? "\"$d\"" : '(nothing)') . ' became ' . ($a !== '' ? "\"$a\"" : '(nothing)') . ' (changes who must, may or is excluded)'];
+            $dels = []; $inss = [];
+        };
+        while ($x < $na && $y < $nb) { if ($wa[$x] === $wb[$y]) { $emit(); $line .= $tb[$y]; $x++; $y++; } elseif ($M[$x + 1][$y] >= $M[$x][$y + 1]) { $dels[] = $ta[$x]; $removed++; $x++; } else { $inss[] = $tb[$y]; $added++; $y++; } }
+        while ($x < $na) { $dels[] = $ta[$x]; $removed++; $x++; } while ($y < $nb) { $inss[] = $tb[$y]; $added++; $y++; } $emit();
+        $changes[] = "### Changed — $lab\n\n" . trim($line) . "\n";
+    }
+    $new = basename($other); $o = "# Comparison: $name (old) with $new (new)\n\n- Paragraphs: " . $n . " old, " . $m . " new; unchanged $same, changed $mod, removed $del, added $ins\n- Words removed: $removed; words added: $added\n- Legend: ~~struck~~ = removed, **bold** = added\n- A reading aid, not legal advice: check every change against the documents.\n\n";
+    $nrisk = count(array_filter($risky, fn($r) => $r[1] === 'Warning'));
+    if ($changes) $o .= "## Changes in order\n\n" . implode("\n", $changes); else $o .= "No differences in the text.\n";
+    $o .= "\n## Points to check first (" . count($risky) . ")\n\n"; foreach ($risky as [$l, $k, $msg]) $o .= "$new($l) $k: $msg\n"; if (!$risky) $o .= "None.\n";
+    file_put_contents($out, $o . "\n[exit code 0]\n"); echo "Wrote $out ($mod changed, $del removed, $ins added; $nrisk to check first)\n"; exit(0);
+}
+
+$P = paragraphs($text);
+// ---- clauses -----------------------------------------------------------------------------------------------------------------------------------
+$numbered = []; foreach ($P as [$no, $txt, $ln]) if ($no !== null && !isset($numbered[$no])) $numbered[$no] = [$txt, $ln];
+$refs = []; foreach ($P as [$no, $txt, $ln]) if (preg_match_all('/\b(?:Sections?|Clauses?|Articles?|Paragraphs?|סעיפים|סעיף|cláusulas?|artículos?)\s+(\d+(?:\.\d+)*)(?:\([a-z]\))?/iu', $txt, $mm, PREG_SET_ORDER)) foreach ($mm as $r) { if ($no !== null && $no === $r[1] && strpos($txt, $r[0]) < 6) continue; $refs[$r[1]][] = [$ln, $no]; }
+if ($sub === 'clauses') {
+    $o = "# Clauses of $name\n\n" . count($numbered) . " numbered clause(s); " . count($P) . " paragraph(s).\n\n| No. | Starts | Line | Referred to |\n|---|---|---|---|\n";
+    foreach ($numbered as $no => [$txt, $ln]) { $r = isset($refs[$no]) ? implode(', ', array_unique(array_map(fn($x) => 'line ' . $x[0], array_slice($refs[$no], 0, 5)))) : '-'; $o .= "| $no | " . str_replace('|', '/', mb_substr($txt, 0, 90)) . (mb_strlen($txt) > 90 ? '…' : '') . " | $ln | $r |\n"; }
+    $miss = array_diff(array_keys($refs), array_keys($numbered)); if ($miss) { $o .= "\nReferred to but not found as a numbered clause: " . implode(', ', array_slice($miss, 0, 20)) . "\n"; }
+    file_put_contents($out, $o . "\n[exit code 0]\n"); echo "Wrote $out\n"; exit(0);
+}
+
+// ---- check -----------------------------------------------------------------------------------------------------------------------------------
+if ($sub === 'check') {
+    $msgs = []; $err = 0; $warn = 0; $add = function (string $k, int $l, string $m) use (&$msgs, &$err, &$warn, $name) { $msgs[] = "$name($l) $k: $m"; if ($k === 'Error') $err++; elseif ($k === 'Warning') $warn++; };
+    foreach ($P as [$no, $txt, $ln]) {
+        if (preg_match('/\[\s*[•●◦]\s*\]|\[\s*\]|_{3,}|\bTBD\b|\bTODO\b|\bXXX+\b|\[\s*(?:insert|name|date|amount|address|party|company)[^\]]*\]|<<[^>]{1,40}>>|\[\s*[A-Za-z ]{1,30}\s*\](?=\s*(?:\.|,|\s))/iu', $txt, $m) && !preg_match('/^\s*_{3,}\s*$/', $txt)) $add('Warning', $ln, 'a placeholder is left in: "' . mb_substr($m[0], 0, 40) . '"');
+        elseif (preg_match('/_{3,}/', $txt)) $add('Note', $ln, 'a blank line to fill in (signature, date or amount?)');
+    }
+    foreach ($refs as $r => $where) if (!isset($numbered[$r])) { [$ln] = $where[0]; $add('Error', $ln, "refers to clause $r, which does not exist" . (count($where) > 1 ? ' (' . count($where) . ' references)' : '')); }
+    // numbering: top level 1..N without gaps, and sub-clauses of each
+    $byParent = []; foreach (array_keys($numbered) as $no) { $parts = explode('.', $no); $last = (int)array_pop($parts); $byParent[implode('.', $parts)][] = $last; }
+    foreach ($byParent as $parent => $nums) { sort($nums); $nums = array_unique($nums); $max = max($nums); if ($max > 60) continue; for ($k = 1; $k <= $max; $k++) if (!in_array($k, $nums, true)) { $lab = ($parent === '' ? '' : $parent . '.') . $k; $nextNo = ($parent === '' ? '' : $parent . '.') . ($k + 1); $add('Warning', $numbered[$nextNo][1] ?? 1, "clause $lab is missing from the numbering"); break; } }
+    // words against figures: "thirty (60)"
+    $W = ['one' => 1, 'two' => 2, 'three' => 3, 'four' => 4, 'five' => 5, 'six' => 6, 'seven' => 7, 'eight' => 8, 'nine' => 9, 'ten' => 10, 'eleven' => 11, 'twelve' => 12, 'fifteen' => 15, 'twenty' => 20, 'thirty' => 30, 'forty' => 40, 'fifty' => 50, 'sixty' => 60, 'ninety' => 90, 'hundred' => 100, 'uno' => 1, 'dos' => 2, 'tres' => 3, 'cinco' => 5, 'diez' => 10, 'quince' => 15, 'veinte' => 20, 'treinta' => 30, 'sesenta' => 60, 'noventa' => 90];
+    foreach ($P as [$no, $txt, $ln]) if (preg_match_all('/\b(' . implode('|', array_keys($W)) . ')\s*\(\s*(\d[\d,]*)\s*\)/iu', $txt, $mm, PREG_SET_ORDER)) foreach ($mm as $x) if ($W[mb_strtolower($x[1])] !== (int)str_replace(',', '', $x[2])) $add('Error', $ln, "the words say \"{$x[1]}\" (" . $W[mb_strtolower($x[1])] . ") but the figure is ({$x[2]})");
+    // defined terms
+    $defs = []; foreach ($P as [$no, $txt, $ln]) {
+        if (preg_match_all('/["“]([\p{Lu}][\p{L}\-]*(?:\s+[\p{Lu}][\p{L}\-]*){0,3})["”]\s+(?:means|shall mean|has the meaning|refers to|significa|se entiende)/u', $txt, $mm)) foreach ($mm[1] as $d) $defs[$d] = $defs[$d] ?? $ln;
+        if (preg_match_all('/\((?:the |each a |a |an |hereinafter(?: the)?|together,? the |"?el |en adelante)?\s*["“]([\p{Lu}][\p{L}\-]*(?:\s+[\p{Lu}][\p{L}\-]*){0,3})["”]\)/u', $txt, $mm)) foreach ($mm[1] as $d) $defs[$d] = $defs[$d] ?? $ln;
+    }
+    $all = implode("\n", array_map(fn($p) => $p[1], $P));
+    foreach ($defs as $d => $ln) { $c = preg_match_all('/(?<![\p{L}])' . preg_quote($d, '/') . '(?![\p{L}])/u', $all); if ($c <= 1) $add('Warning', $ln, "the defined term \"$d\" is never used after its definition"); }
+    $cap = []; foreach ($P as [$no, $txt, $ln]) { $body = preg_replace('/(^|[.!?]\s+)[\p{Lu}][\p{L}\-]*/u', '$1', $txt); if (preg_match_all('/(?<![\p{L}])([\p{Lu}][\p{Ll}\-]{2,}(?:\s+[\p{Lu}][\p{Ll}\-]{2,}){0,2})(?![\p{L}])/u', $body, $mm)) foreach ($mm[1] as $t) { $cap[$t] = ($cap[$t] ?? [0, $ln]); $cap[$t][0]++; } }
+    $common = ['This', 'That', 'The', 'Agreement', 'Section', 'Article', 'Clause', 'Schedule', 'Annex', 'Exhibit', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Party', 'Parties', 'Law', 'Court', 'Israel', 'State', 'Inc', 'Ltd', 'Page'];
+    $n = 0; arsort($cap); foreach ($cap as $t => [$c, $ln]) { if ($c < 3 || isset($defs[$t]) || in_array($t, $common, true)) continue; $dup = false; foreach (array_keys($defs) as $d) if (mb_stripos($d, $t) !== false || mb_stripos($t, $d) !== false) $dup = true; if ($dup) continue; $add('Note', $ln, "\"$t\" is capitalised like a defined term ($c times) but is never defined"); if (++$n >= 10) break; }
+    // dates
+    $nDMY = preg_match_all('/\b\d{1,2}[\/.]\d{1,2}[\/.]\d{2,4}\b/', $all); $nLong = preg_match_all('/\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}\b|\b\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\b/i', $all); $nISO = preg_match_all('/\b\d{4}-\d{2}-\d{2}\b/', $all);
+    if (($nDMY > 0) + ($nLong > 0) + ($nISO > 0) > 1) $add('Note', 1, "dates are written in different ways ($nDMY numeric, $nLong with the month named, $nISO ISO): pick one");
+    if ($nDMY > 0) { preg_match_all('/\b(\d{1,2})[\/.](\d{1,2})[\/.]\d{2,4}\b/', $all, $dm, PREG_SET_ORDER); $a1 = 0; $a2 = 0; foreach ($dm as $d) { if ((int)$d[1] > 12) $a1++; if ((int)$d[2] > 12) $a2++; } if ($a1 === 0 && $a2 === 0) $add('Note', 1, 'numeric dates such as ' . $dm[0][0] . ' can be read day-first or month-first: write the month as a word'); }
+    $rep = "# Document check: $name\n\n- Paragraphs: " . count($P) . "; numbered clauses: " . count($numbered) . "; defined terms: " . count($defs) . ($defs ? ' (' . implode(', ', array_slice(array_keys($defs), 0, 8)) . ')' : '') . "\n- A reading aid, not legal advice.\n\n";
+    $rep .= ($msgs ? "## Problems ($err errors, $warn warnings)\n\n" . implode("\n", $msgs) . "\n" : "No problems found.\n") . "\n[exit code " . ($err > 0 ? 1 : 0) . "]\n";
+    file_put_contents($out, $rep); echo "Wrote $out ($err errors, $warn warnings)\n"; exit(0);
+}
+
+// ---- terms -----------------------------------------------------------------------------------------------------------------------------------
+if ($sub === 'terms') {
+    $money = '/(?:[$€£₪]\s?\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s?(?:USD|EUR|GBP|ILS|NIS|dollars?|euros?|pounds?|shekels?|ש"ח|₪))/u';
+    $kinds = ['Money' => $money, 'Percentages' => '/\d+(?:\.\d+)?\s?%/u', 'Durations' => '/\b(?:\d+|one|two|three|six|ten|thirty|sixty|ninety)\s*(?:\(\d+\)\s*)?(?:business |calendar |working )?(?:days?|weeks?|months?|years?|días|semanas|meses|años)\b|\d+\s*(?:ימים|יום|חודשים|שנים|שבועות)/iu',
+              'Dates' => '/\b\d{1,2}[\/.]\d{1,2}[\/.]\d{2,4}\b|\b\d{4}-\d{2}-\d{2}\b|\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}\b|\b\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\b/iu'];
+    $o = "# Key terms of $name\n\nWhat a careful reader checks first. A reading aid, not legal advice.\n"; $lines = [];
+    foreach ($kinds as $title => $re) { $found = []; foreach ($P as [$no, $txt, $ln]) if (preg_match_all($re, $txt, $mm)) foreach ($mm[0] as $v) $found[] = [trim($v), $ln, $no]; $o .= "\n## $title (" . count($found) . ")\n\n"; foreach (array_slice($found, 0, 40) as [$v, $ln, $no]) { $o .= "- $v — line $ln" . ($no ? " (clause $no)" : '') . "\n"; $lines[] = "$name($ln) Note: [$title] $v"; } if (!$found) $o .= "None found.\n"; }
+    $topics = ['Governing law and disputes' => '/governed by|governing law|jurisdiction|arbitrat|venue|courts? of|ley aplicable|jurisdicci|דין החל|שיפוט|בוררות/iu', 'Term and termination' => '/\bterm of\b|terminat|renew|expire|cancel|notice period|plazo|rescin|vigencia|תקופת|סיום|ביטול|הארכה/iu', 'Payment' => '/\bpay(?:ment|able|s)?\b|invoice|fee|price|interest|late charge|pago|factura|תשלום|חשבונית|ריבית/iu', 'Liability, indemnity, warranty' => '/liab|indemn|warrant|damages|consequential|cap on|limitation of|responsabilidad|garant|אחריות|שיפוי|נזק/iu', 'Confidentiality and IP' => '/confidential|non-?disclosure|trade secret|intellectual property|copyright|licen[cs]e|confidencial|propiedad intelectual|סודיות|קניין רוחני|רישיון/iu', 'Assignment, notices, entire agreement' => '/assign|sublicen|notices?\b|entire agreement|amend|waiver|severab|force majeure|cesión|notificaci|כל ההסכם|הסבת|הודעות|כוח עליון/iu'];
+    foreach ($topics as $title => $re) { $hits = []; foreach ($P as [$no, $txt, $ln]) if (preg_match($re, $txt)) $hits[] = [$ln, $no, $txt]; $o .= "\n## $title (" . count($hits) . " paragraph(s))\n\n"; foreach (array_slice($hits, 0, 12) as [$ln, $no, $txt]) $o .= "- line $ln" . ($no ? " (clause $no)" : '') . ': ' . mb_substr($txt, 0, 150) . (mb_strlen($txt) > 150 ? '…' : '') . "\n"; if (!$hits) $o .= "Nothing found: is it missing?\n"; }
+    file_put_contents($out, $o . "\n" . implode("\n", array_slice($lines, 0, 150)) . "\n\n[exit code 0]\n"); echo "Wrote $out\n"; exit(0);
+}

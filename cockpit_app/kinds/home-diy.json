@@ -1,0 +1,22 @@
+{
+  "id": "home-diy",
+  "name": "Home and DIY",
+  "icon": "home_repair_service",
+  "description": "Paint, floor and concrete quantities, job estimates and a maintenance schedule.",
+  "detect": [],
+  "note": "This is a home-and-DIY project: measurements, materials, estimates and upkeep. Never invent a dimension, a price, a product's coverage or yield, or a date: use the user's numbers and the figures printed on the product, and say what you assumed (default waste, coverage, coats). Quantities are estimates: recommend buying a margin and checking the packaging. SAFETY: electrical, gas, structural, load-bearing, roof, chimney, asbestos and similar work belongs to licensed professionals and to local rules and permits. Say so plainly whenever a job touches them, and give planning and arithmetic help only, never step-by-step instructions for that work. Keep the user's original lists untouched and write new files under new names. Run the Home and DIY tool after every change and report what it lists.",
+  "verify": "diy schedule",
+  "group": "Home & life",
+  "details": "Planning home jobs from plain files. The Home and DIY tool calculates paint litres from the room or wall area, doors, windows and coats; flooring or tile counts with a waste allowance and boxes; concrete volume (and bags when you give the bag's yield); and a lumber cutting plan from the lengths you need and the stock lengths you could buy, allowing for the saw cut. It totals an estimate sheet of parts and labour with a contingency percentage, and checks a maintenance schedule: the next due date of each task from its last-done date and interval, with what is overdue and coming up. Quantities are estimates; electrical, gas, structural and roof work is for licensed professionals, and the tool flags such words. Pandoc makes a printable version.",
+  "examples": [
+    "How much paint do I need for a 4 by 3 room with two coats",
+    "Tiles and boxes for a 12 square metre bathroom floor with 10 percent waste",
+    "Total this job estimate with 15 percent contingency",
+    "Which home maintenance tasks are overdue this month"
+  ],
+  "tools": [
+    {"tool": "diy", "why": "material calculators, job estimate sheet, maintenance schedule check"},
+    {"tool": "data", "why": "ask the lists free-form questions in SQL"},
+    {"tool": "pandoc", "why": "turn the plan into a printable document"}
+  ]
+}

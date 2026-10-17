@@ -1,0 +1,94 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// write_tool — the Creative writing tools' work, for the tool presets (tools_builtins/writing.json). A command-line program, never reachable over the web.
+//
+//   php write_tool stats   FILE|FOLDER OUTPUT    words, sentences, paragraphs, the longest sentences, dialogue share, adverbs, and a reading level (English); per chapter when given a folder
+//   php write_tool repeats FILE|FOLDER OUTPUT    phrases of 4 words used more than twice, and a word echoed within a few words of itself (the usual "tics"), each with its line
+//   php write_tool names   FILE|FOLDER OUTPUT    the capitalised names used, how often, in which file, and the ones spelled almost the same (Catherine / Katherine, Aldric / Aldrik)
+//
+// FOLDER = every .md / .txt / .markdown file in it, in name order (chapters). Text only, UTF-8; nothing is changed or run. These are READING AIDS: they point at places to look,
+// the writer and the agent decide. A name that is spelled differently on purpose is a name; the tool cannot know.
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "write_tool: $m\n"); exit($rc); }
+[$sub, $in, $out] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? ''];
+if (!in_array($sub, ['stats', 'repeats', 'names'], true) || $in === '' || $out === '') fail('usage: write_tool stats|repeats|names FILE|FOLDER OUTPUT', 2);
+if (!file_exists($in)) fail("no such file or folder: $in");
+$files = [];
+if (is_dir($in)) { foreach (scandir($in) as $f) if ($f[0] !== '.' && preg_match('/\.(md|markdown|txt)$/i', $f) && is_file("$in/$f")) $files[] = "$in/$f"; sort($files, SORT_NATURAL | SORT_FLAG_CASE); }
+else $files[] = $in;
+if (!$files) fail('no .md or .txt files in that folder');
+if (count($files) > 400) fail('more than 400 files: give a smaller folder');
+$docs = [];
+foreach ($files as $f) {
+    if (filesize($f) > 20 * 1024 * 1024) fail(basename($f) . ' is over 20 MB');
+    $t = (string)file_get_contents($f); if (strncmp($t, "\xEF\xBB\xBF", 3) === 0) $t = substr($t, 3);
+    if (!mb_check_encoding($t, 'UTF-8')) fail(basename($f) . ' is not valid UTF-8: convert it first');
+    $docs[] = ['name' => basename($f), 'lines' => explode("\n", str_replace(["\r\n", "\r"], "\n", $t))];
+}
+function words_of(string $s): array { preg_match_all("/[\p{L}\p{N}]+(?:['’][\p{L}]+)?/u", mb_strtolower($s), $m); return $m[0]; }
+function body_lines(array $lines): array { $r = []; $fence = false; foreach ($lines as $i => $l) { if (preg_match('/^\s*(```|~~~)/', $l)) { $fence = !$fence; continue; } if ($fence) continue; if (preg_match('/^\s*(#|---|\*\*\*|<!--)/', $l)) continue; $r[$i + 1] = $l; } return $r; }
+$o = '';
+if ($sub === 'stats') {
+    $o = "# Writing statistics: " . basename($in) . "\n\nReading aids from the text alone; the reading level is the English Flesch formula and means nothing for other languages.\n\n";
+    $rows = []; $tot = ['w' => 0, 's' => 0, 'p' => 0, 'd' => 0, 'adv' => 0, 'syl' => 0]; $long = [];
+    foreach ($docs as $d) {
+        $bl = body_lines($d['lines']); $w = $s = $p = $dw = $adv = $syl = 0; $prevBlank = true;
+        foreach ($bl as $ln => $l) {
+            if (trim($l) === '') { $prevBlank = true; continue; } if ($prevBlank) $p++; $prevBlank = false;
+            $ws = words_of($l); $w += count($ws);
+            foreach ($ws as $x) { if (preg_match('/^[a-z]{4,}ly$/', $x) && !in_array($x, ['family', 'only', 'early', 'July', 'reply', 'supply', 'belly', 'bully', 'jelly', 'holy', 'ugly', 'lonely', 'friendly', 'lovely', 'silly', 'likely', 'daily', 'lily', 'italy'], true)) $adv++; $syl += max(1, preg_match_all('/[aeiouy]+/', preg_replace('/e$/', '', $x))); }
+            if (preg_match_all('/["“«][^"”»]*["”»]/u', $l, $q)) foreach ($q[0] as $z) $dw += count(words_of($z));
+            foreach (preg_split('/(?<=[.!?…])\s+(?=[\p{Lu}"“«])/u', trim($l)) as $sen) { $n = count(words_of($sen)); if ($n) { $s++; if ($n >= 40) $long[] = [$n, $d['name'], $ln, $sen]; } }
+        }
+        $rows[] = [$d['name'], $w, $s, $p, $w ? round(100 * $dw / $w) : 0, $s ? round($w / $s, 1) : 0, $w ? round(100 * $adv / $w, 1) : 0];
+        $tot['w'] += $w; $tot['s'] += $s; $tot['p'] += $p; $tot['d'] += $dw; $tot['adv'] += $adv; $tot['syl'] += $syl;
+    }
+    $o .= "| File | Words | Sentences | Paragraphs | Dialogue % | Words per sentence | -ly adverbs % |\n|---|---|---|---|---|---|---|\n";
+    foreach ($rows as $r) $o .= "| " . implode(' | ', $r) . " |\n";
+    $w = max(1, $tot['w']); $s = max(1, $tot['s']);
+    $o .= "| **All** | **{$tot['w']}** | **{$tot['s']}** | **{$tot['p']}** | **" . round(100 * $tot['d'] / $w) . "** | **" . round($w / $s, 1) . "** | **" . round(100 * $tot['adv'] / $w, 1) . "** |\n\n";
+    $fl = 206.835 - 1.015 * ($w / $s) - 84.6 * ($tot['syl'] / $w);
+    $o .= "Reading level (Flesch reading ease, English): " . round($fl) . " (" . ($fl >= 80 ? 'easy' : ($fl >= 60 ? 'plain' : ($fl >= 40 ? 'fairly hard' : 'hard'))) . "). About " . max(1, round($tot['w'] / 230)) . " minute(s) to read aloud at a quiet pace of 230 words a minute.\n";
+    usort($long, fn($a, $b) => $b[0] <=> $a[0]);
+    if ($long) { $o .= "\n## Very long sentences (40 words or more)\n\n"; foreach (array_slice($long, 0, 10) as $x) $o .= "{$x[1]}({$x[2]}) Note: a sentence of {$x[0]} words: " . mb_substr($x[3], 0, 90) . "…\n"; }
+    $o .= "\n[exit code 0]\n";
+} elseif ($sub === 'repeats') {
+    $o = "# Repeated phrases and echoes: " . basename($in) . "\n\n";
+    $stop = array_flip(['the', 'a', 'an', 'and', 'or', 'but', 'of', 'to', 'in', 'on', 'at', 'it', 'is', 'was', 'he', 'she', 'they', 'i', 'you', 'we', 'that', 'this', 'with', 'for', 'as', 'his', 'her', 'had', 'be', 'not', 'so', 'if', 'then', 'there', 'from', 'by', 'were', 'have', 'has', 'said', 'what', 'would', 'could', 'into', 'out', 'up', 'down', 'one', 'all', 'no', 'my', 'me', 'him', 'them', 'their', 'its', 'are', 'do', 'did', 'than', 'when', 'who', 'which', 'been', 'will', 'just', 'like', 'over', 'back']);
+    $grams = []; $echo = []; $n = 0;
+    foreach ($docs as $d) foreach (body_lines($d['lines']) as $ln => $l) {
+        $ws = words_of($l);
+        for ($i = 0; $i + 3 < count($ws); $i++) { $g = array_slice($ws, $i, 4); $c = 0; foreach ($g as $x) if (!isset($stop[$x])) $c++; if ($c >= 2) $grams[implode(' ', $g)][] = [$d['name'], $ln]; }
+        for ($i = 0; $i < count($ws); $i++) { $x = $ws[$i]; if (mb_strlen($x) < 5 || isset($stop[$x])) continue; for ($j = $i + 1; $j <= min($i + 6, count($ws) - 1); $j++) if ($ws[$j] === $x) { $echo[] = [$d['name'], $ln, $x]; break; } }
+    }
+    $g2 = array_filter($grams, fn($v) => count($v) >= 3); uasort($g2, fn($a, $b) => count($b) <=> count($a));
+    $o .= "## Phrases of four words used three times or more\n\n";
+    if (!$g2) $o .= "None.\n"; else foreach (array_slice($g2, 0, 25, true) as $g => $at) { $first = $at[0]; $o .= "{$first[0]}({$first[1]}) Note: \"$g\" appears " . count($at) . " times (first here; also " . implode(', ', array_map(fn($a) => "{$a[0]}:{$a[1]}", array_slice($at, 1, 4))) . (count($at) > 5 ? ', …' : '') . ")\n"; $n++; }
+    $o .= "\n## A word used again within six words\n\n";
+    if (!$echo) $o .= "None.\n"; else { $shown = 0; foreach ($echo as $e) { if ($shown++ >= 40) { $o .= "… " . (count($echo) - 40) . " more.\n"; break; } $o .= "{$e[0]}({$e[1]}) Note: \"{$e[2]}\" twice within six words\n"; $n++; } }
+    $o .= "\nSome echoes are on purpose (a refrain, a list). Look at each; change the ones that are not.\n\n[exit code 0]\n";
+} else {
+    $o = "# Names used: " . basename($in) . "\n\nCapitalised words that do not start a sentence, counted. A name spelled almost like another is listed as a possible slip.\n\n";
+    $cnt = []; $where = [];
+    foreach ($docs as $d) foreach (body_lines($d['lines']) as $ln => $l) {
+        if (!preg_match_all("/(?<![\p{L}\p{N}'’])\p{Lu}[\p{L}'’-]{2,}/u", $l, $m, PREG_OFFSET_CAPTURE)) continue;
+        foreach ($m[0] as [$w, $off]) {
+            $before = rtrim(substr($l, 0, $off)); if ($before === '' || preg_match('/[.!?…:"“«]$/u', $before)) continue;      // sentence start: capital for the grammar, not the name
+            $cnt[$w] = ($cnt[$w] ?? 0) + 1; $where[$w][$d['name']] = ($where[$w][$d['name']] ?? 0) + 1; $first[$w] ??= [$d['name'], $ln];
+        }
+    }
+    arsort($cnt); $names = array_slice($cnt, 0, 300, true);
+    $o .= "| Name | Times | Files | First at |\n|---|---|---|---|\n";
+    foreach (array_slice($names, 0, 80, true) as $w => $c) $o .= "| $w | $c | " . count($where[$w]) . " | {$first[$w][0]}:{$first[$w][1]} |\n";
+    $o .= "\n## Possible slips (spelled almost the same)\n\n"; $k = array_keys($names); $found = 0;
+    for ($i = 0; $i < count($k); $i++) for ($j = $i + 1; $j < count($k); $j++) {
+        $a = $k[$i]; $b = $k[$j]; if (abs(strlen($a) - strlen($b)) > 1 || strlen($a) < 4) continue; if (levenshtein($a, $b) > 1 && !(levenshtein($a, $b) == 2 && strlen($a) >= 7 && soundex($a) === soundex($b))) continue;
+        $low = $cnt[$a] <= $cnt[$b] ? $a : $b; $found++;
+        $o .= "{$first[$low][0]}({$first[$low][1]}) Warning: \"$a\" ({$cnt[$a]}) and \"$b\" ({$cnt[$b]}) are spelled almost the same: is \"$low\" a slip?\n";
+    }
+    if (!$found) $o .= "None found.\n";
+    $o .= "\n[exit code " . ($found ? 1 : 0) . "]\n";
+}
+file_put_contents($out, $o); echo "Wrote $out\n"; exit(0);

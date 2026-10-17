@@ -1,0 +1,15 @@
+{
+  "id": "godot",
+  "name": "Godot",
+  "description": "Check, run and inspect a Godot 4 game project with the Godot engine itself, headless (no editor window). The script check reads every GDScript of the project and reports each parse error with file and line, which is the judge the agent should use after every edit. Give the project's folder (the one with project.godot) as the input.",
+  "binary": "godot",
+  "version_args": "--version",
+  "website": "https://godotengine.org",
+  "install_note": "Fetch the official Godot 4 Linux x86-64 build (standard, not .NET) from https://godotengine.org/download/linux/ and put the binary at ~/.local/share/cockpit/tools/godot/godot (no root needed). Check the sha256 from the release's SHA512-SUMS.txt.",
+  "presets": [
+    {"id": "check", "label": "Check scripts (parse errors, file and line)", "description": "Parses every .gd script of the project with godot --headless --check-only and lists each error as file(line). Nothing is run and nothing in the project is changed (Godot only makes its own .godot cache folder). Give a project folder, or one .gd file to check just that script.", "input_kinds": ["folder", "code"], "output_kind": "text", "output_ext": "txt", "output_stem": "godot_check", "command": "bash {WEBROOT}/godot_tool check {INPUT} {OUTPUT}", "timeout_seconds": 600},
+    {"id": "run", "label": "Run headless for a few seconds", "description": "Starts the project's main scene without a window for N seconds (put N in the extra arguments; default 5, at most 60) and captures what it prints, including runtime errors. For logic, not graphics.", "input_kinds": ["folder"], "output_kind": "text", "output_ext": "txt", "output_stem": "godot_run", "command": "bash {WEBROOT}/godot_tool run {INPUT} {OUTPUT} {ARGS}", "timeout_seconds": 120},
+    {"id": "exports", "label": "Export presets", "description": "Lists the export presets of export_presets.cfg: name, platform and export path.", "input_kinds": ["folder"], "output_kind": "text", "output_ext": "md", "output_stem": "godot_exports", "command": "bash {WEBROOT}/godot_tool exports {INPUT} {OUTPUT}", "timeout_seconds": 60},
+    {"id": "version", "label": "Godot version of the project", "description": "Reads the project's Godot version from project.godot and compares it with the installed binary. A Godot 3 project cannot be opened by the Godot 4 binary: this tells you before you try.", "input_kinds": ["folder"], "output_kind": "text", "output_ext": "md", "output_stem": "godot_version", "command": "bash {WEBROOT}/godot_tool version {INPUT} {OUTPUT}", "timeout_seconds": 60}
+  ]
+}

@@ -1,0 +1,33 @@
+{
+    "id": "cooking",
+    "name": "Cooking and recipes",
+    "icon": "restaurant_menu",
+    "description": "Recipes scaled, converted and merged into a shopping list, with the gaps and allergen words flagged.",
+    "detect": [],
+    "note": "This is a cooking project: recipes kept as markdown or text files. Never invent a quantity, a unit, a time or a temperature; if a recipe lacks one, say so and ask. When you scale or convert, say what you assumed (servings, US or metric cups, an ingredient's density), because volume to weight is an estimate. Allergen words are found by keyword only: they are a reminder to read labels, never a guarantee that a dish is free of an allergen, and you give no dietary or medical advice. Seasoning, raising agents, pan size and cooking time do not scale in step with quantity: say so. Keep the original recipe and write scaled or converted copies under new names. Run the Recipes Check after every change and fix what it lists. Word documents are made with Markdown to DOCX.",
+    "verify": "recipe check",
+    "group": "Home & life",
+    "details": "Recipes as markdown or plain text: a title, a servings line, an ingredient list, steps. The Recipes tool scales a recipe to another number of servings (fractions, ranges, teaspoons becoming tablespoons), converts cups, spoons, ounces and pounds to millilitres and grams with common ingredient densities (and oven temperatures between C and F), merges several recipes into one shopping list grouped by aisle, and checks a recipe for a missing servings line, quantities, units or steps and for allergen words in six languages. Volume-to-weight conversions are estimates and are marked so. Pandoc makes the Word or PDF version for a family cookbook.",
+    "examples": [
+        "Scale this lasagne from 4 to 10 servings",
+        "Convert my grandmother's cup-and-spoon recipe to grams",
+        "One shopping list for the week's five recipes, by aisle",
+        "Which of these recipes mention nuts or gluten?"
+    ],
+    "tools": [
+        {
+            "tool": "recipe",
+            "why": "scale, convert units, merge a shopping list, check for gaps and allergen words"
+        },
+        {
+            "tool": "pandoc",
+            "why": "the recipe book as Word or PDF (Markdown to DOCX)"
+        }
+    ],
+    "starter": [
+        {
+            "path": "recipes/TEMPLATE.md",
+            "content": "# Recipe name\n\nServes 4\nAllergens: \n\n## Ingredients\n- 200 g flour\n- 2 eggs\n- 250 ml milk\n- 1/2 tsp salt\n\n## Method\n1. Mix the dry ingredients.\n2. Add the eggs and milk and stir until smooth.\n3. Cook and serve.\n"
+        }
+    ]
+}

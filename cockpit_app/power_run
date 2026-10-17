@@ -1,0 +1,241 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// power_run — run one Power Button from outside Cockpit (a launcher, a shortcut, a script). A thin client: it reads the input (clipboard, selection, stdin, a file), asks power.php on THIS
+// machine to run the button (so the supplier, the spend consent, the caps and the safety stops are the same as in the app), and delivers the answer (clipboard, notification, file, stdout).
+//
+//   php power_run <button id or name> [--from default|clipboard|selection|image|stdin|file=PATH|folder=PATH|none] [--to default|clipboard|stdout|notify|window|paste|file=PATH] [--quiet]
+//   php power_run --list          the names of your buttons, one per line (what `cockpit-run --list` and a phone's /power list show)
+//                                      [--base-url URL] [--user LOGIN] [--data-root DIR]
+//
+//   --from default (the default): the button says what it needs (clipboard, selection, a picture on the clipboard) and that is read.     --to default: the button's own output (a "show in Cockpit" output becomes a notification plus stdout here).
+// Exit codes: 0 done · 1 error · 2 stopped on purpose (needs a confirmation in Cockpit, text looked like a secret, nothing to work on, no local model).
+//
+// It finds Cockpit like this: --data-root / COCKPIT_DATA_ROOT / paths.json beside this file / ~/scripts/cockpit_data; the person from --user / COCKPIT_USER / the only folder in <data>/users;
+// the address from --base-url / COCKPIT_BASE_URL / paths.json "base_url" / http://localhost/cockpit. It talks to this machine only (loopback) with the key in <data>/internal_key, which the
+// agent loop creates the first time Cockpit's loop runs; no password is ever read or typed.
+// --from file=PATH reads a text file, a picture, a PDF (pdftotext) or an audio file (ffmpeg + whisper.cpp, the same engine as voice input); folder=PATH joins the text files in a folder (up to 40 files, 400 KB).
+// --to window opens the answer in a small Cockpit window (a Browser window; a plain browser or the system opener when that is missing). --to paste copies it, waits two seconds (a notification says so, so you can click
+// into the place you want it, or press nothing to leave it) and presses the paste keys: X11 (xdotool), macOS (osascript), Windows/WSL (SendKeys). Wayland does not allow one program to type into another: there the answer
+// stays on the clipboard and the exit code is 2.   Systems: COCKPIT_PLATFORM=linux|wayland|macos|wsl|windows forces what is detected.
+// Test hooks: COCKPIT_PASTE_CMD / COCKPIT_WINDOW_CMD / COCKPIT_PASTE_DELAY / COCKPIT_AUDIO_TEXT_CMD / COCKPIT_CLIP_READ / COCKPIT_SEL_READ / COCKPIT_IMG_READ / COCKPIT_CLIP_WRITE / COCKPIT_NOTIFY_CMD replace the clipboard and notification commands.
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function pr_fail(string $m, int $rc = 1): void { fwrite(STDERR, "power_run: $m\n"); exit($rc); }
+$args = array_slice($argv, 1); $opt = ['from' => 'default', 'to' => 'default', 'quiet' => false, 'base-url' => '', 'user' => '', 'data-root' => '']; $btn = '';
+for ($i = 0; $i < count($args); $i++) {
+    $a = $args[$i];
+    if ($a === '--quiet') $opt['quiet'] = true;
+    elseif ($a === '--list') $opt['list'] = true;
+    elseif (preg_match('/^--(from|to|base-url|user|data-root)(?:=(.*))?$/', $a, $m)) { $opt[$m[1]] = isset($m[2]) && $m[2] !== '' ? $m[2] : ($args[++$i] ?? ''); }
+    elseif ($a !== '' && $a[0] !== '-' && $btn === '') $btn = $a;
+    else pr_fail("unknown option $a", 2);
+}
+if ($btn === '' && empty($opt['list'])) pr_fail('usage: power_run <button id or name> [--from …] [--to …] [--quiet]   (power_run --list shows your buttons)', 2);
+
+// ── where Cockpit is
+$pj = @json_decode((string)@file_get_contents(__DIR__ . '/paths.json'), true) ?: [];
+$root = $opt['data-root'] ?: (getenv('COCKPIT_DATA_ROOT') ?: ($pj['cockpit_data_root'] ?? $pj['cockpit_data'] ?? ((getenv('HOME') ?: '') . '/scripts/cockpit_data')));
+$root = rtrim((string)$root, '/');
+$base = rtrim($opt['base-url'] ?: (getenv('COCKPIT_BASE_URL') ?: ($pj['base_url'] ?? 'http://localhost/cockpit')), '/');
+$key = is_readable("$root/internal_key") ? trim((string)file_get_contents("$root/internal_key")) : '';
+if ($key === '') pr_fail("no internal key at $root/internal_key: open Cockpit once so its loop creates it (power buttons talk to Cockpit on this machine with that key)");
+$user = $opt['user'] ?: (getenv('COCKPIT_USER') ?: '');
+if ($user === '') { $d = array_values(array_filter(array_map('basename', glob("$root/users/*", GLOB_ONLYDIR) ?: []), fn($x) => preg_match('/^[A-Za-z0-9_-]{1,64}$/', $x))); if (count($d) === 1) $user = $d[0]; elseif (count($d) > 1) pr_fail('several people have data here (' . implode(', ', $d) . '): say which with --user'); }
+if ($user === '') pr_fail('could not tell whose buttons these are: use --user LOGIN');
+
+// ── clipboard / notification helpers
+/** linux (X11) · wayland · macos · wsl · windows. COCKPIT_PLATFORM overrides (tests, odd setups). */
+function pr_platform(): string {
+    if ($e = getenv('COCKPIT_PLATFORM')) return $e;
+    if (PHP_OS_FAMILY === 'Darwin') return 'macos'; if (PHP_OS_FAMILY === 'Windows') return 'windows';
+    if ((string)getenv('WSL_DISTRO_NAME') !== '' || stripos((string)@file_get_contents('/proc/version'), 'microsoft') !== false) return 'wsl';
+    return getenv('WAYLAND_DISPLAY') ? 'wayland' : 'linux';
+}
+function pr_ps(string $script, string $stdin = ''): ?string {   // PowerShell, the script passed encoded so no quoting can go wrong
+    $exe = pr_platform() === 'windows' ? 'powershell' : 'powershell.exe'; $enc = base64_encode(mb_convert_encoding($script, 'UTF-16LE', 'UTF-8'));
+    $p = @proc_open($exe . ' -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ' . $enc, [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['file', '/dev/null', 'w']], $pp); if (!is_resource($p)) return null;
+    fwrite($pp[0], $stdin); fclose($pp[0]); $o = stream_get_contents($pp[1]); fclose($pp[1]); return proc_close($p) === 0 ? (string)$o : null;
+}
+function pr_psq(string $s): string { return "'" . str_replace("'", "''", $s) . "'"; }
+function pr_have(string $c): bool { return trim((string)@shell_exec('command -v ' . escapeshellarg($c) . ' 2>/dev/null')) !== ''; }
+function pr_clip_read(string $which): string {
+    if ($e = getenv('COCKPIT_CLIP_READ')) return (string)shell_exec($e . ' 2>/dev/null');
+    $pl = pr_platform();
+    if (($pl === 'wsl' || $pl === 'windows') && (pr_have($pl === 'windows' ? 'powershell' : 'powershell.exe'))) { $o = pr_ps('[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-Clipboard -Raw'); if ($o !== null) return rtrim($o, "\r\n"); }   // Windows has no 'selection': it is the clipboard
+    if ($pl === 'macos' && pr_have('pbpaste')) return (string)shell_exec('pbpaste 2>/dev/null');
+    if ($pl === 'wayland' && pr_have('wl-paste')) return (string)shell_exec('wl-paste --no-newline' . ($which === 'selection' ? ' --primary' : '') . ' 2>/dev/null');
+    if (pr_have('xclip')) return (string)shell_exec('xclip -selection ' . ($which === 'selection' ? 'primary' : 'clipboard') . ' -o 2>/dev/null');
+    if (pr_have('xsel')) return (string)shell_exec('xsel ' . ($which === 'selection' ? '--primary' : '--clipboard') . ' --output 2>/dev/null');
+    if (pr_have('powershell.exe')) return rtrim((string)shell_exec('powershell.exe -NoProfile -Command Get-Clipboard -Raw 2>/dev/null'), "\r\n");
+    pr_fail('no clipboard tool found (install xclip, or wl-clipboard on Wayland)');
+}
+function pr_pipe_to(string $cmd, string $text): bool { $p = @proc_open($cmd, [0 => ['pipe', 'r'], 1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']], $pipes); if (!is_resource($p)) return false; fwrite($pipes[0], $text); fclose($pipes[0]); return proc_close($p) === 0; }
+function pr_clip_write(string $text): bool {
+    if ($e = getenv('COCKPIT_CLIP_WRITE')) return pr_pipe_to($e, $text);
+    $pl = pr_platform();
+    if (($pl === 'wsl' || $pl === 'windows') && pr_have($pl === 'windows' ? 'powershell' : 'powershell.exe')) return pr_ps('[Console]::InputEncoding=[Text.Encoding]::UTF8; $t=[Console]::In.ReadToEnd(); Set-Clipboard -Value $t', $text) !== null;
+    if ($pl === 'macos' && pr_have('pbcopy')) return pr_pipe_to('pbcopy', $text);
+    if ($pl === 'wayland' && pr_have('wl-copy')) return pr_pipe_to('wl-copy', $text);
+    if (pr_have('xclip')) return pr_pipe_to('xclip -selection clipboard -i', $text);
+    if (pr_have('xsel')) return pr_pipe_to('xsel --clipboard --input', $text);
+    if (pr_have('clip.exe')) return pr_pipe_to('clip.exe', $text);
+    return false;
+}
+function pr_notify(string $title, string $body, bool $quiet): void {
+    if ($quiet) return;
+    $body = mb_substr($body, 0, 400);
+    if ($e = getenv('COCKPIT_NOTIFY_CMD')) { @shell_exec($e . ' ' . escapeshellarg($title) . ' ' . escapeshellarg($body) . ' 2>/dev/null'); return; }
+    $pl = pr_platform();
+    if (($pl === 'wsl' || $pl === 'windows') && pr_have($pl === 'windows' ? 'powershell' : 'powershell.exe')) { pr_ps('Add-Type -AssemblyName System.Windows.Forms; $n=New-Object System.Windows.Forms.NotifyIcon; $n.Icon=[System.Drawing.SystemIcons]::Information; $n.Visible=$true; $n.ShowBalloonTip(8000,' . pr_psq($title) . ',' . pr_psq($body) . ',[System.Windows.Forms.ToolTipIcon]::None); Start-Sleep -Seconds 9; $n.Dispose()'); return; }
+    if ($pl === 'macos') { @shell_exec('osascript -e ' . escapeshellarg('display notification ' . json_encode($body) . ' with title ' . json_encode($title)) . ' 2>/dev/null'); return; }
+    if (pr_have('notify-send')) @shell_exec('notify-send -a "AI Cockpit" ' . escapeshellarg($title) . ' ' . escapeshellarg($body) . ' 2>/dev/null');
+}
+function pr_post(string $url, array $hdr, array $body): array {
+    $ch = curl_init($url); curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_POST => true, CURLOPT_TIMEOUT => 300, CURLOPT_CONNECTTIMEOUT => 5, CURLOPT_HTTPHEADER => $hdr, CURLOPT_POSTFIELDS => json_encode($body, JSON_UNESCAPED_UNICODE)]);
+    $r = curl_exec($ch); $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE); $err = curl_error($ch); curl_close($ch);
+    if ($r === false) return [null, "could not reach Cockpit at $url ($err)"];
+    $j = json_decode((string)$r, true); return is_array($j) ? [$j, null] : [null, "Cockpit answered something unexpected (HTTP $code)"];
+}
+$hdr = ['Content-Type: application/json', 'X-Cockpit-Internal: ' . $key, 'X-Cockpit-User: ' . $user];
+
+// ── input. With --from default the button says what it wants: the first call carries no input, a button that needs one answers "need_input" with want=clipboard|selection|image|file,
+// that is read, and the call is made again. (A button that needs nothing runs on the first call.)
+function pr_image_read(): ?string {
+    if ($e = getenv('COCKPIT_IMG_READ')) { $b = (string)shell_exec($e . ' 2>/dev/null'); return $b !== '' ? $b : null; }
+    if (pr_platform() === 'macos') pr_fail('picture input from the clipboard is not supported on macOS yet: give a picture file with --from file=PATH', 2);
+    if (pr_platform() === 'wsl' || pr_platform() === 'windows') { $o = pr_ps('Add-Type -AssemblyName System.Windows.Forms; $i=[System.Windows.Forms.Clipboard]::GetImage(); if($i){$m=New-Object IO.MemoryStream; $i.Save($m,[System.Drawing.Imaging.ImageFormat]::Png); [Convert]::ToBase64String($m.ToArray())}'); $b = $o !== null ? base64_decode(trim($o), true) : false; if ($b !== false && $b !== '') return $b; return null; }
+    if (pr_platform() === 'wayland' && pr_have('wl-paste')) { $b = (string)shell_exec('wl-paste --type image/png 2>/dev/null'); if ($b !== '') return $b; }
+    if (pr_have('xclip')) { $b = (string)shell_exec('xclip -selection clipboard -t image/png -o 2>/dev/null'); if ($b !== '') return $b; }
+    return null;
+}
+function pr_pdf_text(string $f): string {
+    if (!pr_have('pdftotext')) pr_fail('reading a PDF needs pdftotext (the poppler-utils package)', 2);
+    $t = (string)shell_exec('pdftotext -layout -q ' . escapeshellarg($f) . ' - 2>/dev/null');
+    if (trim($t) === '') pr_fail("no text in $f (a scanned PDF has pictures of text, not text)", 2);
+    return substr($t, 0, 400000);
+}
+function pr_audio_text(string $f): string {
+    if ($e = getenv('COCKPIT_AUDIO_TEXT_CMD')) { $t = (string)shell_exec($e . ' ' . escapeshellarg($f) . ' 2>/dev/null'); if (trim($t) === '') pr_fail("no speech found in $f", 2); return $t; }
+    global $root; $home = (string)getenv('HOME'); $cfg = @json_decode((string)@file_get_contents("$root/whisper_config.json"), true) ?: [];
+    $bin = (string)($cfg['bin'] ?? ''); if ($bin === '' || !is_file($bin)) { $bin = ''; foreach (["$home/ai-tools/whisper.cpp/build/bin/whisper-cli", "$home/whisper.cpp/build/bin/whisper-cli"] as $c) if (is_executable($c)) { $bin = $c; break; } }
+    if ($bin === '') foreach (['whisper-cli', 'whisper-cpp'] as $c) if (pr_have($c)) { $bin = trim((string)shell_exec('command -v ' . $c)); break; }
+    $model = (string)($cfg['model'] ?? ''); if ($model === '' || !is_file($model)) { $best = ''; $sz = -1; foreach (["$home/ai-tools/whisper.cpp/models", "$home/whisper.cpp/models", "$home/.cache/whisper", "$home/.local/share/whisper", '/usr/local/share/whisper', '/usr/share/whisper'] as $d) foreach (glob("$d/ggml-*.bin") ?: [] as $m) if (filesize($m) > 5000000 && filesize($m) > $sz) { $sz = filesize($m); $best = $m; } $model = $best; }
+    if ($bin === '' || $model === '' || !pr_have('ffmpeg')) pr_fail('listening to an audio file needs ffmpeg and whisper.cpp with a model (the same as voice input in Cockpit)', 2);
+    $tmp = sys_get_temp_dir() . '/power_audio_' . bin2hex(random_bytes(5)); $wav = $tmp . '.wav';
+    shell_exec('ffmpeg -y -i ' . escapeshellarg($f) . ' -ar 16000 -ac 1 -f wav ' . escapeshellarg($wav) . ' >/dev/null 2>&1');
+    if (!is_file($wav)) pr_fail("could not read the sound in $f", 2);
+    shell_exec(escapeshellarg($bin) . ' -m ' . escapeshellarg($model) . ' -f ' . escapeshellarg($wav) . ' -nt -otxt -of ' . escapeshellarg($tmp) . ' >/dev/null 2>&1');
+    $t = is_file("$tmp.txt") ? trim((string)file_get_contents("$tmp.txt")) : ''; foreach (glob("$tmp*") ?: [] as $x) @unlink($x);
+    if ($t === '') pr_fail("no speech found in $f", 2);
+    return $t;
+}
+function pr_folder_text(string $d): string {
+    if (!is_dir($d)) pr_fail("$d is not a folder", 2);
+    $o = ''; $n = 0;
+    foreach (@scandir($d) ?: [] as $name) {
+        $p = rtrim($d, '/') . '/' . $name; if ($name[0] === '.' || !is_file($p) || is_link($p) || filesize($p) > 2000000) continue;
+        if (preg_match('/^(.+)\.[a-z0-9-]+\.md$/i', $name, $m) && is_file(rtrim($d, '/') . '/' . $m[1])) continue;
+        $raw = preg_match('/\.pdf$/i', $name) ? (pr_have('pdftotext') ? (string)shell_exec('pdftotext -layout -q ' . escapeshellarg($p) . ' - 2>/dev/null') : '') : (string)file_get_contents($p, false, null, 0, 60000);
+        if ($raw === '' || strpos(substr($raw, 0, 2048), "\0") !== false) continue;
+        $o .= "=== $name ===\n" . trim(str_replace("\r\n", "\n", substr($raw, 0, 30000))) . "\n\n"; if (++$n >= 40 || strlen($o) > 400000) break;
+    }
+    if ($n === 0) pr_fail("there are no text files in $d to work on", 2);
+    return substr($o, 0, 400000);
+}
+function pr_read_source(string $from, string $want): array {   // → the fields to add to the run request
+    if ($from === 'default') $from = $want === 'selection' ? 'selection' : ($want === 'image' ? 'image' : ($want === 'none' ? 'none' : 'clipboard'));
+    if ($from === 'image') { $img = pr_image_read(); if ($img === null) pr_fail('there is no picture on the clipboard', 2); return ['image' => ['b64' => base64_encode($img)]]; }
+    if ($from === 'clipboard') return ['input' => str_replace("\r\n", "\n", pr_clip_read('clipboard'))];
+    if ($from === 'selection') return ['input' => str_replace("\r\n", "\n", ($e = getenv('COCKPIT_SEL_READ')) ? (string)shell_exec($e . ' 2>/dev/null') : pr_clip_read('selection'))];
+    if ($from === 'stdin') return ['input' => str_replace("\r\n", "\n", (string)stream_get_contents(STDIN))];
+    if ($from === 'none') return ['input' => ''];
+    if (strncmp($from, 'folder=', 7) === 0) return ['input' => pr_folder_text(substr($from, 7))];
+    if (strncmp($from, 'file=', 5) === 0) { $f = substr($from, 5); if (!is_readable($f) || is_dir($f)) pr_fail("cannot read $f", 2); $raw = (string)file_get_contents($f, false, null, 0, 7000000);
+        if (strncmp($raw, '%PDF', 4) === 0 || preg_match('/\.pdf$/i', $f)) return ['input' => pr_pdf_text($f)];
+        if (preg_match('/\.(mp3|wav|m4a|ogg|oga|opus|flac|aac|wma|webm|mp4|mkv|mov)$/i', $f)) return ['input' => pr_audio_text($f)];
+        if (strpos(substr($raw, 0, 4096), "\0") !== false && !preg_match('/\A(?:\x89PNG|\xFF\xD8\xFF|GIF8|RIFF.{4}WEBP)/s', $raw)) pr_fail("$f is not a text, picture, PDF or audio file", 2);
+        $isPic = preg_match('/\A(?:\x89PNG|\xFF\xD8\xFF|GIF8|RIFF.{4}WEBP)/s', $raw) === 1;   // a picture file is recognised by its bytes
+        return ($want === 'image' || $isPic) ? ['image' => ['b64' => base64_encode($raw)]] : ['input' => str_replace("\r\n", "\n", substr($raw, 0, 400000))]; }
+    pr_fail("unknown --from $from", 2);
+}
+if (!empty($opt['list'])) {
+    [$res, $err] = pr_post($base . '/power.php?action=list', $hdr, ['action' => 'list']); if ($err) pr_fail($err);
+    foreach ((array)($res['buttons'] ?? []) as $b) echo $b['name'], "\t", ($b['input'] ?? 'clipboard'), " → ", ($b['output'] ?? 'clipboard'), "\n";
+    exit(0);
+}
+$url = $base . '/power.php?action=run'; $label = $btn;
+pr_notify("$label", 'working…', $opt['quiet']);
+$req = ['action' => 'run', 'name' => $btn];
+if ($opt['from'] === 'default') {
+    [$res, $err] = pr_post($url, $hdr, $req);   // the button says what it needs
+    if ($err) { pr_notify("$label: error", $err, $opt['quiet']); pr_fail($err); }
+    if (($res['gate'] ?? '') === 'need_input') {
+        $label = (string)($res['name'] ?? $label);
+        if (($res['want'] ?? '') === 'file') pr_fail('this button works on a file: give it with --from file=PATH', 2);
+        [$res, $err] = pr_post($url, $hdr, $req + pr_read_source('default', (string)($res['want'] ?? 'clipboard')));
+    }
+} else {
+    [$res, $err] = pr_post($url, $hdr, $req + pr_read_source($opt['from'], 'clipboard'));
+}
+if ($err) { pr_notify("$label: error", $err, $opt['quiet']); pr_fail($err); }
+if (empty($res['ok'])) {
+    $m = (string)($res['error'] ?? 'failed'); $gate = (string)($res['gate'] ?? '');
+    pr_notify("$label: " . ($gate ? 'stopped' : 'error'), $m, $opt['quiet']); fwrite(STDERR, "power_run: $m\n");
+    exit($gate !== '' ? 2 : 1);
+}
+/** The answer in a small window of its own (a Cockpit Browser window; the system opener when that is missing). The page is one standalone file in <data>/power_out/, the last 20 are kept. */
+function pr_show_window(string $name, string $out, string $root, bool $quiet): void {
+    $dir = "$root/power_out"; if (!is_dir($dir)) @mkdir($dir, 0775, true);
+    $file = "$dir/result-" . date('Ymd-His') . '-' . substr(bin2hex(random_bytes(2)), 0, 4) . '.html';
+    $e = fn($x) => htmlspecialchars((string)$x, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    $html = '<!doctype html><html><head><meta charset="utf-8"><title>' . $e($name) . '</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>:root{color-scheme:light dark}body{margin:0;font:14px/1.5 system-ui,sans-serif;display:flex;flex-direction:column;height:100vh}'
+        . 'header{padding:8px 12px;border-bottom:1px solid #8885;display:flex;gap:8px;align-items:center}h1{font-size:13px;margin:0;flex:1}button{font:inherit;padding:3px 12px;cursor:pointer}pre{flex:1;margin:0;padding:12px;white-space:pre-wrap;word-wrap:break-word;overflow:auto;font:inherit;user-select:text}</style></head><body>'
+        . '<header><h1>' . $e($name) . '</h1><button id="c">Copy</button><button id="s">Save…</button></header><pre id="t">' . $e($out) . '</pre>'
+        . '<script>var t=document.getElementById("t").textContent;document.getElementById("c").onclick=function(){var b=this;(navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).then(function(){b.textContent="Copied"},function(){var r=document.createRange();r.selectNodeContents(document.getElementById("t"));var s=getSelection();s.removeAllRanges();s.addRange(r);document.execCommand("copy");b.textContent="Copied"})};'
+        . 'document.getElementById("s").onclick=function(){var a=document.createElement("a");a.href=URL.createObjectURL(new Blob([t+"\\n"],{type:"text/markdown"}));a.download=' . json_encode(strtolower(preg_replace('/[^A-Za-z0-9]+/', '-', $name)) . '.md') . ';a.click()};</script></body></html>';
+    if (@file_put_contents($file, $html) === false) { pr_notify($name, $out, $quiet); echo $out, "\n"; return; }
+    $files = glob("$dir/result-*.html") ?: []; sort($files); foreach (array_slice($files, 0, max(0, count($files) - 20)) as $old) @unlink($old);
+    $url = 'file://' . $file;
+    if ($c = getenv('COCKPIT_WINDOW_CMD')) { @shell_exec($c . ' ' . escapeshellarg($file) . ' ' . escapeshellarg($name) . ' 2>/dev/null'); echo $file, "\n"; return; }
+    $pl = pr_platform(); $shell = ''; foreach ([(string)getenv('COCKPIT_SHELL'), (string)getenv('HOME') . '/scripts/cockpit_shell', (string)getenv('HOME') . '/.local/bin/cockpit_shell'] as $c) if ($c !== '' && is_executable($c)) { $shell = $c; break; }
+    if ($shell !== '' && $pl !== 'macos' && $pl !== 'windows') @shell_exec('(setsid ' . escapeshellarg($shell) . ' --browser --url ' . escapeshellarg($url) . ' --title ' . escapeshellarg($name) . ' --width 560 --height 420 >/dev/null 2>&1 &)');
+    elseif ($pl === 'macos') @shell_exec('open ' . escapeshellarg($file) . ' >/dev/null 2>&1 &');
+    elseif ($pl === 'wsl' && pr_have('wslview')) @shell_exec('wslview ' . escapeshellarg($file) . ' >/dev/null 2>&1 &');
+    elseif ($pl === 'wsl' || $pl === 'windows') pr_ps('Start-Process ' . pr_psq($pl === 'wsl' ? trim((string)shell_exec('wslpath -w ' . escapeshellarg($file))) : $file));
+    elseif (pr_have('xdg-open')) @shell_exec('(setsid xdg-open ' . escapeshellarg($url) . ' >/dev/null 2>&1 &)');
+    else { pr_notify($name, $out, $quiet); echo $out, "\n"; return; }
+    echo $file, "\n";
+}
+/** Copy the answer, give two seconds' notice, press the paste keys. Control characters other than newline and tab are dropped (they would act in a terminal). */
+function pr_paste(string $name, string $out, bool $quiet): void {
+    $out = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $out);
+    if (!pr_clip_write($out)) { fwrite(STDERR, "power_run: could not write the clipboard\n"); echo $out, "\n"; exit(1); }
+    $pl = pr_platform();
+    if ($pl === 'wayland' && !getenv('COCKPIT_PASTE_CMD')) { pr_notify("$name: done", 'The answer is on your clipboard. This desktop does not let one program paste into another: press Ctrl+V yourself.', $quiet); fwrite(STDERR, "power_run: paste-at-cursor needs X11, macOS or Windows; on Wayland the answer stays on the clipboard\n"); exit(2); }
+    $delay = getenv('COCKPIT_PASTE_DELAY') !== false ? (float)getenv('COCKPIT_PASTE_DELAY') : 2.0;
+    pr_notify("$name: pasting in " . (int)ceil($delay) . ' s', 'Click where the answer should go. Nothing is typed if the window you want is not in front.', $quiet);
+    if ($delay > 0) usleep((int)($delay * 1000000));
+    if ($c = getenv('COCKPIT_PASTE_CMD')) { @shell_exec($c . ' 2>/dev/null'); return; }
+    if ($pl === 'macos') { @shell_exec('osascript -e ' . escapeshellarg('tell application "System Events" to keystroke "v" using command down') . ' 2>/dev/null'); return; }
+    if ($pl === 'wsl' || $pl === 'windows') { pr_ps('(New-Object -ComObject WScript.Shell).SendKeys(' . pr_psq('^v') . ')'); return; }
+    if (pr_have('xdotool')) { @shell_exec('xdotool key --clearmodifiers ctrl+v 2>/dev/null'); return; }
+    fwrite(STDERR, "power_run: xdotool is not installed: the answer is on the clipboard, press Ctrl+V\n"); exit(2);
+}
+$out = (string)$res['output']; $name = (string)($res['name'] ?? $label);
+// ── output
+$to = $opt['to']; $dest = (string)($res['output_to'] ?? 'clipboard');
+if ($to === 'default') $to = $dest === 'show' ? 'notify' : $dest;
+$note = ($res['truncated_input'] ?? false) ? ' (the text was cut to fit)' : '';
+if ($to === 'clipboard') { if (!pr_clip_write($out)) { fwrite(STDERR, "power_run: could not write the clipboard; the answer follows on stdout\n"); echo $out, "\n"; exit(1); } pr_notify("$name: done", 'The answer is on your clipboard.' . $note, $opt['quiet']); }
+elseif ($to === 'notify') { pr_notify("$name", $out, $opt['quiet']); echo $out, "\n"; }
+elseif ($to === 'stdout') { echo $out, "\n"; }
+elseif ($to === 'window') pr_show_window($name, $out, $root, $opt['quiet']);
+elseif ($to === 'paste') pr_paste($name, $out, $opt['quiet']);
+elseif ($to === 'file' || strncmp($to, 'file=', 5) === 0) {
+    $path = $to === 'file' ? "$root/power_out/" . preg_replace('/[^a-z0-9]+/', '-', strtolower($name)) . '-' . date('Ymd-His') . '.md' : substr($to, 5);
+    if (!is_dir(dirname($path))) @mkdir(dirname($path), 0775, true);
+    if (@file_put_contents($path, $out . "\n") === false) pr_fail("cannot write $path");
+    pr_notify("$name: done", "Saved to $path", $opt['quiet']); echo $path, "\n";
+} else pr_fail("unknown --to $to", 2);
+exit(0);

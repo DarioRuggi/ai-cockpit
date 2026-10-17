@@ -1,0 +1,2242 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Cache-Control" content="no-cache, must-revalidate" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>AI Cockpit — Setup Guide</title>
+  <style>
+    html {
+      color: #d8dce0;
+      background-color: #1a1d21;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 36em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+        font-size: 12pt;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #5fd0c0;
+    }
+    a:visited {
+      color: #5fd0c0;
+    }
+    img {
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      background-color: #1a1a1a;
+      border: none;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC ul {
+      padding-left: 1.3em;
+    }
+    #TOC > ul {
+      padding-left: 0;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+    /* CSS for syntax highlighting */
+    pre > code.sourceCode { white-space: pre; position: relative; }
+    pre > code.sourceCode > span { line-height: 1.25; }
+    pre > code.sourceCode > span:empty { height: 1.2em; }
+    .sourceCode { overflow: visible; }
+    code.sourceCode > span { color: inherit; text-decoration: inherit; }
+    div.sourceCode { margin: 1em 0; }
+    pre.sourceCode { margin: 0; }
+    @media screen {
+    div.sourceCode { overflow: auto; }
+    }
+    @media print {
+    pre > code.sourceCode { white-space: pre-wrap; }
+    pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+    }
+    pre.numberSource code
+      { counter-reset: source-line 0; }
+    pre.numberSource code > span
+      { position: relative; left: -4em; counter-increment: source-line; }
+    pre.numberSource code > span > a:first-child::before
+      { content: counter(source-line);
+        position: relative; left: -1em; text-align: right; vertical-align: baseline;
+        border: none; display: inline-block;
+        -webkit-touch-callout: none; -webkit-user-select: none;
+        -khtml-user-select: none; -moz-user-select: none;
+        -ms-user-select: none; user-select: none;
+        padding: 0 4px; width: 4em;
+        color: #aaaaaa;
+      }
+    pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa;  padding-left: 4px; }
+    div.sourceCode
+      {   }
+    @media screen {
+    pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+    }
+    code span.al { color: #ff0000; font-weight: bold; } /* Alert */
+    code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } /* Annotation */
+    code span.at { color: #7d9029; } /* Attribute */
+    code span.bn { color: #40a070; } /* BaseN */
+    code span.bu { color: #008000; } /* BuiltIn */
+    code span.cf { color: #007020; font-weight: bold; } /* ControlFlow */
+    code span.ch { color: #4070a0; } /* Char */
+    code span.cn { color: #880000; } /* Constant */
+    code span.co { color: #60a0b0; font-style: italic; } /* Comment */
+    code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } /* CommentVar */
+    code span.do { color: #ba2121; font-style: italic; } /* Documentation */
+    code span.dt { color: #902000; } /* DataType */
+    code span.dv { color: #40a070; } /* DecVal */
+    code span.er { color: #ff0000; font-weight: bold; } /* Error */
+    code span.ex { } /* Extension */
+    code span.fl { color: #40a070; } /* Float */
+    code span.fu { color: #06287e; } /* Function */
+    code span.im { color: #008000; font-weight: bold; } /* Import */
+    code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } /* Information */
+    code span.kw { color: #007020; font-weight: bold; } /* Keyword */
+    code span.op { color: #666666; } /* Operator */
+    code span.ot { color: #007020; } /* Other */
+    code span.pp { color: #bc7a00; } /* Preprocessor */
+    code span.sc { color: #4070a0; } /* SpecialChar */
+    code span.ss { color: #bb6688; } /* SpecialString */
+    code span.st { color: #4070a0; } /* String */
+    code span.va { color: #19177c; } /* Variable */
+    code span.vs { color: #4070a0; } /* VerbatimString */
+    code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warning */
+  </style>
+  <style>
+    body { background:#1a1d21; color:#d8dce0; font-family:system-ui,Segoe UI,sans-serif;
+           max-width:860px; margin:0 auto; padding:28px 36px; line-height:1.65; }
+    h1,h2,h3 { color:#4ea3f0; line-height:1.25; }
+    h1 { border-bottom:1px solid #3a3f45; padding-bottom:6px; }
+    h2 { border-bottom:1px solid #2a2e33; padding-bottom:4px; margin-top:1.8em; }
+    a { color:#5fd0c0; }
+    code { background:#23272c; padding:1px 5px; border-radius:3px; font-family:Consolas,monospace; color:#e0b84e; }
+    pre { background:#23272c; padding:12px 14px; border-radius:5px; overflow:auto; border:1px solid #2a2e33; }
+    pre code { background:none; color:#d8dce0; padding:0; }
+    table { border-collapse:collapse; margin:1em 0; }
+    th,td { border:1px solid #3a3f45; padding:5px 12px; text-align:left; }
+    th { background:#23272c; color:#4ea3f0; }
+    blockquote { border-left:3px solid #e08a3c; margin:1em 0; padding:2px 14px; color:#c8cdd3; }
+    hr { border:none; border-top:1px solid #3a3f45; margin:2em 0; }
+    strong { color:#e8ecf0; }
+    td { color:#d0d4d8; }
+    li { color:#d0d4d8; }
+    h4 { color:#6db8e0; }
+  </style>
+  <script>
+  try {
+    const t = JSON.parse(localStorage.getItem('cockpit_theme_resolved'));
+    if (t) {
+      const s = document.createElement('style');
+      s.textContent = `
+        html { background-color: ; color: ; }
+        body { background: ; color: ; }
+        h1,h2,h3 { color: ; }
+        h4 { color: ; opacity:.85; }
+        h1 { border-bottom-color: ; }
+        h2 { border-bottom-color: ; }
+        a, a:visited { color: ; }
+        code { background: ; color: ; }
+        pre { background: ; border-color: ; }
+        pre code { background: none; color: ; }
+        th, td { border-color: ; color: ; }
+        th { background: ; color: ; }
+        li { color: ; }
+        strong { color: ; filter: brightness(1.1); }
+        blockquote { border-left-color: ; color: ; }
+        hr { border-top-color: ; }
+      `;
+      document.head.appendChild(s);
+    }
+  } catch(e) {}
+  </script>
+<link rel="stylesheet" href="css/icons.css">
+<style>.material-symbols-rounded{font-family:"Material Symbols Rounded";font-weight:normal;font-style:normal;font-size:1.1em;line-height:1;letter-spacing:normal;text-transform:none;display:inline-block;white-space:nowrap;direction:ltr;vertical-align:-0.2em;-webkit-font-smoothing:antialiased;font-variation-settings:"FILL" 0,"wght" 300,"GRAD" 0,"opsz" 20}.ico-fill{font-variation-settings:"FILL" 1,"wght" 300,"GRAD" 0,"opsz" 20}</style>
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">AI Cockpit — Setup Guide</h1>
+</header>
+<nav id="TOC" role="doc-toc">
+<ul>
+<li><a href="#ai-cockpit-new-machine-setup-guide"
+id="toc-ai-cockpit-new-machine-setup-guide">AI Cockpit — New-Machine
+Setup Guide</a>
+<ul>
+<li><a href="#table-of-contents" id="toc-table-of-contents">Table of
+contents</a></li>
+<li><a href="#before-you-start" id="toc-before-you-start">Before you
+start</a>
+<ul>
+<li><a href="#required" id="toc-required">Required</a></li>
+<li><a href="#minimum-recommendations"
+id="toc-minimum-recommendations">Minimum recommendations</a></li>
+<li><a href="#local-model-speed" id="toc-local-model-speed">How fast
+will local models be here?</a></li>
+<li><a href="#optional-but-useful" id="toc-optional-but-useful">Optional
+but useful</a></li>
+<li><a href="#what-the-installer-sends-and-how-to-stop-it"
+id="toc-what-the-installer-sends-and-how-to-stop-it">What the installer
+sends, and how to stop it</a></li>
+<li><a href="#what-you-should-download-before-running-these-steps"
+id="toc-what-you-should-download-before-running-these-steps">What you
+should download before running these steps</a></li>
+<li><a href="#the-installer" id="toc-the-installer">The installer — the
+setup window</a></li>
+</ul></li>
+<li><a href="#other-operating-systems"
+id="toc-other-operating-systems">Installing on macOS / Windows</a>
+<ul>
+<li><a href="#macos-setup" id="toc-macos-setup">macOS</a></li>
+<li><a href="#windows-setup" id="toc-windows-setup">Windows — via WSL2
+(not native)</a></li>
+<li><a href="#docker-setup" id="toc-docker-setup">Alternative for
+Windows or macOS — Docker</a></li>
+<li><a href="#raspberry-pi-setup" id="toc-raspberry-pi-setup">Raspberry
+Pi / ARM Linux</a></li>
+<li><a href="#everywhere-relay-setup"
+id="toc-everywhere-relay-setup">Everywhere — remote access from your
+phone</a></li>
+<li><a href="#mobile-setup" id="toc-mobile-setup">Mobile (Android /
+iOS)</a></li>
+</ul></li>
+<li><a href="#step-1" id="toc-step-1">Step 1 — System packages</a>
+<ul>
+<li><a href="#verification" id="toc-verification">Verification</a></li>
+<li><a href="#why-each-package" id="toc-why-each-package">Why each
+package?</a></li>
+</ul></li>
+<li><a href="#step-2" id="toc-step-2">Step 2 — Node.js (for Claude Code
+&amp; Gemini CLI)</a>
+<ul>
+<li><a href="#verification-1"
+id="toc-verification-1">Verification</a></li>
+</ul></li>
+<li><a href="#step-3" id="toc-step-3">Step 3 — AI CLI tools</a>
+<ul>
+<li><a href="#verification-2"
+id="toc-verification-2">Verification</a></li>
+</ul></li>
+<li><a href="#step-4" id="toc-step-4">Step 4 — Ollama and local
+models</a>
+<ul>
+<li><a href="#pulling-models" id="toc-pulling-models">Pulling
+models</a></li>
+<li><a href="#verification-3"
+id="toc-verification-3">Verification</a></li>
+<li><a href="#localai-for-dual-mode"
+id="toc-localai-for-dual-mode">LocalAI (optional — needed for Dual
+mode)</a></li>
+<li><a href="#pulling-localai-models"
+id="toc-pulling-localai-models">Pulling LocalAI models</a></li>
+<li><a href="#verification-localai"
+id="toc-verification-localai">Verification</a></li>
+</ul></li>
+<li><a href="#step-5" id="toc-step-5">Step 5 — Apache PHP setup</a>
+<ul>
+<li><a href="#verification-4"
+id="toc-verification-4">Verification</a></li>
+<li><a href="#apache-private-folders"
+id="toc-apache-private-folders">Keep the working folders
+private</a></li>
+<li><a href="#upload-limits" id="toc-upload-limits">Raising the upload
+size limit</a></li>
+</ul></li>
+<li><a href="#step-6" id="toc-step-6">Step 6 — Cockpit files</a>
+<ul>
+<li><a href="#verification-5"
+id="toc-verification-5">Verification</a></li>
+</ul></li>
+<li><a href="#step-7" id="toc-step-7">Step 7 — Permissions and
+sudoers</a>
+<ul>
+<li><a href="#verification-6"
+id="toc-verification-6">Verification</a></li>
+</ul></li>
+<li><a href="#step-8" id="toc-step-8">Step 8 — Built-in capabilities</a>
+<ul>
+<li><a href="#verification-7"
+id="toc-verification-7">Verification</a></li>
+</ul></li>
+<li><a href="#step-9" id="toc-step-9">Step 9 — Tool binaries (optional
+but recommended)</a>
+<ul>
+<li><a href="#verification-8"
+id="toc-verification-8">Verification</a></li>
+<li><a href="#optional-add-ons-for-later"
+id="toc-optional-add-ons-for-later">Optional add-ons for later</a></li>
+</ul></li>
+<li><a href="#step-10" id="toc-step-10">Step 10 — First launch
+verification</a>
+<ul>
+<li><a href="#what-to-verify" id="toc-what-to-verify">What to
+verify</a></li>
+<li><a href="#first-prompt-smoke-test"
+id="toc-first-prompt-smoke-test">First prompt smoke test</a></li>
+</ul></li>
+<li><a href="#step-10b" id="toc-step-10b">Step 10b — Companion tools
+(installed for you)</a></li>
+<li><a href="#step-11" id="toc-step-11">Step 11 — Worker provider keys
+(optional)</a></li>
+<li><a href="#step-12" id="toc-step-12">Step 12 — Personalization</a>
+<ul>
+<li><a
+href="#default-browser-for-links-cockpit-opens-outside-its-window"
+id="toc-default-browser-for-links-cockpit-opens-outside-its-window">Default
+browser (for links Cockpit opens outside its window)</a></li>
+<li><a href="#auto-start-cockpit-on-login"
+id="toc-auto-start-cockpit-on-login">Auto-start cockpit on
+login</a></li>
+<li><a href="#a-key-that-summons-cockpit"
+id="toc-a-key-that-summons-cockpit">A key that summons Cockpit</a></li>
+<li><a href="#fill-logins-from-bitwarden-optional"
+id="toc-fill-logins-from-bitwarden-optional">Fill logins from Bitwarden
+(optional)</a></li>
+<li><a href="#dark-theme-youve-already-got-this-linux-mint-dark-variant"
+id="toc-dark-theme-youve-already-got-this-linux-mint-dark-variant">Dark
+theme (you’ve already got this — Linux Mint dark variant)</a></li>
+<li><a href="#default-project" id="toc-default-project">Default
+project</a></li>
+</ul></li>
+<li><a href="#troubleshooting"
+id="toc-troubleshooting">Troubleshooting</a>
+<ul>
+<li><a href="#apache-returns-403-forbidden"
+id="toc-apache-returns-403-forbidden">Apache returns 403
+Forbidden</a></li>
+<li><a href="#bridge.php-returned-no-response"
+id="toc-bridge.php-returned-no-response">“Bridge.php returned no
+response”</a></li>
+<li><a href="#agent-session-not-found-in-tmux"
+id="toc-agent-session-not-found-in-tmux">“Agent session not found in
+tmux”</a></li>
+<li><a href="#cockpit-opens-in-a-browser-instead-of-its-own-window"
+id="toc-cockpit-opens-in-a-browser-instead-of-its-own-window">Cockpit
+opens in a browser instead of its own window</a></li>
+<li><a href="#the-window-says-cockpit-did-not-start"
+id="toc-the-window-says-cockpit-did-not-start">The window says Cockpit
+did not start</a></li>
+<li><a href="#ctrlaltc-does-nothing"
+id="toc-ctrlaltc-does-nothing">Ctrl+Alt+C does nothing</a></li>
+<li><a href="#no-tray-icon" id="toc-no-tray-icon">No tray icon</a></li>
+<li><a href="#the-cockpits-agents-answer-in-someone-elses-voice"
+id="toc-the-cockpits-agents-answer-in-someone-elses-voice">The cockpit’s
+agents answer in someone else’s voice</a></li>
+<li><a href="#ollama-no-models-in-cockpit-dropdown"
+id="toc-ollama-no-models-in-cockpit-dropdown">Ollama: “no models” in
+cockpit dropdown</a></li>
+<li><a href="#localai-no-models-in-cockpit-dropdown"
+id="toc-localai-no-models-in-cockpit-dropdown">LocalAI: “no models” in
+cockpit dropdown</a></li>
+<li><a href="#tool-detection-always-says-not-found"
+id="toc-tool-detection-always-says-not-found">Tool detection always says
+“not found”</a></li>
+<li><a href="#workers-http-401-403"
+id="toc-workers-http-401-403">Workers HTTP 401 / 403</a></li>
+<li><a href="#workers-http-429" id="toc-workers-http-429">Workers HTTP
+429</a></li>
+<li><a href="#plans-tab-is-empty-after-plan-mode-submit"
+id="toc-plans-tab-is-empty-after-plan-mode-submit">Plans tab is empty
+after Plan-mode submit</a></li>
+<li><a href="#ipv6-wget-bug-on-linux-mint"
+id="toc-ipv6-wget-bug-on-linux-mint">IPv6 / wget bug on Linux
+Mint</a></li>
+<li><a href="#apache-logs-filling-up"
+id="toc-apache-logs-filling-up">Apache logs filling up</a></li>
+</ul></li>
+<li><a href="#uninstall" id="toc-uninstall">Uninstall</a></li>
+</ul></li>
+<li><a href="#update-june-2026-additional-setup-for-new-features"
+id="toc-update-june-2026-additional-setup-for-new-features">Update —
+June 2026: Additional setup for new features</a>
+<ul>
+<li><a href="#a.-uv-uvx-for-mcp-capabilities-claude-gemini"
+id="toc-a.-uv-uvx-for-mcp-capabilities-claude-gemini">A. uv / uvx — for
+MCP capabilities (Claude &amp; Gemini)</a></li>
+<li><a href="#b.-whisper.cpp-a-model-for-offline-voice-input"
+id="toc-b.-whisper.cpp-a-model-for-offline-voice-input">B. whisper.cpp +
+a model — for offline voice input</a></li>
+<li><a href="#c.-prism-syntax-highlighting-already-vendored"
+id="toc-c.-prism-syntax-highlighting-already-vendored">C. Prism (syntax
+highlighting) — already vendored</a></li>
+<li><a href="#d.-new-config-files-created-on-first-use"
+id="toc-d.-new-config-files-created-on-first-use">D. New config files
+(created on first use)</a></li>
+</ul></li>
+<li><a href="#update-september-2026-setup-for-the-new-features"
+id="toc-update-september-2026-setup-for-the-new-features">Update —
+September 2026: Setup for the new features</a>
+<ul>
+<li><a href="#setup-bookshelf" id="toc-setup-bookshelf">E. Bookshelf —
+reading books</a></li>
+<li><a href="#setup-pdf-vision" id="toc-setup-pdf-vision">F. PDF Vision
+— rendering pages as images</a></li>
+<li><a href="#setup-music" id="toc-setup-music">G. Audio analysis and
+sheet music</a></li>
+<li><a href="#setup-intercom" id="toc-setup-intercom">H. Intercom — the
+hands-free loop</a></li>
+<li><a href="#setup-isolated-cli" id="toc-setup-isolated-cli">I.
+Isolated CLI configuration</a></li>
+<li><a href="#setup-relay-name" id="toc-setup-relay-name">J. Everywhere
+relay — naming a machine</a></li>
+</ul></li>
+</ul>
+</nav>
+<h1 id="ai-cockpit-new-machine-setup-guide">AI Cockpit — New-Machine
+Setup Guide</h1>
+<pre><code>        . | .
+         \|/
+     .--- O ---.
+    /    /|\    \
+   &#39;    / | \    &#39;
+        . | .
+
+  Fresh Linux Mint → Working AI Cockpit</code></pre>
+<blockquote>
+<p>Step-by-step setup for a Linux Mint 22 / Ubuntu 24.04 / Debian 13 /
+Fedora 44 / Manjaro machine (openSUSE takes the same installer; the
+package lists are per distro). Each step has a verification checkpoint.
+Do not skip steps. If a step fails, the Troubleshooting section at the
+end has fixes.</p>
+</blockquote>
+<hr />
+<h2 id="table-of-contents">Table of contents</h2>
+<ol type="1">
+<li><a href="#before-you-start">Before you start</a> · <a
+href="#the-installer">The installer — the setup window</a></li>
+<li><a href="#other-operating-systems">Installing on macOS /
+Windows</a></li>
+<li><a href="#step-1">Step 1 — System packages</a></li>
+<li><a href="#step-2">Step 2 — Node.js (for Claude Code &amp; Gemini
+CLI)</a></li>
+<li><a href="#step-3">Step 3 — AI CLI tools</a></li>
+<li><a href="#step-4">Step 4 — Ollama and local models</a></li>
+<li><a href="#step-5">Step 5 — Apache PHP setup</a></li>
+<li><a href="#step-6">Step 6 — Cockpit files</a></li>
+<li><a href="#step-7">Step 7 — Permissions and sudoers</a></li>
+<li><a href="#step-8">Step 8 — Built-in capabilities</a></li>
+<li><a href="#step-9">Step 9 — Tool binaries (optional but
+recommended)</a></li>
+<li><a href="#step-10">Step 10 — First launch verification</a></li>
+<li><a href="#step-10b">Step 10b — Companion tools (installed for
+you)</a></li>
+<li><a href="#step-11">Step 11 — Worker provider keys
+(optional)</a></li>
+<li><a href="#step-12">Step 12 — Personalization</a></li>
+<li><a href="#troubleshooting">Troubleshooting</a></li>
+<li><a href="#uninstall">Uninstall</a></li>
+</ol>
+<hr />
+<h2 id="before-you-start">Before you start</h2>
+<p>CI-verified — an unattended end-to-end run of
+<code>install_cockpit.sh</code> passes on a real Linux Mint/Ubuntu
+runner (GitHub Actions). Hand-tested end to end on fresh Ubuntu 24.04,
+Fedora 44 Workstation, Debian 13 (XFCE), Manjaro (KDE), openSUSE
+Tumbleweed (GNOME) and Arch (MATE) VMs, and on Windows 11 (25H2) through
+WSL2, with every option on (LocalAI, LibreTranslate, Piper, whisper.cpp,
+Aider, companion tools).</p>
+<h3 id="required">Required</h3>
+<ul>
+<li>Linux Mint 22.x / Ubuntu 24.04 / Debian 13 (or a derivative), Fedora
+44 Workstation, or Manjaro/Arch. Arch: the installer does the full
+<code>pacman -Syu</code> first (keyrings, mirrors), wires
+<code>php-apache</code> (prefork + php_module + php.ini extensions) and
+lifts <code>ProtectHome</code> on <code>httpd.service</code> so the web
+server can reach <code>~/scripts</code>. On Fedora the installer also
+sets SELinux so the web server may run your agents (only the
+<code>httpd_t</code> domain is made permissive; everything else stays
+enforcing)</li>
+<li>Sudo access on the machine</li>
+<li>4 GB RAM and ~10 GB disk to run Cockpit itself</li>
+<li>Working internet connection (only needed during setup; cockpit runs
+offline)</li>
+</ul>
+<p><strong>Nothing below is required, and the installer never refuses a
+machine.</strong> Hardware decides only how fast <em>local models</em>
+run — and local models are one of five supplier classes. Paid CLIs
+(Claude, Codex, Qwen), free REST workers (Gemini, Groq) and every tool
+need <strong>no GPU at all</strong>, so a modest laptop runs Cockpit
+perfectly well.</p>
+<h3 id="minimum-recommendations">Minimum recommendations</h3>
+<p>Four tiers. <strong>None of them is enforced</strong> — the installer
+accepts any machine and tells you what it found.</p>
+<p><strong>1. To run Cockpit — 4 GB RAM, ~10 GB disk, no GPU.</strong>
+Everything works except local models: paid CLIs (Claude, Codex, Qwen),
+free REST workers (Gemini, Groq), tools, projects, chats, the relay.
+This is a perfectly normal way to use Cockpit.</p>
+<p><strong>2. Minimum for local models at usable speed — 8 GB RAM, no
+GPU needed.</strong> Measured: <strong>3B at ~8 tok/s, 1.5B at ~16
+tok/s</strong>, both above the ~4 tok/s floor where things begin timing
+out. Core count barely matters — 2 threads measured the same as 12 —
+because CPU inference is limited by memory bandwidth, not cores.
+Bookshelf sizes its chapters to 12 KB here so one stays readable in
+under a minute.</p>
+<p><strong>3. Comfortable local models — 4 GB VRAM and 16 GB
+RAM.</strong> Measured: <strong>3B at 58 tok/s, 1.5B at 104</strong>.
+This is the sweet spot for a small card. Do not expect more from it: 7B
+drops to 5.6 tok/s, and 14B <strong>fails</strong> rather than crawls.
+Bookshelf uses 20 KB chapters here (~7s to read one).</p>
+<p><strong>4. Larger models — 8 GB VRAM for 7B-class, 12 GB+ for
+14B-class.</strong> Inferred from how much VRAM a model needs to avoid
+spilling onto the CPU; not measured here, since the test machine has 4
+GB.</p>
+<p><strong>The honest summary:</strong> Cockpit needs very little.
+<em>Local models</em> are what want hardware, and even they are usable
+with no GPU at all as long as you stay at 3B or below.</p>
+<h3 id="local-model-speed">How fast will local models be here?</h3>
+<p>Measured on a 4 GB GPU (AMD RX 6400) and a 12-core CPU, generation
+tokens per second:</p>
+<table>
+<thead>
+<tr class="header">
+<th style="text-align: left;">Model</th>
+<th style="text-align: left;">4 GB GPU</th>
+<th style="text-align: left;">CPU only (no GPU)</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: left;">1.5B</td>
+<td style="text-align: left;">104</td>
+<td style="text-align: left;">16</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">3B</td>
+<td style="text-align: left;">58</td>
+<td style="text-align: left;">8</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">3.8B</td>
+<td style="text-align: left;">12</td>
+<td style="text-align: left;">6</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">7B</td>
+<td style="text-align: left;">5.6</td>
+<td style="text-align: left;">3.7</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">14B</td>
+<td style="text-align: left;">2.3</td>
+<td style="text-align: left;">1.8</td>
+</tr>
+</tbody>
+</table>
+<p>Read it as: <strong>above ~10 tok/s feels live</strong> (faster than
+you read); <strong>below ~4 tok/s things start timing out rather than
+merely feeling slow</strong>.</p>
+<table>
+<thead>
+<tr class="header">
+<th style="text-align: left;">What you have</th>
+<th style="text-align: left;">What to expect</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: left;"><strong>No GPU</strong>, modern
+multi-core</td>
+<td style="text-align: left;">Everything works. Local models up to
+<strong>3B</strong> are</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">CPU</td>
+<td style="text-align: left;">comfortable. 7B and larger will be
+painfully slow.</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;"><strong>4 GB VRAM</strong></td>
+<td style="text-align: left;"><strong>3B-class models are the sweet
+spot</strong> (58 tok/s).</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;"></td>
+<td style="text-align: left;">7B runs but drags; <strong>14B will time
+out</strong> on long</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;"></td>
+<td style="text-align: left;">answers — it is not slow, it fails.</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;"><strong>8 GB VRAM</strong></td>
+<td style="text-align: left;">7B-class comfortably.</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;"><strong>12 GB+ VRAM</strong></td>
+<td style="text-align: left;">14B-class comfortably.</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;"><strong>RAM</strong></td>
+<td style="text-align: left;">16 GB is comfortable; 32 GB if you want
+several</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;"></td>
+<td style="text-align: left;">models resident or Dual mode.</td>
+</tr>
+</tbody>
+</table>
+<p>Two measured details worth knowing. The cliff is <strong>between 3B
+and 3.8B on a 4 GB card</strong> — 58 to 12 tok/s — because the model
+stops fitting in VRAM and spills onto the CPU. And a 4 GB card only
+earns its keep up to 3B: at 7B it is just 1.5x faster than the CPU, at
+14B 1.3x, because by then most layers are running on the CPU anyway.</p>
+<p><strong>If your machine is below these, install anyway.</strong>
+Cockpit will tell you what it detected, default the model downloads to
+<em>none</em> so you are not pulling multi-GB files that will crawl, and
+let you pick. Everything except local model speed is unaffected.</p>
+<p>Features that read long text size themselves to your hardware:
+Bookshelf splits a book into chapters small enough for the machine that
+will read them (12 KB with no GPU, 20 KB on a 4 GB card, 40 KB above
+that), so a chapter stays readable instead of taking minutes.</p>
+<h3 id="optional-but-useful">Optional but useful</h3>
+<ul>
+<li><strong>A GPU, for local models only.</strong> Nothing else uses it.
+A 4 GB card makes 3B-class models comfortable (58 tok/s measured); 8 GB
+suits 7B, 12 GB+ suits 14B. Dual mode needs enough for both models
+resident at once. The app detects your real GPU/VRAM at install time
+(AMD and NVIDIA) and sizes the local-model offers to it. With no GPU,
+local models still run on the CPU up to about 3B — see <a
+href="#local-model-speed">How fast will local models be here?</a></li>
+<li>A non-default home directory layout — the cockpit derives your home
+directory from the environment, so a standard
+<code>/home/&lt;you&gt;</code> works with no edits. If your projects
+live somewhere unusual (a second disk, a network mount), point
+<code>projects_root</code> at it in <code>paths.json</code> or from the
+Library/Config tab</li>
+</ul>
+<h3 id="what-the-installer-sends-and-how-to-stop-it">What the installer
+sends, and how to stop it</h3>
+<p><code>install_cockpit.sh</code> sends one anonymous line when it
+starts — OS, distro, architecture, package manager, coarse hardware, and
+the installer’s own version — and uses the reply to tell you whether a
+newer release exists. No username, no file paths, no file contents, no
+IP. It happens before the edition prompt because one installer serves
+every edition, so at that moment there is no choice yet to respect.</p>
+<p>Choosing <strong>Stand-alone (V1)</strong> ends it there: that line
+plus the record of your choice are the last things sent, and at the end
+you are asked once, knowing the install worked, whether to send a single
+anonymous “it succeeded” line. Decline and nothing is sent and nothing
+asks again. <strong>V2/Both</strong> additionally report install
+progress and errors, so broken installs can be found and fixed.</p>
+<p>To send nothing at all, set the environment variable before running
+it:</p>
+<div id="cbtele" class="sourceCode">
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">COCKPIT_NO_TELEMETRY</span><span class="op">=</span>1 <span class="fu">sudo</span> <span class="at">-E</span> bash install_cockpit.sh</span></code></pre></div>
+</div>
+<p>(The manual steps in this guide send nothing regardless — there is no
+installer involved.)</p>
+<h3 id="what-you-should-download-before-running-these-steps">What you
+should download before running these steps</h3>
+<p>Get this bundle ready in <code>~/Downloads/</code>:</p>
+<pre><code>cockpit-bundle/
+├─ index.html
+├─ bridge.php
+├─ files.php
+├─ status.php
+├─ models.php
+├─ saver.php
+├─ session.php
+├─ config.php
+├─ library.php
+├─ paths.json
+├─ search.php
+├─ export.php
+├─ import.php
+├─ version.php
+├─ VERSION
+├─ capabilities.php
+├─ orchestrator.php
+├─ workers.php
+├─ workers_providers.json
+├─ tools.php
+├─ tools_builtins.tar.gz
+├─ cockpit_builtins.tar.gz
+├─ install_capabilities.sh
+├─ install_cockpit.sh
+├─ build_cockpit_tarball.sh
+├─ cockpit_start.sh
+├─ cockpit_stop.sh
+├─ agent_loop.sh
+└─ crud_executor.sh</code></pre>
+<h3 id="the-installer">The installer — the setup window</h3>
+<p>The cockpit ships an automated <code>install_cockpit.sh</code> that
+does everything below end-to-end. This is the normal path; the numbered
+steps after it are the manual sequence, for understanding what happens
+or for finishing by hand if it stops.</p>
+<ul>
+<li><strong>A setup window, then it runs.</strong> On a desktop the
+script opens a wizard (<code>ckdialog</code>, shipped in the bundle,
+Free Pascal + GTK 3): edition, install user, projects folder, optional
+CLIs, models sized to the hardware it detects, media tools, desktop
+shortcut, logins — every choice first, a summary page, one
+<strong>Install</strong> button. The system password is asked once, in a
+dialog (sudo). A progress window then follows the install log phase by
+phase and says <strong>Done</strong>. It opens light or dark to match
+the desktop; the ☾/☀ button switches, and the choice is remembered. Over
+SSH, or with <code>COCKPIT_TUI=1</code>, the same questions are asked in
+the terminal up front; a question left alone for 10 minutes takes the
+default shown.</li>
+<li><strong>Full edition: the account comes first.</strong> The first
+local login on a machine takes your Cockpit account name — sign in with
+an existing account or register a free one (human check) inside the
+setup; the app’s own login is created with that name. Stand-alone asks
+only for a local login.</li>
+<li><strong>Interrupted? Re-run it.</strong> It remembers every answer
+(never passwords) in
+<code>~/.local/state/ai-cockpit/install.state</code> and asks
+<strong>Continue</strong> or <strong>Start anew</strong>. Components it
+finds already on the machine — Node, Ollama, LocalAI, LibreTranslate,
+Piper, whisper.cpp, Aider, Goose/opencode, models, the companion tools —
+are listed on a <strong>Keep</strong> page: ticked ones are left as they
+are, unticked ones are redone. Re-running over a finished install is the
+upgrade path: same answers remembered, same Keep page, files refreshed
+from the bundle.</li>
+<li><strong>Everything is logged</strong> to
+<code>~/cockpit-install.log</code> — send that file when reporting a
+problem. The final screen lists it with the web-server log.</li>
+<li><strong>Fedora:</strong> the installer also sets SELinux so the web
+server may run your agents — only the <code>httpd_t</code> domain is
+made permissive (denials are logged, not enforced); every other domain
+stays enforcing. Binaries under <code>~/.local/bin</code> get the
+<code>bin_t</code> label.</li>
+<li><strong>Tested as a stranger would</strong>, on fresh Ubuntu 24.04,
+Fedora 44 Workstation, Debian 13, Manjaro, openSUSE Tumbleweed and Arch
+(MATE) VMs with every option on. Arch: the <code>http</code> account
+ships expired and <code>httpd.service</code> sets NoNewPrivileges — the
+installer lifts both, or nothing the app launches via sudo can start.
+openSUSE: Tumbleweed enforces SELinux and its web server runs as
+<code>wwwrun:www</code> — the installer handles both.</li>
+</ul>
+<p><strong>This guide walks through the manual sequence</strong> —
+useful if you want to understand what’s happening or if the
+auto-installer fails partway.</p>
+<hr />
+<h2 id="other-operating-systems">Installing on macOS / Windows</h2>
+<p>Steps 1–12 below are written for Linux Mint/Ubuntu. Cockpit itself is
+just Apache + PHP + Bash + tmux — it runs the same way on any OS that
+can provide those, with the caveats below.</p>
+<h3 id="macos-setup">macOS</h3>
+<p><span
+style="display:inline-block;font-size:0.7rem;font-weight:700;color:#3fb950;border:1px solid rgba(63,185,80,.5);border-radius:4px;padding:1px 6px;">TESTED</span>
+<strong>macOS installs end to end on Apple Silicon</strong>, verified 25
+September 2026: the real installer runs unattended to <em>Installation
+complete</em>, httpd serves the app (HTTP 200), the VERSION file lands,
+and the runtime scripts pass a BSD-userland check.</p>
+<p>This guide previously claimed macOS was CI-tested when it was not —
+the weekly job was reporting a pass while the installer aborted part-way
+through, because it exited with a success status after dying. Making the
+job assert completion rather than trust the exit code exposed five real
+faults, all now fixed:</p>
+<ul>
+<li><code>stat -c</code> is GNU-only, and under <code>set -e</code> a
+failed command substitution aborts the script — the install ended
+silently after the Edition phase.</li>
+<li>The Homebrew <code>httpd.conf</code> was looked for at two paths
+that do not exist on a Mac, so the port move, the Cockpit alias and the
+PHP module were all skipped. httpd then came up healthy serving
+nothing.</li>
+<li><code>${var,,}</code> and <code>${var^^}</code> are <strong>bash
+4</strong>; macOS still ships <strong>bash 3.2</strong> as
+<code>/bin/bash</code>. This killed the install at Phase 5b — and
+<code>${1,,}</code> in one helper survived a build guard added to catch
+exactly that, because the guard’s pattern could not match a positional
+parameter.</li>
+<li>Three <code>sed -i</code> calls bypassed the script’s own portable
+helper. On BSD that takes the next argument as a backup suffix, so the
+agent loop would have misbehaved on every Mac, quietly.</li>
+</ul>
+<p>What the run does and does not prove: it installs, starts httpd and
+checks the app answers. It does not drive the interface.</p>
+<p>There is no separate macOS installer — the old
+<code>install_cockpit_macos.sh</code> was retired because it had genuine
+bugs on Apple Silicon and drifted from the Linux script.</p>
+<p>Genuinely native-capable — no virtualization needed. Apple removed
+PHP and disabled Apache by default since macOS 12, but both install
+cleanly via Homebrew:</p>
+<pre><code># 1. Install Homebrew if you don&#39;t have it: https://brew.sh
+brew install httpd php tmux ffmpeg pandoc
+
+# 2. whisper.cpp — build with the Metal backend (not Vulkan, that&#39;s Linux-only)
+git clone https://github.com/ggml-org/whisper.cpp
+cd whisper.cpp &amp;&amp; make
+
+# 3. Ollama — official native app, Apple Silicon Metal-accelerated
+#    https://ollama.com/download/mac
+
+# 4. Start Apache (httpd), point its docroot at the cockpit-bundle folder,
+#    same as Step 5–6 below — paths differ slightly (/opt/homebrew/... on
+#    Apple Silicon, /usr/local/... on Intel) but the steps are the same.</code></pre>
+<p>Everything else — Steps 6 through 12 — is identical to the Linux
+instructions once Apache/PHP/tmux are running. Apple Silicon (M-series)
+is the architecture being worked on; Intel Macs are not tested at
+all.</p>
+<h3 id="windows-setup">Windows — via WSL2 (not native)</h3>
+<p><span
+style="display:inline-block;font-size:0.7rem;font-weight:700;color:#3fb950;border:1px solid rgba(63,185,80,.5);border-radius:4px;padding:1px 6px;">TESTED</span>
+Hand-tested end to end on a fresh Windows 11 25H2 machine:
+<code>install_windows.ps1</code>, then the normal Linux installer inside
+WSL, then the Cockpit window opened from the Windows Start menu.
+Findings from that run are folded into the script and the notes
+below.</p>
+<p><strong>Native Windows can't run this stack as-is</strong> —
+<code>agent_loop.sh</code> is built around <code>tmux</code>, which has
+no real Windows equivalent. The supported path is <strong>WSL2 (Windows
+Subsystem for Linux)</strong>: a real Ubuntu environment running
+alongside Windows. Cockpit then runs in its own window (the same native
+WebKitGTK window as on Linux, shown by WSLg), opened from a Windows
+Start-menu / Desktop shortcut; its Terminal, Files and Browser buttons
+open gnome-terminal, Nautilus and the Cockpit Browser as ordinary
+windows next to your Windows apps.</p>
+<h4 id="windows-one-click">Recommended — one-click installer</h4>
+<p>Download the bundle with Edge from the <a
+href="download.php">download page</a>, right-click
+<code>cockpit_install.tar.gz</code> → <strong>Extract All</strong>
+(Windows 11 unpacks .tar.gz natively), then run
+<code>install_windows.ps1</code> from the extracted <code>cockpit</code>
+folder in an elevated PowerShell:</p>
+<pre><code># Start → type powershell → &quot;Run as administrator&quot;, then:
+cd $HOME\Downloads\cockpit_install\cockpit
+powershell -ep bypass .\install_windows.ps1</code></pre>
+<p>It does the whole Windows side: enables WSL2 and installs
+Ubuntu-24.04 (offers the one reboot Windows needs, and continues where
+it left off when you run it again), creates the Linux user
+<code>cockpit</code> <strong>unattended</strong> (shows its random
+password once — that is the password <code>sudo</code> asks for inside
+WSL, not your Windows one), keeps <code>systemd</code> on inside the
+distro, writes <code>%USERPROFILE%\.wslconfig</code>
+(<code>vmIdleTimeout=-1</code> so Cockpit stays up when no terminal is
+open, <code>networkingMode=mirrored</code> so <code>localhost</code>
+reaches it from every Windows browser), installs VS Code + its
+<strong>WSL</strong> extension, and puts an <strong>AI Cockpit</strong>
+shortcut in the Start menu and on the Desktop.</p>
+<p>It does <strong>not</strong> run <code>install_cockpit.sh</code> for
+you. When it finishes it prints the exact next line — open the
+Ubuntu-24.04 app and paste it:</p>
+<pre><code>cp -r /mnt/c/Users/&lt;you&gt;/Downloads/cockpit_install/cockpit ~/cockpit &amp;&amp; cd ~/cockpit &amp;&amp; bash install_cockpit.sh</code></pre>
+<p>From there it is the Linux installer, setup window included (WSLg
+shows it). Then click <strong>AI Cockpit</strong> on the Desktop.</p>
+<h4 id="windows-manual">Manual path (if you'd rather not run the
+script)</h4>
+<pre><code># 1. Install WSL2 + Ubuntu (PowerShell, as Administrator)
+wsl --install -d Ubuntu-24.04
+
+# 2. Reboot when prompted, then open the new &quot;Ubuntu-24.04&quot; Start Menu entry
+#    and finish the Ubuntu first-run (create a Linux username/password —
+#    unrelated to your Windows login).
+
+# 3. In PowerShell, write %USERPROFILE%\.wslconfig with these two lines,
+#    then run  wsl --shutdown  once:
+#      [wsl2]
+#      vmIdleTimeout=-1
+#      networkingMode=mirrored
+#    (without them WSL stops Cockpit a minute after the last terminal closes,
+#    and Edge/Chrome cannot reach http://localhost/cockpit/ — it is
+#    forwarded on IPv6 only in the default NAT mode.)
+
+# 4. Inside the Ubuntu shell, follow Steps 1–12 of this guide exactly
+#    as written — it&#39;s a real Ubuntu 24.04, nothing Windows-specific
+#    from here on. Open Cockpit with  cockpit-start  (its own window), or
+#    from your Windows browser at http://localhost/cockpit/  (type the
+#    http:// — Edge silently upgrades bare addresses to https).</code></pre>
+<p>Then install VS Code + its "WSL" (Remote-WSL) extension yourself, and
+use <strong>Ctrl+Shift+P → "WSL: Connect to WSL"</strong> to open
+project folders with full native-tool convenience at full WSL-native
+filesystem speed — this is the setup we recommend project files live
+under (inside WSL's own filesystem), not on the Windows side reached via
+<code>/mnt/c/...</code>, which has real I/O overhead for the kind of
+many-small-file CRUD Cockpit's agents do.</p>
+<p><strong>Ollama — run it natively on Windows, not inside WSL.</strong>
+Ollama has a real native Windows installer with full NVIDIA CUDA GPU
+support — better performance than running it inside the WSL2 virtual
+machine. Install it normally from <a
+href="https://ollama.com/download/windows">ollama.com/download/windows</a>,
+then point Cockpit's Ollama connection (inside WSL) at the Windows
+host's IP instead of <code>localhost</code>:</p>
+<pre><code># Inside WSL, find the Windows host IP:
+cat /etc/resolv.conf | grep nameserver
+# → use that IP with Ollama&#39;s port, e.g. http://172.x.x.x:11434
+# Set OLLAMA_HOST=0.0.0.0 on the Windows side (System Environment
+# Variables) so it accepts connections from WSL, not just localhost.</code></pre>
+<h4 id="wsl-license-stability">Optional — stable machine identity across
+WSL reinstalls</h4>
+<p>WSL2's own machine identity is <strong>not stable</strong> —
+reinstalling the Ubuntu distro (or certain Windows updates) resets it,
+which would make Cockpit's SaaS licensing think it's a brand-new machine
+each time. To avoid that, copy the Windows-native
+<code>cockpit_auth.exe</code> build to a fixed path Windows and WSL can
+both see, and Cockpit will automatically prefer it for machine
+identification (falls back to the normal Linux binary if this isn't set
+up — nothing breaks either way):</p>
+<pre><code># From Windows (PowerShell or File Explorer):
+mkdir C:\CockpitAuth
+copy cockpit_auth.exe C:\CockpitAuth\cockpit_auth.exe
+# That&#39;s it — Cockpit (running in WSL) detects WSL automatically and
+# reaches this .exe at /mnt/c/CockpitAuth/cockpit_auth.exe.</code></pre>
+<h3 id="docker-setup">Alternative for Windows or macOS — Docker</h3>
+<p><span
+style="display:inline-block;font-size:0.7rem;font-weight:700;color:#8b949e;border:1px solid rgba(139,148,158,.5);border-radius:4px;padding:1px 6px;">NOT
+TESTED YET</span> Written and reviewed carefully, but this bundle hasn't
+actually been built/run end-to-end yet — please <a
+href="https://cockpit.ruggi.site/qa.php">let us know how it goes</a> if
+you try it.</p>
+<p>One <code>Dockerfile</code> + <code>docker-compose.yml</code>, same
+on both OSes — Docker Desktop already runs on WSL2 (Windows) or Apple's
+virtualization framework (macOS), so this sidesteps writing separate
+native/WSL2/Homebrew instructions per OS. Ollama <strong>and LocalAI
+both run inside the same container</strong> as Cockpit, not as separate
+ones — the app's PHP backends call both at hardcoded local addresses
+(<code>127.0.0.1:11434</code> / <code>127.0.0.1:8080</code>), not a
+configurable host, so split containers wouldn't be reachable. Both
+agents' models persist in their own named Docker volumes across
+rebuilds.</p>
+<p>Download the <a href="download.php">Docker bundle</a> from the
+download page (separate small zip — Dockerfile, compose file, entrypoint
+script, and a step-by-step README; it doesn't duplicate the app itself,
+you extract the main tarball's <code>web/</code> folder alongside it).
+Not yet published to Docker Hub, so you build locally:</p>
+<pre><code>docker compose build      # first time, or after updating web/
+docker compose up -d
+# One-time: authenticate the agent CLIs
+docker compose exec cockpit su - cockpit -c claude
+docker compose exec cockpit su - cockpit -c gemini
+# Then open in your normal browser:
+# http://localhost:8080</code></pre>
+<p>GPU passthrough to Ollama only works via Docker on a Linux host with
+the NVIDIA Container Toolkit (uncomment the <code>deploy:</code> block
+in <code>docker-compose.yml</code>) — Docker Desktop on Windows/macOS
+doesn't pass a GPU through to containers, so Ollama runs CPU-only there,
+fine for small (1–4B) models.</p>
+<h3 id="raspberry-pi-setup">Raspberry Pi / ARM Linux</h3>
+<p>CI-verified — an unattended end-to-end run of
+<code>install_cockpit.sh</code> passes on a real ARM64 runner (GitHub
+Actions).</p>
+<p>A Pi running 64-bit Raspberry Pi OS (Debian-based) is <strong>full,
+real Linux</strong> — Apache, PHP, bash, and tmux all work exactly as
+they do on any x86_64 Linux box. <strong>Steps 1–12 of this guide apply
+unchanged</strong> — there's no separate "Pi edition" of the install
+process. A Pi is also a legitimate, popular way to host Ollama itself as
+a small always-on local model server, even for other machines on your
+network to reach.</p>
+<p>The one Pi-specific piece is <code>cockpit_auth</code> — the compiled
+SaaS-licensing binary needs its own ARM build (a Pi can't run the x86_64
+binary). That build now exists — see the download page for the ARM Linux
+binary alongside the x86_64/Windows/macOS ones.</p>
+<p>Realistic expectations: a Pi 4/5 with 8GB RAM can run small Ollama
+models (1–4B parameters) at reasonable speed for CRUD-style combo work;
+it is not going to run anything comparable to a desktop GPU for larger
+models — treat it as a small-model or remote-Ollama-target machine, not
+a general-purpose Cockpit workstation replacement.</p>
+<h3 id="everywhere-relay-setup">Everywhere — remote access from your
+phone</h3>
+<p>The Everywhere tier lets a phone or any other browser talk to a
+Cockpit already running on your home rig, without port-forwarding or a
+static IP. Your rig has no open port; both sides poll a small queue on
+<code>cockpit.ruggi.site</code> over plain HTTPS — nothing to configure
+on your router.</p>
+<p><strong>Status: built, not yet deployed.</strong> The relay server,
+the home-rig poller, and the phone page all exist in the codebase as of
+this guide's last update, but the database schema hasn't been run
+against the live server yet and none of it has been tested end-to-end.
+Treat this section as "how it will work", not a guarantee it's live
+right now.</p>
+<h4 id="one-time-setup-on-your-home-rig">One-time setup on your home
+rig</h4>
+<ol type="1">
+<li><p>Make sure your account is signed in and has the Max plan (or the
+Everywhere add-on) — check <code>Settings → Account</code>.</p></li>
+<li><p>Create
+<code>~/scripts/cockpit_data/relay_poller_credentials.json</code> with
+your local Cockpit login (the same username/password you use to open the
+web UI on this machine):</p>
+<pre><code>{&quot;username&quot;: &quot;your-local-username&quot;, &quot;password&quot;: &quot;your-local-password&quot;}</code></pre>
+<p>This lets the relay poller submit prompts to your own local Cockpit
+the same way your browser does — it's a local secret file, never
+uploaded anywhere, same as the Gemini API key file.</p></li>
+<li><p>Start the poller: <code>~/scripts/relay_start.sh</code> (stop it
+with <code>~/scripts/relay_stop.sh</code>). It no-ops safely if you're
+not signed in or not on an Everywhere-capable tier.</p></li>
+</ol>
+<h4 id="from-your-phone">From your phone</h4>
+<p>Open <code>cockpit.ruggi.site/relay.html</code>, sign in with the
+same account, pick your rig from the list (skipped automatically if you
+only have one), and send a message — it runs on your home rig's
+Claude/Gemini/ Ollama session exactly as if you'd typed it there, and
+the reply streams back to your phone. A green dot means the rig's poller
+checked in within the last 30 seconds; grey means it's offline or not
+started.</p>
+<h3 id="mobile-setup">Mobile (Android / iOS)</h3>
+<p>AI Cockpit runs on Linux, ARM Linux, macOS, and Windows (via WSL2).
+Every other system — Android, iOS, ChromeOS, anything else — connects
+through the <strong>Everywhere relay</strong> page on the site (above)
+instead: no install, just a browser and a free account with the
+Everywhere tier.</p>
+<hr />
+<h2 id="step-1">Step 1 — System packages</h2>
+<p>Install Apache, PHP, and the supporting CLI tools that the cockpit
+depends on:</p>
+<div id="cb3" class="sourceCode">
+<div class="sourceCode" id="cb12"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> apt update</span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> apt install <span class="at">-y</span> nala</span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> nala install <span class="at">-y</span> <span class="dt">\</span></span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a>    apache2 <span class="dt">\</span></span>
+<span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a>    php8.3 <span class="dt">\</span></span>
+<span id="cb12-6"><a href="#cb12-6" aria-hidden="true" tabindex="-1"></a>    php8.3-cli <span class="dt">\</span></span>
+<span id="cb12-7"><a href="#cb12-7" aria-hidden="true" tabindex="-1"></a>    php8.3-curl <span class="dt">\</span></span>
+<span id="cb12-8"><a href="#cb12-8" aria-hidden="true" tabindex="-1"></a>    php8.3-mbstring <span class="dt">\</span></span>
+<span id="cb12-9"><a href="#cb12-9" aria-hidden="true" tabindex="-1"></a>    php8.3-xml <span class="dt">\</span></span>
+<span id="cb12-10"><a href="#cb12-10" aria-hidden="true" tabindex="-1"></a>    php8.3-zip <span class="dt">\</span></span>
+<span id="cb12-11"><a href="#cb12-11" aria-hidden="true" tabindex="-1"></a>    libapache2-mod-php8.3 <span class="dt">\</span></span>
+<span id="cb12-12"><a href="#cb12-12" aria-hidden="true" tabindex="-1"></a>    tmux <span class="dt">\</span></span>
+<span id="cb12-13"><a href="#cb12-13" aria-hidden="true" tabindex="-1"></a>    jq <span class="dt">\</span></span>
+<span id="cb12-14"><a href="#cb12-14" aria-hidden="true" tabindex="-1"></a>    curl <span class="dt">\</span></span>
+<span id="cb12-15"><a href="#cb12-15" aria-hidden="true" tabindex="-1"></a>    git <span class="dt">\</span></span>
+<span id="cb12-16"><a href="#cb12-16" aria-hidden="true" tabindex="-1"></a>    util-linux <span class="dt">\</span></span>
+<span id="cb12-17"><a href="#cb12-17" aria-hidden="true" tabindex="-1"></a>    xed <span class="dt">\</span></span>
+<span id="cb12-18"><a href="#cb12-18" aria-hidden="true" tabindex="-1"></a>    zsh <span class="dt">\</span></span>
+<span id="cb12-19"><a href="#cb12-19" aria-hidden="true" tabindex="-1"></a>    build-essential <span class="dt">\</span></span>
+<span id="cb12-20"><a href="#cb12-20" aria-hidden="true" tabindex="-1"></a>    ca-certificates <span class="dt">\</span></span>
+<span id="cb12-21"><a href="#cb12-21" aria-hidden="true" tabindex="-1"></a>    libwebkit2gtk-4.1-0 <span class="dt">\</span></span>
+<span id="cb12-22"><a href="#cb12-22" aria-hidden="true" tabindex="-1"></a>    libnotify4 <span class="dt">\</span></span>
+<span id="cb12-23"><a href="#cb12-23" aria-hidden="true" tabindex="-1"></a>    libayatana-appindicator3-1</span></code></pre></div>
+</div>
+<h3 id="verification">Verification</h3>
+<div id="cb4" class="sourceCode">
+<div class="sourceCode" id="cb13"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="ex">apache2</span> <span class="at">-v</span>          <span class="co"># Should show 2.4.x</span></span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="ex">php</span> <span class="at">-v</span>              <span class="co"># Should show 8.3.x</span></span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a><span class="ex">tmux</span> <span class="at">-V</span>             <span class="co"># Should show 3.x or higher</span></span>
+<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a><span class="ex">jq</span> <span class="at">--version</span>        <span class="co"># Should show jq-1.6 or 1.7</span></span>
+<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a><span class="fu">which</span> curl          <span class="co"># Should show /usr/bin/curl</span></span></code></pre></div>
+</div>
+<p>If any command says “not found”, re-run the install for that
+package.</p>
+<h3 id="why-each-package">Why each package?</h3>
+<ul>
+<li><strong>apache2 + PHP 8.3</strong> — serves the cockpit web UI and
+handles all backend logic</li>
+<li><strong>php8.3-curl</strong> — needed by <code>bridge.php</code>,
+<code>workers.php</code>, <code>orchestrator.php</code> for HTTP</li>
+<li><strong>php8.3-mbstring</strong> — string handling for non-ASCII
+content (accents and every script)</li>
+<li><strong>php8.3-xml</strong> — DOM parser for <code>search.php</code>
+(better than regex for HTML scraping)</li>
+<li><strong>php8.3-zip</strong> — chat export/import via ZIP
+archives</li>
+<li><strong>tmux</strong> — runs each AI agent in a persistent
+session</li>
+<li><strong>jq</strong> — JSON parsing in shell scripts (capabilities,
+workers, tools auto-route)</li>
+<li><strong>xed</strong> — your preferred text editor</li>
+<li><strong>zsh</strong> — your preferred shell</li>
+<li><strong>libwebkit2gtk-4.1-0 + libnotify4 +
+libayatana-appindicator3-1</strong> — the runtime for Cockpit’s own
+window (<code>cockpit_shell</code>), its desktop notifications and its
+tray icon. Without them Cockpit still runs, in a browser window instead
+— see <a href="USER_GUIDE.html#cockpit-window">The Cockpit window</a> in
+the User Guide.</li>
+</ul>
+<hr />
+<h2 id="step-2">Step 2 — Node.js (for Claude Code &amp; Gemini CLI)</h2>
+<p>Node.js is needed for <code>npx</code> (which launches MCP servers)
+and for the official Claude Code and Gemini CLI tools.</p>
+<div id="cb5" class="sourceCode">
+<div class="sourceCode" id="cb14"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="co"># NodeSource repository for current LTS</span></span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-fsSL</span> https://deb.nodesource.com/setup_20.x <span class="kw">|</span> <span class="fu">sudo</span> <span class="at">-E</span> bash <span class="at">-</span></span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> nala install <span class="at">-y</span> nodejs</span>
+<span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a><span class="co"># Set up a global npm prefix in user-space (avoids sudo for global installs)</span></span>
+<span id="cb14-6"><a href="#cb14-6" aria-hidden="true" tabindex="-1"></a><span class="fu">mkdir</span> <span class="at">-p</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.npm-global&quot;</span></span>
+<span id="cb14-7"><a href="#cb14-7" aria-hidden="true" tabindex="-1"></a><span class="ex">npm</span> config set prefix <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.npm-global&quot;</span></span>
+<span id="cb14-8"><a href="#cb14-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb14-9"><a href="#cb14-9" aria-hidden="true" tabindex="-1"></a><span class="co"># Add to PATH (zsh)</span></span>
+<span id="cb14-10"><a href="#cb14-10" aria-hidden="true" tabindex="-1"></a><span class="bu">echo</span> <span class="st">&#39;export PATH=&quot;$HOME/.npm-global/bin:$PATH&quot;&#39;</span> <span class="op">&gt;&gt;</span> ~/.zshrc</span>
+<span id="cb14-11"><a href="#cb14-11" aria-hidden="true" tabindex="-1"></a><span class="bu">echo</span> <span class="st">&#39;export PATH=&quot;$HOME/.npm-global/bin:$PATH&quot;&#39;</span> <span class="op">&gt;&gt;</span> ~/.bashrc</span></code></pre></div>
+</div>
+<p>Reload your shell config or open a fresh terminal.</p>
+<h3 id="verification-1">Verification</h3>
+<div id="cb6" class="sourceCode">
+<div class="sourceCode" id="cb15"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="ex">node</span> <span class="at">--version</span>      <span class="co"># Should show v20.x</span></span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="ex">npm</span> <span class="at">--version</span>       <span class="co"># Should show 10.x</span></span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a><span class="bu">echo</span> <span class="va">$PATH</span> <span class="kw">|</span> <span class="fu">tr</span> <span class="st">&#39;:&#39;</span> <span class="st">&#39;\n&#39;</span> <span class="kw">|</span> <span class="fu">grep</span> npm-global</span>
+<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a>                    <span class="co"># Should show /home/&lt;you&gt;/.npm-global/bin</span></span></code></pre></div>
+</div>
+<hr />
+<h2 id="step-3">Step 3 — AI CLI tools</h2>
+<p>Install the three CLI tools the cockpit dispatches to:</p>
+<div id="cb7" class="sourceCode">
+<div class="sourceCode" id="cb16"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Anthropic Claude Code</span></span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="ex">npm</span> install <span class="at">-g</span> @anthropic-ai/claude-code</span>
+<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Google Gemini CLI</span></span>
+<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a><span class="ex">npm</span> install <span class="at">-g</span> @google/gemini-cli</span>
+<span id="cb16-6"><a href="#cb16-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-7"><a href="#cb16-7" aria-hidden="true" tabindex="-1"></a><span class="co"># (Ollama is installed in Step 4)</span></span></code></pre></div>
+</div>
+<p>You’ll need to authenticate each one before the cockpit can use
+it:</p>
+<div id="cb8" class="sourceCode">
+<div class="sourceCode" id="cb17"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Claude — opens a browser for OAuth, you sign in to your Anthropic account</span></span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a><span class="ex">claude</span></span>
+<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-4"><a href="#cb17-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Gemini — likewise, OAuth flow with your Google account</span></span>
+<span id="cb17-5"><a href="#cb17-5" aria-hidden="true" tabindex="-1"></a><span class="ex">gemini</span></span></code></pre></div>
+</div>
+<p>After both authenticate successfully, you can <code>Ctrl-D</code> out
+of each.</p>
+<h3 id="verification-2">Verification</h3>
+<div id="cb9" class="sourceCode">
+<div class="sourceCode" id="cb18"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="ex">claude</span> <span class="at">--version</span>     <span class="co"># Should show a version string</span></span>
+<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a><span class="ex">gemini</span> <span class="at">--version</span>     <span class="co"># Likewise</span></span>
+<span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb18-4"><a href="#cb18-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Sanity smoke tests</span></span>
+<span id="cb18-5"><a href="#cb18-5" aria-hidden="true" tabindex="-1"></a><span class="bu">echo</span> <span class="st">&quot;Say hello in one word&quot;</span> <span class="kw">|</span> <span class="ex">claude</span> <span class="at">--print</span></span>
+<span id="cb18-6"><a href="#cb18-6" aria-hidden="true" tabindex="-1"></a><span class="bu">echo</span> <span class="st">&quot;Say hello in one word&quot;</span> <span class="kw">|</span> <span class="ex">gemini</span> <span class="at">--prompt</span></span></code></pre></div>
+</div>
+<p>Both should return a response within 5–15 seconds.</p>
+<hr />
+<h2 id="step-4">Step 4 — Ollama and local models</h2>
+<div id="cb10" class="sourceCode">
+<div class="sourceCode" id="cb19"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Ollama installer — official one-liner</span></span>
+<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-fsSL</span> https://ollama.com/install.sh <span class="kw">|</span> <span class="fu">sh</span></span>
+<span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb19-4"><a href="#cb19-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Configure non-default model storage location</span></span>
+<span id="cb19-5"><a href="#cb19-5" aria-hidden="true" tabindex="-1"></a><span class="fu">mkdir</span> <span class="at">-p</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/ollama/models&quot;</span></span>
+<span id="cb19-6"><a href="#cb19-6" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> systemctl edit ollama.service</span></code></pre></div>
+</div>
+<p>In the editor that opens, paste:</p>
+<div id="cb11" class="sourceCode">
+<div class="sourceCode" id="cb20"><pre
+class="sourceCode ini"><code class="sourceCode ini"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="kw">[Service]</span></span>
+<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a><span class="dt">Environment</span><span class="ot">=</span><span class="st">&quot;OLLAMA_MODELS=/home/&lt;you&gt;/ollama/models&quot;</span></span></code></pre></div>
+</div>
+<p>Save and exit. Then:</p>
+<div id="cb12" class="sourceCode">
+<div class="sourceCode" id="cb21"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> systemctl daemon-reload</span>
+<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> systemctl restart ollama</span>
+<span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> systemctl enable ollama</span>
+<span id="cb21-4"><a href="#cb21-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb21-5"><a href="#cb21-5" aria-hidden="true" tabindex="-1"></a><span class="co"># Also export for interactive shells</span></span>
+<span id="cb21-6"><a href="#cb21-6" aria-hidden="true" tabindex="-1"></a><span class="bu">echo</span> <span class="st">&#39;export OLLAMA_MODELS=&quot;$HOME/ollama/models&quot;&#39;</span> <span class="op">&gt;&gt;</span> ~/.zshrc</span>
+<span id="cb21-7"><a href="#cb21-7" aria-hidden="true" tabindex="-1"></a><span class="bu">echo</span> <span class="st">&#39;export OLLAMA_MODELS=&quot;$HOME/ollama/models&quot;&#39;</span> <span class="op">&gt;&gt;</span> ~/.bashrc</span></code></pre></div>
+</div>
+<h3 id="pulling-models">Pulling models</h3>
+<p>The cockpit’s default tier-1 recommendations:</p>
+<div id="cb13" class="sourceCode">
+<div class="sourceCode" id="cb22"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Tier 1 — best for CRUD and context (3 GB VRAM)</span></span>
+<span id="cb22-2"><a href="#cb22-2" aria-hidden="true" tabindex="-1"></a><span class="ex">ollama</span> pull qwen2.5-coder:1.5b</span>
+<span id="cb22-3"><a href="#cb22-3" aria-hidden="true" tabindex="-1"></a><span class="ex">ollama</span> pull qwen2.5-coder:7b</span>
+<span id="cb22-4"><a href="#cb22-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb22-5"><a href="#cb22-5" aria-hidden="true" tabindex="-1"></a><span class="co"># Optional — tool-calling fine-tune</span></span>
+<span id="cb22-6"><a href="#cb22-6" aria-hidden="true" tabindex="-1"></a><span class="ex">ollama</span> pull MFDoom/deepseek-r1-tool-calling:7b</span></code></pre></div>
+</div>
+<h3 id="verification-3">Verification</h3>
+<div id="cb14" class="sourceCode">
+<div class="sourceCode" id="cb23"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a><span class="ex">ollama</span> list                     <span class="co"># Should list pulled models</span></span>
+<span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a><span class="ex">ollama</span> show qwen2.5-coder:1.5b    <span class="co"># Should show model details</span></span>
+<span id="cb23-3"><a href="#cb23-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb23-4"><a href="#cb23-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Smoke test</span></span>
+<span id="cb23-5"><a href="#cb23-5" aria-hidden="true" tabindex="-1"></a><span class="bu">echo</span> <span class="st">&quot;Say hello in one word&quot;</span> <span class="kw">|</span> <span class="ex">ollama</span> run qwen2.5-coder:1.5b</span></code></pre></div>
+</div>
+<p>If <code>ollama list</code> shows the storage path is
+<code>/usr/share/ollama/...</code>, the custom path didn’t take effect.
+Re-check the systemd override file:</p>
+<div id="cb15" class="sourceCode">
+<div class="sourceCode" id="cb24"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="ex">systemctl</span> cat ollama.service <span class="kw">|</span> <span class="fu">grep</span> OLLAMA_MODELS</span></code></pre></div>
+</div>
+<h3 id="localai-for-dual-mode">LocalAI (optional — needed for Dual
+mode)</h3>
+<p>Skip this if you only plan to use Ollama. Dual mode (Card 3 — both
+backends genuinely in parallel, for chat and Power Combos) needs LocalAI
+actually running too. The automated installer does all of this for you;
+here's the manual equivalent.</p>
+<pre><code># Download the checksum-verified binary (Linux amd64 shown — see
+# install_cockpit.sh for the arm64 asset/checksum)
+mkdir -p ~/.local/bin
+curl -fL https://github.com/mudler/LocalAI/releases/download/v4.7.1/local-ai-v4.7.1-linux-amd64 \
+  -o ~/.local/bin/local-ai
+chmod +x ~/.local/bin/local-ai
+
+# Verify the checksum before trusting it
+echo &quot;2a4ccf4cd7ecc76fb6dde8d847a6d1448b67d7cf84fdcb4285cd002f42a9c801  $HOME/.local/bin/local-ai&quot; | sha256sum -c -
+
+mkdir -p ~/localai/models ~/localai/data ~/localai/backends
+sudo systemctl edit --force --full localai.service</code></pre>
+<p>In the editor that opens, paste (LocalAI's own paths default to
+CWD-relative, which breaks under systemd — every path below is explicit
+so it never depends on the caller's working directory):</p>
+<pre><code>[Unit]
+Description=LocalAI Service
+After=network-online.target
+
+[Service]
+WorkingDirectory=/home/YOUR_USERNAME
+ExecStart=/home/YOUR_USERNAME/.local/bin/local-ai run --address 127.0.0.1:8080
+Environment=&quot;LOCALAI_MODELS_PATH=/home/YOUR_USERNAME/localai/models&quot;
+Environment=&quot;LOCALAI_DATA_PATH=/home/YOUR_USERNAME/localai/data&quot;
+Environment=&quot;LOCALAI_BACKENDS_PATH=/home/YOUR_USERNAME/localai/backends&quot;
+User=YOUR_USERNAME
+Group=YOUR_USERNAME
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target</code></pre>
+<p>Save and exit, replacing <code>YOUR_USERNAME</code> above with your
+actual username first. Then:</p>
+<pre><code>sudo systemctl daemon-reload
+sudo systemctl enable --now localai
+
+# Wait for it to come up, then confirm
+curl http://127.0.0.1:8080/</code></pre>
+<h3 id="pulling-localai-models">Pulling LocalAI models</h3>
+<p>LocalAI has no <code>pull</code> command — models are requested
+through its own HTTP API. The cockpit's default suggestions (LocalAI
+equivalents of the Ollama Tier-1 set above, same job/size class, run
+through LocalAI's llama.cpp backend instead):</p>
+<pre><code>curl -X POST http://127.0.0.1:8080/models/apply \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#39;{&quot;id&quot;:&quot;qwen3-1.7b&quot;}&#39;
+
+# Returns a job uuid — poll it until &quot;processed&quot;:true
+curl http://127.0.0.1:8080/models/jobs/&lt;uuid&gt;</code></pre>
+<p>Other suggested ids: <code>llama-3.2-3b-instruct:q4_k_m</code>,
+<code>deepseek-r1-distill-qwen-1.5b</code>, <code>qwen3-8b</code>,
+<code>qwen3-4b</code>. Gallery ids change between LocalAI releases —
+<code>curl -s localhost:8080/models/available</code> lists what this
+version knows. If an id 404s, browse <a
+href="http://127.0.0.1:8080/models/available"
+class="uri">http://127.0.0.1:8080/models/available</a> on the running
+instance for the exact current gallery id.</p>
+<h3 id="verification-localai">Verification</h3>
+<pre><code>curl http://127.0.0.1:8080/v1/models   # Should list pulled models
+systemctl status localai               # Should be active (running)
+
+# Smoke test
+curl http://127.0.0.1:8080/v1/chat/completions \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#39;{&quot;model&quot;:&quot;qwen3-1.7b&quot;,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;Say hello in one word&quot;}]}&#39;</code></pre>
+<hr />
+<h2 id="step-5">Step 5 — Apache PHP setup</h2>
+<p>The cockpit runs as a normal Apache vhost at
+<code>/var/www/html/cockpit/</code>.</p>
+<div id="cb16" class="sourceCode">
+<div class="sourceCode" id="cb30"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Make sure mod_php is enabled</span></span>
+<span id="cb30-2"><a href="#cb30-2" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> a2enmod php8.3</span>
+<span id="cb30-3"><a href="#cb30-3" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> a2enmod rewrite       <span class="co"># Used by some PHP endpoints</span></span>
+<span id="cb30-4"><a href="#cb30-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb30-5"><a href="#cb30-5" aria-hidden="true" tabindex="-1"></a><span class="co"># Set timezone in PHP so dates are correct</span></span>
+<span id="cb30-6"><a href="#cb30-6" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> bash <span class="at">-c</span> <span class="st">&#39;cat &gt; /etc/php/8.3/apache2/conf.d/99-cockpit.ini&#39;</span> <span class="op">&lt;&lt; &#39;EOF&#39;</span></span>
+<span id="cb30-7"><a href="#cb30-7" aria-hidden="true" tabindex="-1"></a><span class="st">date.timezone = UTC        # or your own, e.g. Europe/Berlin -- `timedatectl` shows it</span></span>
+<span id="cb30-8"><a href="#cb30-8" aria-hidden="true" tabindex="-1"></a><span class="st">upload_max_filesize = 64M</span></span>
+<span id="cb30-9"><a href="#cb30-9" aria-hidden="true" tabindex="-1"></a><span class="st">post_max_size = 64M</span></span>
+<span id="cb30-10"><a href="#cb30-10" aria-hidden="true" tabindex="-1"></a><span class="st">memory_limit = 256M</span></span>
+<span id="cb30-11"><a href="#cb30-11" aria-hidden="true" tabindex="-1"></a><span class="st">max_execution_time = 300</span></span>
+<span id="cb30-12"><a href="#cb30-12" aria-hidden="true" tabindex="-1"></a><span class="op">EOF</span></span>
+<span id="cb30-13"><a href="#cb30-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb30-14"><a href="#cb30-14" aria-hidden="true" tabindex="-1"></a><span class="co"># Same settings for CLI PHP</span></span>
+<span id="cb30-15"><a href="#cb30-15" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> cp /etc/php/8.3/apache2/conf.d/99-cockpit.ini /etc/php/8.3/cli/conf.d/</span>
+<span id="cb30-16"><a href="#cb30-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb30-17"><a href="#cb30-17" aria-hidden="true" tabindex="-1"></a><span class="co"># Restart Apache</span></span>
+<span id="cb30-18"><a href="#cb30-18" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> systemctl restart apache2</span>
+<span id="cb30-19"><a href="#cb30-19" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> systemctl enable apache2</span></code></pre></div>
+</div>
+<h3 id="verification-4">Verification</h3>
+<div id="cb17" class="sourceCode">
+<div class="sourceCode" id="cb31"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Apache should respond</span></span>
+<span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-I</span> http://localhost/   <span class="co"># Should return HTTP/1.1 200 OK</span></span>
+<span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb31-4"><a href="#cb31-4" aria-hidden="true" tabindex="-1"></a><span class="co"># PHP should be enabled</span></span>
+<span id="cb31-5"><a href="#cb31-5" aria-hidden="true" tabindex="-1"></a><span class="bu">echo</span> <span class="st">&quot;&lt;?php phpinfo(); ?&gt;&quot;</span> <span class="kw">|</span> <span class="fu">sudo</span> tee /var/www/html/phpinfo.php <span class="op">&gt;</span> /dev/null</span>
+<span id="cb31-6"><a href="#cb31-6" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-s</span> http://localhost/phpinfo.php <span class="kw">|</span> <span class="fu">grep</span> <span class="st">&quot;PHP Version&quot;</span></span>
+<span id="cb31-7"><a href="#cb31-7" aria-hidden="true" tabindex="-1"></a>                            <span class="co"># Should show &quot;PHP Version =&gt; 8.3.x&quot;</span></span>
+<span id="cb31-8"><a href="#cb31-8" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> rm /var/www/html/phpinfo.php</span>
+<span id="cb31-9"><a href="#cb31-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb31-10"><a href="#cb31-10" aria-hidden="true" tabindex="-1"></a><span class="co"># Verify timezone</span></span>
+<span id="cb31-11"><a href="#cb31-11" aria-hidden="true" tabindex="-1"></a><span class="ex">php</span> <span class="at">-r</span> <span class="st">&#39;echo date(&quot;c&quot;), &quot;\n&quot;;&#39;</span></span>
+<span id="cb31-12"><a href="#cb31-12" aria-hidden="true" tabindex="-1"></a>                            <span class="co"># Should show current time in your zone</span></span></code></pre></div>
+</div>
+<h3 id="apache-private-folders">Keep the working folders private</h3>
+<p>Apache listens on every network interface and, left alone,
+<strong>lists the contents of any folder</strong> and serves any file in
+it. For Cockpit that would expose <code>responses/</code> and
+<code>queue/</code> (the agents’ replies and the queued prompts) to
+everyone on your network without a login. The automated installer closes
+this for you; if you set Apache up by hand, install the same rule:</p>
+<div id="cb17b" class="sourceCode">
+<div class="sourceCode" id="cb32"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> bash Installs/apache/install_security_conf.sh</span>
+<span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a><span class="co"># Both of these should now say 403:</span></span>
+<span id="cb32-3"><a href="#cb32-3" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-s</span> <span class="at">-o</span> /dev/null <span class="at">-w</span> <span class="st">&#39;%{http_code}\n&#39;</span> http://localhost/cockpit/responses/</span>
+<span id="cb32-4"><a href="#cb32-4" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-s</span> <span class="at">-o</span> /dev/null <span class="at">-w</span> <span class="st">&#39;%{http_code}\n&#39;</span> http://localhost/cockpit/paths.json</span></code></pre></div>
+</div>
+<p>It tests the configuration before reloading and puts everything back
+if the test fails. The rule never touches anything that is not under a
+<code>cockpit</code> or <code>cockpit-v1</code> folder.</p>
+<h3 id="upload-limits">Raising the upload size limit</h3>
+<p>PHP ships with <code>upload_max_filesize = 2M</code> and
+<code>post_max_size = 8M</code>. Above that, PHP does not complain: the
+upload just arrives <strong>empty</strong>, and the feature answers “No
+audio uploaded” or “No file uploaded”. On a stock install that meant a
+voice note longer than about a minute, a video for the transcriber, or a
+larger chat import was silently dropped. The automated installer raises
+both limits to 1 GB for Cockpit’s folders only. By hand:</p>
+<div id="cb17c" class="sourceCode">
+<div class="sourceCode" id="cb33"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Apache with mod_php (Debian, Ubuntu, Mint):</span></span>
+<span id="cb33-2"><a href="#cb33-2" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> bash Installs/apache/install_php_conf.sh</span>
+<span id="cb33-3"><a href="#cb33-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb33-4"><a href="#cb33-4" aria-hidden="true" tabindex="-1"></a><span class="co"># PHP-FPM or php-cgi: nothing to install --- Cockpit ships a .user.ini beside</span></span>
+<span id="cb33-5"><a href="#cb33-5" aria-hidden="true" tabindex="-1"></a><span class="co"># index.html with the same two values (upload_max_filesize, post_max_size).</span></span>
+<span id="cb33-6"><a href="#cb33-6" aria-hidden="true" tabindex="-1"></a><span class="co"># Check what PHP actually uses for Cockpit&#39;s folder:</span></span>
+<span id="cb33-7"><a href="#cb33-7" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-s</span> http://localhost/cockpit/auth.php<span class="pp">?</span>action=check <span class="op">&gt;</span>/dev/null   <span class="co"># (any PHP page)</span></span>
+<span id="cb33-8"><a href="#cb33-8" aria-hidden="true" tabindex="-1"></a><span class="ex">php</span> <span class="at">-i</span> <span class="kw">|</span> <span class="fu">grep</span> <span class="at">-E</span> <span class="st">&#39;upload_max_filesize|post_max_size&#39;</span>                 <span class="co"># the CLI&#39;s own values, for comparison</span></span></code></pre></div>
+</div>
+<p>Files that travel inside the page’s own data (chat attachments up to
+50 MB, books up to 80 MB, personal-archive scans up to 25 MB) are
+limited by PHP’s <em>memory</em>, not by these two settings; Cockpit
+raises that limit itself for those requests.</p>
+<hr />
+<h2 id="step-6">Step 6 — Cockpit files</h2>
+<p>Deploy the cockpit’s web files to
+<code>/var/www/html/cockpit/</code>:</p>
+<div id="cb18" class="sourceCode">
+<div class="sourceCode" id="cb34"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Web root for cockpit</span></span>
+<span id="cb34-2"><a href="#cb34-2" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> mkdir <span class="at">-p</span> /var/www/html/cockpit</span>
+<span id="cb34-3"><a href="#cb34-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb34-4"><a href="#cb34-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Copy all PHP files, the HTML, JSON catalogs, and VERSION</span></span>
+<span id="cb34-5"><a href="#cb34-5" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/Downloads/cockpit-bundle</span>
+<span id="cb34-6"><a href="#cb34-6" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> cp <span class="dt">\</span></span>
+<span id="cb34-7"><a href="#cb34-7" aria-hidden="true" tabindex="-1"></a>    index.html <span class="dt">\</span></span>
+<span id="cb34-8"><a href="#cb34-8" aria-hidden="true" tabindex="-1"></a>    bridge.php files.php status.php models.php saver.php <span class="dt">\</span></span>
+<span id="cb34-9"><a href="#cb34-9" aria-hidden="true" tabindex="-1"></a>    session.php config.php library.php paths.json <span class="dt">\</span></span>
+<span id="cb34-10"><a href="#cb34-10" aria-hidden="true" tabindex="-1"></a>    search.php export.php import.php version.php VERSION <span class="dt">\</span></span>
+<span id="cb34-11"><a href="#cb34-11" aria-hidden="true" tabindex="-1"></a>    capabilities.php orchestrator.php workers.php tools.php <span class="dt">\</span></span>
+<span id="cb34-12"><a href="#cb34-12" aria-hidden="true" tabindex="-1"></a>    workers_providers.json <span class="dt">\</span></span>
+<span id="cb34-13"><a href="#cb34-13" aria-hidden="true" tabindex="-1"></a>    /var/www/html/cockpit/</span>
+<span id="cb34-14"><a href="#cb34-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb34-15"><a href="#cb34-15" aria-hidden="true" tabindex="-1"></a><span class="co"># Extract built-in capability and tool definitions</span></span>
+<span id="cb34-16"><a href="#cb34-16" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> tar <span class="at">-xzf</span> cockpit_builtins.tar.gz <span class="at">-C</span> /var/www/html/cockpit/</span>
+<span id="cb34-17"><a href="#cb34-17" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> tar <span class="at">-xzf</span> tools_builtins.tar.gz   <span class="at">-C</span> /var/www/html/cockpit/</span>
+<span id="cb34-18"><a href="#cb34-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb34-19"><a href="#cb34-19" aria-hidden="true" tabindex="-1"></a><span class="co"># Scripts that run as the user via tmux</span></span>
+<span id="cb34-20"><a href="#cb34-20" aria-hidden="true" tabindex="-1"></a><span class="fu">mkdir</span> <span class="at">-p</span> ~/scripts</span>
+<span id="cb34-21"><a href="#cb34-21" aria-hidden="true" tabindex="-1"></a><span class="fu">cp</span> <span class="dt">\</span></span>
+<span id="cb34-22"><a href="#cb34-22" aria-hidden="true" tabindex="-1"></a>    cockpit_start.sh cockpit_stop.sh <span class="dt">\</span></span>
+<span id="cb34-23"><a href="#cb34-23" aria-hidden="true" tabindex="-1"></a>    agent_loop.sh crud_executor.sh <span class="dt">\</span></span>
+<span id="cb34-24"><a href="#cb34-24" aria-hidden="true" tabindex="-1"></a>    install_capabilities.sh <span class="dt">\</span></span>
+<span id="cb34-25"><a href="#cb34-25" aria-hidden="true" tabindex="-1"></a>    ~/scripts/</span>
+<span id="cb34-26"><a href="#cb34-26" aria-hidden="true" tabindex="-1"></a><span class="fu">chmod</span> +x ~/scripts/<span class="pp">*</span>.sh</span>
+<span id="cb34-27"><a href="#cb34-27" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb34-28"><a href="#cb34-28" aria-hidden="true" tabindex="-1"></a><span class="co"># Cockpit data directory</span></span>
+<span id="cb34-29"><a href="#cb34-29" aria-hidden="true" tabindex="-1"></a><span class="fu">mkdir</span> <span class="at">-p</span> ~/scripts/cockpit_data/<span class="dt">{library</span><span class="op">,</span><span class="dt">snippets</span><span class="op">,</span><span class="dt">sources</span><span class="op">,</span><span class="dt">code</span><span class="op">,</span><span class="dt">approvals</span><span class="op">,</span><span class="dt">capabilities/_builtin</span><span class="op">,</span><span class="dt">plans</span><span class="op">,</span><span class="dt">workers_state</span><span class="op">,</span><span class="dt">tools</span><span class="op">,</span><span class="dt">tools_outputs</span><span class="op">,</span><span class="dt">_standalone}</span></span>
+<span id="cb34-30"><a href="#cb34-30" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb34-31"><a href="#cb34-31" aria-hidden="true" tabindex="-1"></a><span class="co"># Projects root</span></span>
+<span id="cb34-32"><a href="#cb34-32" aria-hidden="true" tabindex="-1"></a><span class="fu">mkdir</span> <span class="at">-p</span> ~/Software/Programing/LocalAIProjs</span></code></pre></div>
+</div>
+<h3 id="verification-5">Verification</h3>
+<div id="cb19" class="sourceCode">
+<div class="sourceCode" id="cb35"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a><span class="fu">ls</span> /var/www/html/cockpit/   <span class="co"># Should list all .php and .html files</span></span>
+<span id="cb35-2"><a href="#cb35-2" aria-hidden="true" tabindex="-1"></a><span class="fu">ls</span> ~/scripts/               <span class="co"># Should list shell scripts</span></span>
+<span id="cb35-3"><a href="#cb35-3" aria-hidden="true" tabindex="-1"></a><span class="fu">ls</span> ~/scripts/cockpit_data/  <span class="co"># Should show empty subdirs</span></span></code></pre></div>
+</div>
+<hr />
+<h2 id="step-7">Step 7 — Permissions and sudoers</h2>
+<p>Apache (running as <code>www-data</code>) needs read access to the
+cockpit data and tmux socket. Your user (running as <code>dario</code>)
+needs write access. The bridge between these is the
+<code>www-data</code> group.</p>
+<div id="cb20" class="sourceCode">
+<div class="sourceCode" id="cb36"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Add www-data group membership for shared file access</span></span>
+<span id="cb36-2"><a href="#cb36-2" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> chgrp <span class="at">-R</span> www-data /var/www/html/cockpit/</span>
+<span id="cb36-3"><a href="#cb36-3" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> chmod <span class="at">-R</span> g+rX /var/www/html/cockpit/</span>
+<span id="cb36-4"><a href="#cb36-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb36-5"><a href="#cb36-5" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> chgrp <span class="at">-R</span> www-data ~/scripts/cockpit_data/</span>
+<span id="cb36-6"><a href="#cb36-6" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> chmod <span class="at">-R</span> g+rwX ~/scripts/cockpit_data/</span>
+<span id="cb36-7"><a href="#cb36-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb36-8"><a href="#cb36-8" aria-hidden="true" tabindex="-1"></a><span class="co"># tmux socket lives in /tmp; needs group access from www-data</span></span>
+<span id="cb36-9"><a href="#cb36-9" aria-hidden="true" tabindex="-1"></a><span class="co"># (cockpit_start.sh creates this on each run with the right perms)</span></span>
+<span id="cb36-10"><a href="#cb36-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb36-11"><a href="#cb36-11" aria-hidden="true" tabindex="-1"></a><span class="co"># Add www-data to your group so it can read your home dir prefix</span></span>
+<span id="cb36-12"><a href="#cb36-12" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> usermod <span class="at">-a</span> <span class="at">-G</span> <span class="va">$USER</span> www-data</span>
+<span id="cb36-13"><a href="#cb36-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb36-14"><a href="#cb36-14" aria-hidden="true" tabindex="-1"></a><span class="co"># Allow www-data to invoke the cockpit_*.sh scripts without password</span></span>
+<span id="cb36-15"><a href="#cb36-15" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> bash <span class="at">-c</span> <span class="st">&#39;cat &gt; /etc/sudoers.d/cockpit&#39;</span> <span class="op">&lt;&lt; EOF</span></span>
+<span id="cb36-16"><a href="#cb36-16" aria-hidden="true" tabindex="-1"></a><span class="st">www-data ALL=(</span><span class="va">${USER}</span><span class="st">) NOPASSWD: </span><span class="va">${HOME}</span><span class="st">/scripts/cockpit_start.sh</span></span>
+<span id="cb36-17"><a href="#cb36-17" aria-hidden="true" tabindex="-1"></a><span class="st">www-data ALL=(</span><span class="va">${USER}</span><span class="st">) NOPASSWD: </span><span class="va">${HOME}</span><span class="st">/scripts/cockpit_stop.sh</span></span>
+<span id="cb36-18"><a href="#cb36-18" aria-hidden="true" tabindex="-1"></a><span class="op">EOF</span></span>
+<span id="cb36-19"><a href="#cb36-19" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> chmod 440 /etc/sudoers.d/cockpit</span></code></pre></div>
+</div>
+<h3 id="verification-6">Verification</h3>
+<div id="cb21" class="sourceCode">
+<div class="sourceCode" id="cb37"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb37-1"><a href="#cb37-1" aria-hidden="true" tabindex="-1"></a><span class="co"># As www-data, can it read cockpit_data?</span></span>
+<span id="cb37-2"><a href="#cb37-2" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> <span class="at">-u</span> www-data ls ~/scripts/cockpit_data/</span>
+<span id="cb37-3"><a href="#cb37-3" aria-hidden="true" tabindex="-1"></a>                            <span class="co"># Should list directories without error</span></span>
+<span id="cb37-4"><a href="#cb37-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb37-5"><a href="#cb37-5" aria-hidden="true" tabindex="-1"></a><span class="co"># Validate sudoers without breaking the system</span></span>
+<span id="cb37-6"><a href="#cb37-6" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> visudo <span class="at">-cf</span> /etc/sudoers.d/cockpit</span>
+<span id="cb37-7"><a href="#cb37-7" aria-hidden="true" tabindex="-1"></a>                            <span class="co"># Should say &quot;/etc/sudoers.d/cockpit: parsed OK&quot;</span></span></code></pre></div>
+</div>
+<hr />
+<h2 id="step-8">Step 8 — Built-in capabilities</h2>
+<p>Capability definitions ship as a tarball; deploy them to
+<code>cockpit_data</code>:</p>
+<div id="cb22" class="sourceCode">
+<div class="sourceCode" id="cb38"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb38-1"><a href="#cb38-1" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/Downloads/cockpit-bundle</span>
+<span id="cb38-2"><a href="#cb38-2" aria-hidden="true" tabindex="-1"></a><span class="va">BUILTINS_SOURCE</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$PWD</span><span class="st">/cockpit_builtins&quot;</span> <span class="ex">~/scripts/install_capabilities.sh</span></span></code></pre></div>
+</div>
+<p>This copies five built-in capabilities (filesystem, git, web-search,
+web-fetch, ssh) into:</p>
+<pre><code>~/scripts/cockpit_data/capabilities/_builtin/</code></pre>
+<h3 id="verification-7">Verification</h3>
+<div id="cb24" class="sourceCode">
+<div class="sourceCode" id="cb40"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb40-1"><a href="#cb40-1" aria-hidden="true" tabindex="-1"></a><span class="fu">ls</span> ~/scripts/cockpit_data/capabilities/_builtin/</span>
+<span id="cb40-2"><a href="#cb40-2" aria-hidden="true" tabindex="-1"></a><span class="co"># Should list 5 directories: filesystem, git, ssh, web-fetch, web-search</span></span>
+<span id="cb40-3"><a href="#cb40-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb40-4"><a href="#cb40-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Each should contain CAP.json + README.md</span></span>
+<span id="cb40-5"><a href="#cb40-5" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> d <span class="kw">in</span> ~/scripts/cockpit_data/capabilities/_builtin/<span class="pp">*</span>/<span class="kw">;</span> <span class="cf">do</span></span>
+<span id="cb40-6"><a href="#cb40-6" aria-hidden="true" tabindex="-1"></a>    <span class="bu">echo</span> <span class="st">&quot;</span><span class="va">$(</span><span class="fu">basename</span> <span class="va">$d)</span><span class="st">:&quot;</span></span>
+<span id="cb40-7"><a href="#cb40-7" aria-hidden="true" tabindex="-1"></a>    <span class="fu">ls</span> <span class="st">&quot;</span><span class="va">$d</span><span class="st">&quot;</span></span>
+<span id="cb40-8"><a href="#cb40-8" aria-hidden="true" tabindex="-1"></a><span class="cf">done</span></span></code></pre></div>
+</div>
+<hr />
+<h2 id="step-9">Step 9 — Tool binaries (optional but recommended)</h2>
+<p>Without these binaries, the <strong>TOOLS</strong> card in the
+cockpit will show “no tools detected”. Install whichever you’ll use:</p>
+<div id="cb25" class="sourceCode">
+<div class="sourceCode" id="cb41"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb41-1"><a href="#cb41-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Audio/video — almost always wanted</span></span>
+<span id="cb41-2"><a href="#cb41-2" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> nala install <span class="at">-y</span> ffmpeg</span>
+<span id="cb41-3"><a href="#cb41-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb41-4"><a href="#cb41-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Speech-to-text — large download, ~1 GB for the base model</span></span>
+<span id="cb41-5"><a href="#cb41-5" aria-hidden="true" tabindex="-1"></a><span class="co"># whisper.cpp (what Cockpit uses) is built by the installer&#39;s optional</span></span>
+<span id="cb41-6"><a href="#cb41-6" aria-hidden="true" tabindex="-1"></a><span class="co"># Phase 5e into ~/ai-tools/whisper.cpp -- no Python involved. To do it by hand:</span></span>
+<span id="cb41-7"><a href="#cb41-7" aria-hidden="true" tabindex="-1"></a><span class="co">#   git clone https://github.com/ggerganov/whisper.cpp ~/ai-tools/whisper.cpp</span></span>
+<span id="cb41-8"><a href="#cb41-8" aria-hidden="true" tabindex="-1"></a><span class="co">#   cd ~/ai-tools/whisper.cpp &amp;&amp; cmake -B build &amp;&amp; cmake --build build -j --config Release</span></span>
+<span id="cb41-9"><a href="#cb41-9" aria-hidden="true" tabindex="-1"></a><span class="co">#   sh ./models/download-ggml-model.sh base</span></span>
+<span id="cb41-10"><a href="#cb41-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb41-11"><a href="#cb41-11" aria-hidden="true" tabindex="-1"></a><span class="co"># Document conversion</span></span>
+<span id="cb41-12"><a href="#cb41-12" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> nala install <span class="at">-y</span> pandoc texlive-xetex texlive-fonts-recommended</span>
+<span id="cb41-13"><a href="#cb41-13" aria-hidden="true" tabindex="-1"></a>                                        <span class="co"># texlive needed for md→pdf</span></span></code></pre></div>
+</div>
+<h3 id="verification-8">Verification</h3>
+<div id="cb26" class="sourceCode">
+<div class="sourceCode" id="cb42"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb42-1"><a href="#cb42-1" aria-hidden="true" tabindex="-1"></a><span class="ex">ffmpeg</span> <span class="at">-version</span> <span class="kw">|</span> <span class="fu">head</span> <span class="at">-1</span>   <span class="co"># Should show ffmpeg N.x.x</span></span>
+<span id="cb42-2"><a href="#cb42-2" aria-hidden="true" tabindex="-1"></a><span class="ex">whisper</span> <span class="at">--help</span> <span class="kw">|</span> <span class="fu">head</span> <span class="at">-3</span>    <span class="co"># Should show Whisper usage</span></span>
+<span id="cb42-3"><a href="#cb42-3" aria-hidden="true" tabindex="-1"></a><span class="ex">pandoc</span> <span class="at">--version</span> <span class="kw">|</span> <span class="fu">head</span> <span class="at">-1</span>  <span class="co"># Should show pandoc 3.x</span></span></code></pre></div>
+</div>
+<p>If any are missing, you can still launch the cockpit — Tools will
+show them as “<span class="material-symbols-rounded ico">close</span>
+not found” and you can install later. The cockpit’s
+<strong>Detect</strong> button in Tools settings re-scans whenever you
+click it.</p>
+<h3 id="optional-add-ons-for-later">Optional add-ons for later</h3>
+<ul>
+<li><strong>imagemagick</strong> for image conversion:
+<code>sudo nala install imagemagick</code></li>
+<li><strong>yt-dlp</strong> for downloading audio/video: the installer
+fetches the self-contained build for your platform (no Python needed).
+By hand:
+<code>sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux -o /usr/local/bin/yt-dlp &amp;&amp; sudo chmod a+rx /usr/local/bin/yt-dlp</code></li>
+<li><strong>calibre</strong> for ebook conversion:
+<code>sudo nala install calibre</code></li>
+</ul>
+<p>These don’t ship with built-in tool definitions but you can add them
+via the “+” button in Tools settings.</p>
+<hr />
+<h2 id="step-10">Step 10 — First launch verification</h2>
+<blockquote>
+<p><strong>Full edition asks for an account here.</strong> The first
+time the app loads, the Full (V2) edition shows a Cockpit Account panel
+with no close button and waits until the install is registered. A free
+account is enough — no card, no paid step — but it is not skippable,
+because the <em>server</em> decides it: it checks whether this machine
+is registered, so editing local files does not get around it. If you
+want Cockpit with no registration at all, install the
+<strong>Stand-alone (V1)</strong> edition instead — same download, you
+choose at the prompt — which has no account layer and makes no network
+calls. See <em>Do you need one?</em> in the User Guide.</p>
+</blockquote>
+<p>Time to start the cockpit:</p>
+<div id="cb27" class="sourceCode">
+<div class="sourceCode" id="cb43"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb43-1"><a href="#cb43-1" aria-hidden="true" tabindex="-1"></a><span class="ex">~/scripts/cockpit_start.sh</span></span></code></pre></div>
+</div>
+<p>You should see output like:</p>
+<pre><code>Starting cockpit sessions...
+  Claude session: cockpit_claude
+  Gemini session: cockpit_gemini
+  Ollama session: cockpit_ollama
+  tmux socket: /tmp/cockpit_tmux.sock
+  Apache: ready
+Cockpit ready: http://localhost/cockpit/</code></pre>
+<p>The start script opens Cockpit’s <strong>own window</strong>
+(<code>~/scripts/cockpit_shell</code>): a splash while the sessions come
+up, then the app. Nothing else to launch.</p>
+<p>If the window does not appear (no WebKitGTK runtime on this machine,
+or a CPU the prebuilt binary does not cover), Cockpit falls back to a
+browser window — open it by hand with:</p>
+<div id="cb29" class="sourceCode">
+<div class="sourceCode" id="cb45"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb45-1"><a href="#cb45-1" aria-hidden="true" tabindex="-1"></a><span class="fu">xdg-open</span> http://localhost/cockpit/</span></code></pre></div>
+</div>
+<p>To check the window itself:</p>
+<div class="sourceCode">
+<div class="sourceCode" id="cb46"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb46-1"><a href="#cb46-1" aria-hidden="true" tabindex="-1"></a><span class="ex">~/scripts/cockpit_shell</span> <span class="at">--check</span>     <span class="co"># &quot;runtime libraries OK&quot; when it can run here</span></span>
+<span id="cb46-2"><a href="#cb46-2" aria-hidden="true" tabindex="-1"></a><span class="fu">tail</span> <span class="at">-5</span> ~/.cache/cockpit_shell.log <span class="co"># what it did on the last launch</span></span></code></pre></div>
+</div>
+<h3 id="what-to-verify">What to verify</h3>
+<ol type="1">
+<li><strong>The topbar</strong> shows the brand mark (control-yoke logo
++ “AI Cockpit” wordmark + version + “by Dario Ruggi”) on the left</li>
+<li><strong>Five supplier cards</strong> appear: CLAUDE, GEMINI, OLLAMA,
+WORKERS, TOOLS</li>
+<li><strong>CLAUDE is the default active card</strong> (expanded with
+model dropdown)</li>
+<li><strong>Stop / Restart</strong> buttons appear on the right</li>
+<li><strong>Info bar</strong> below the strip shows
+project/chat/path</li>
+<li>The <strong>chat console</strong> is the large central area</li>
+<li><strong>Right sidebar</strong> has 9 vertical icon tabs</li>
+<li>The window has <strong>no address bar and no tabs</strong> — it is
+Cockpit’s own window; closing it opens the <em>Leaving Cockpit</em>
+dialog rather than closing at once</li>
+<li><strong>Ctrl+Alt+C</strong> brings the window up from any other
+application (and starts Cockpit when it is not running, if you accepted
+the shortcut during install)</li>
+</ol>
+<h3 id="first-prompt-smoke-test">First prompt smoke test</h3>
+<ol type="1">
+<li>Type “say hello in one word” in the prompt area</li>
+<li>Press Enter (Ctrl-Enter or Shift-Enter adds a line instead)</li>
+<li>Within a few seconds, “Hello” or similar appears as a streamed
+response</li>
+</ol>
+<p>If this works, you’re done. The next steps are optional
+personalization.</p>
+<hr />
+<h2 id="step-10b">Step 10b — Companion tools (installed for you)</h2>
+<p>The scripted installer also sets up two small command-line suites
+that are not part of Cockpit itself but ship with it. They are ordinary
+tools on your <code>PATH</code>, with their own <code>--help</code> and
+man pages, and Cockpit never depends on them — remove them and nothing
+in the app changes.</p>
+<ul>
+<li><strong>ftpsuite</strong> (<code>ftpush</code>, <code>ftpull</code>,
+<code>ftps-cli</code>, <code>ftps-gui</code>) — scripted file transfer
+to a site you own. Sites and local-to-remote path pairs live in a JSON
+config, so one tool serves several sites:
+<code>ftpush --add-site</code>, then <code>ftpush --add-pair</code>,
+then <code>ftpush -p1 &lt;files&gt;</code>. Credentials stay in that
+config (<code>chmod 600</code>) and are never passed on the command
+line.</li>
+<li><strong>secrets</strong> (<code>secrets</code>,
+<code>secrets-cli</code>, <code>secrets-gui</code>) — an encrypted store
+for your own keys and logins, held as a GPG-encrypted Markdown file.
+Several stores, several templates, a template editor, and a re-key
+command for rotating the passphrase without leaving old copies behind.
+<code>secrets init</code> creates the first store.</li>
+</ul>
+<p>Both have dark/light themes in their GUIs and <code>man ftpush</code>
+/ <code>man secrets</code> for the details. If you are following the
+manual steps in this guide, neither is installed — fetch them from the
+tools pages on the site if you want them.</p>
+<hr />
+<h2 id="step-11">Step 11 — Worker provider keys (optional)</h2>
+<p>If you want to use online LLM providers as workers:</p>
+<ol type="1">
+<li>Click the gear icon next to <strong>WORKERS</strong> → settings
+modal</li>
+<li>For each provider you want:
+<ul>
+<li>Click <strong>Get key</strong> — opens the provider’s key page in a
+new tab</li>
+<li>Sign up / log in, create an API key</li>
+<li>Paste the key into the input field → click
+<strong>Save</strong></li>
+<li>Click <strong>Disabled</strong> to toggle to
+<strong>Enabled</strong></li>
+</ul></li>
+<li>Close the modal — the workers dropdown is now populated</li>
+</ol>
+<p>Recommended starting point: <strong>Groq</strong> is free with
+generous limits and makes a good first test. Once you have a key,
+smoke-test it via:</p>
+<ol type="1">
+<li>Click the WORKERS card</li>
+<li>Pick a Groq model (e.g. “Llama 3.3 70B Versatile”)</li>
+<li>Type a prompt → press Execute</li>
+<li>Response should appear within a few seconds</li>
+</ol>
+<hr />
+<h2 id="step-12">Step 12 — Personalization</h2>
+<h3
+id="default-browser-for-links-cockpit-opens-outside-its-window">Default
+browser (for links Cockpit opens outside its window)</h3>
+<div id="cb30" class="sourceCode">
+<div class="sourceCode" id="cb47"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb47-1"><a href="#cb47-1" aria-hidden="true" tabindex="-1"></a><span class="ex">xdg-settings</span> set default-web-browser brave-browser.desktop</span></code></pre></div>
+</div>
+<h3 id="auto-start-cockpit-on-login">Auto-start cockpit on login</h3>
+<p>The scripted installer offers this; by hand it is one desktop entry.
+<code>cockpit-start</code> opens Cockpit’s own window, which brings the
+web server and the agent sessions up itself and shows what it is doing —
+no <code>sleep</code>, no browser to launch:</p>
+<div id="cb31" class="sourceCode">
+<div class="sourceCode" id="cb48"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb48-1"><a href="#cb48-1" aria-hidden="true" tabindex="-1"></a><span class="fu">mkdir</span> <span class="at">-p</span> ~/.config/autostart</span>
+<span id="cb48-2"><a href="#cb48-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb48-3"><a href="#cb48-3" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span> <span class="op">&gt;</span> ~/.config/autostart/ai-cockpit.desktop <span class="op">&lt;&lt; &#39;EOF&#39;</span></span>
+<span id="cb48-4"><a href="#cb48-4" aria-hidden="true" tabindex="-1"></a><span class="st">[Desktop Entry]</span></span>
+<span id="cb48-5"><a href="#cb48-5" aria-hidden="true" tabindex="-1"></a><span class="st">Type=Application</span></span>
+<span id="cb48-6"><a href="#cb48-6" aria-hidden="true" tabindex="-1"></a><span class="st">Name=AI Cockpit</span></span>
+<span id="cb48-7"><a href="#cb48-7" aria-hidden="true" tabindex="-1"></a><span class="st">Exec=cockpit-start</span></span>
+<span id="cb48-8"><a href="#cb48-8" aria-hidden="true" tabindex="-1"></a><span class="st">Icon=ai-cockpit</span></span>
+<span id="cb48-9"><a href="#cb48-9" aria-hidden="true" tabindex="-1"></a><span class="st">Terminal=false</span></span>
+<span id="cb48-10"><a href="#cb48-10" aria-hidden="true" tabindex="-1"></a><span class="st">StartupWMClass=ai-cockpit</span></span>
+<span id="cb48-11"><a href="#cb48-11" aria-hidden="true" tabindex="-1"></a><span class="st">X-GNOME-Autostart-enabled=true</span></span>
+<span id="cb48-12"><a href="#cb48-12" aria-hidden="true" tabindex="-1"></a><span class="op">EOF</span></span></code></pre></div>
+</div>
+<h3 id="a-key-that-summons-cockpit">A key that summons Cockpit</h3>
+<p><code>Ctrl+Alt+C</code> brings the window to the front from any
+application, puts it down when it is already there, and starts Cockpit
+when it is not running. The installer offers it (not on WSL: Windows
+owns the keyboard there — use the Start-menu shortcut); to add or remove
+it later:</p>
+<div class="sourceCode">
+<div class="sourceCode" id="cb49"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb49-1"><a href="#cb49-1" aria-hidden="true" tabindex="-1"></a><span class="ex">~/scripts/install_hotkey.sh</span>                 <span class="co"># Ctrl+Alt+C (Cinnamon, GNOME, XFCE, KDE, MATE)</span></span>
+<span id="cb49-2"><a href="#cb49-2" aria-hidden="true" tabindex="-1"></a><span class="ex">~/scripts/install_hotkey.sh</span> <span class="st">&quot;&lt;Super&gt;c&quot;</span>      <span class="co"># a different combination</span></span>
+<span id="cb49-3"><a href="#cb49-3" aria-hidden="true" tabindex="-1"></a><span class="ex">~/scripts/install_hotkey.sh</span> <span class="at">--remove</span>        <span class="co"># take it out again</span></span></code></pre></div>
+</div>
+<h3 id="fill-logins-from-bitwarden-optional">Fill logins from Bitwarden
+(optional)</h3>
+<p>Cockpit’s own login forms can be filled from your Bitwarden vault
+through the official CLI. The master password is typed into
+<code>bw</code>’s own prompt in a terminal Cockpit opens — never into
+Cockpit:</p>
+<div class="sourceCode">
+<div class="sourceCode" id="cb50"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb50-1"><a href="#cb50-1" aria-hidden="true" tabindex="-1"></a><span class="ex">~/scripts/install_bw.sh</span>     <span class="co"># official release binary into ~/.local/bin (sha256-checked)</span></span>
+<span id="cb50-2"><a href="#cb50-2" aria-hidden="true" tabindex="-1"></a><span class="ex">~/.local/bin/bw</span> login       <span class="co"># once</span></span></code></pre></div>
+</div>
+<p>Name the vault items <code>AI Cockpit Local</code>,
+<code>AI Cockpit SAAS</code> and <code>AI Cockpit Admin Token</code> and
+each form finds its own.</p>
+<h3 id="dark-theme-youve-already-got-this-linux-mint-dark-variant">Dark
+theme (you’ve already got this — Linux Mint dark variant)</h3>
+<p>The cockpit has its own dark theme baked in. No system-level config
+needed.</p>
+<h3 id="default-project">Default project</h3>
+<p>Edit <code>~/scripts/cockpit_data/last_project.txt</code> to set the
+project that opens by default each time:</p>
+<div id="cb32" class="sourceCode">
+<div class="sourceCode" id="cb51"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb51-1"><a href="#cb51-1" aria-hidden="true" tabindex="-1"></a><span class="bu">echo</span> <span class="st">&quot;myproject&quot;</span> <span class="op">&gt;</span> ~/scripts/cockpit_data/last_project.txt</span></code></pre></div>
+</div>
+<hr />
+<h2 id="troubleshooting">Troubleshooting</h2>
+<h3 id="apache-returns-403-forbidden">Apache returns 403 Forbidden</h3>
+<div id="cb33" class="sourceCode">
+<div class="sourceCode" id="cb52"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb52-1"><a href="#cb52-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Permissions on the cockpit directory</span></span>
+<span id="cb52-2"><a href="#cb52-2" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> chown <span class="at">-R</span> dario:www-data /var/www/html/cockpit/</span>
+<span id="cb52-3"><a href="#cb52-3" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> chmod <span class="at">-R</span> g+rX /var/www/html/cockpit/</span>
+<span id="cb52-4"><a href="#cb52-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb52-5"><a href="#cb52-5" aria-hidden="true" tabindex="-1"></a><span class="co"># Apache config — make sure /var/www/html is allowed</span></span>
+<span id="cb52-6"><a href="#cb52-6" aria-hidden="true" tabindex="-1"></a><span class="fu">grep</span> <span class="at">-A3</span> <span class="st">&quot;Directory /var/www/&quot;</span> /etc/apache2/apache2.conf</span>
+<span id="cb52-7"><a href="#cb52-7" aria-hidden="true" tabindex="-1"></a>                            <span class="co"># Should include &quot;Require all granted&quot;</span></span></code></pre></div>
+</div>
+<h3 id="bridge.php-returned-no-response">“Bridge.php returned no
+response”</h3>
+<p>The PHP error log usually has the answer:</p>
+<div id="cb34" class="sourceCode">
+<div class="sourceCode" id="cb53"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb53-1"><a href="#cb53-1" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> tail <span class="at">-50</span> /var/log/apache2/error.log</span></code></pre></div>
+</div>
+<p>Common causes:</p>
+<ul>
+<li><strong>php-curl missing</strong>:
+<code>sudo nala install php8.3-curl &amp;&amp; sudo systemctl restart apache2</code></li>
+<li><strong>paths.json missing or corrupt</strong>: re-copy from the
+bundle</li>
+<li><strong>bridge.php has a syntax error</strong>:
+<code>php -l /var/www/html/cockpit/bridge.php</code></li>
+</ul>
+<h3 id="agent-session-not-found-in-tmux">“Agent session not found in
+tmux”</h3>
+<div id="cb35" class="sourceCode">
+<div class="sourceCode" id="cb54"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb54-1"><a href="#cb54-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Check what sessions exist</span></span>
+<span id="cb54-2"><a href="#cb54-2" aria-hidden="true" tabindex="-1"></a><span class="ex">tmux</span> <span class="at">-S</span> /tmp/cockpit_tmux.sock ls <span class="dv">2</span><span class="op">&gt;&amp;</span><span class="dv">1</span></span>
+<span id="cb54-3"><a href="#cb54-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb54-4"><a href="#cb54-4" aria-hidden="true" tabindex="-1"></a><span class="co"># If empty, restart cockpit</span></span>
+<span id="cb54-5"><a href="#cb54-5" aria-hidden="true" tabindex="-1"></a><span class="ex">~/scripts/cockpit_stop.sh</span> <span class="kw">&amp;&amp;</span> <span class="ex">~/scripts/cockpit_start.sh</span></span>
+<span id="cb54-6"><a href="#cb54-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb54-7"><a href="#cb54-7" aria-hidden="true" tabindex="-1"></a><span class="co"># If permission denied, the socket has wrong group</span></span>
+<span id="cb54-8"><a href="#cb54-8" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> chgrp www-data /tmp/cockpit_tmux.sock</span>
+<span id="cb54-9"><a href="#cb54-9" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> chmod 660 /tmp/cockpit_tmux.sock</span></code></pre></div>
+</div>
+<h3 id="cockpit-opens-in-a-browser-instead-of-its-own-window">Cockpit
+opens in a browser instead of its own window</h3>
+<p><code>cockpit_shell</code> could not run here. Ask it why:</p>
+<div class="sourceCode">
+<div class="sourceCode" id="cb55"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb55-1"><a href="#cb55-1" aria-hidden="true" tabindex="-1"></a><span class="ex">~/scripts/cockpit_shell</span> <span class="at">--check</span></span></code></pre></div>
+</div>
+<ul>
+<li><em>cannot load libwebkit2gtk-4.1.so.0</em> — install the runtime:
+<code>sudo apt install libwebkit2gtk-4.1-0</code> (Arch:
+<code>webkit2gtk-4.1</code>, Fedora: <code>webkit2gtk4.1</code>,
+openSUSE: <code>libwebkit2gtk-4_1-0</code>).</li>
+<li><em>cannot execute binary file</em> — the prebuilt binary is x86-64;
+rebuild it for this CPU with
+<code>bash ~/scripts/cockpit_shell_src/build.sh ~/scripts/cockpit_shell</code>
+(needs <code>fpc</code>).</li>
+<li>Everything else:
+<code>tail -20 ~/.cache/cockpit_shell.log</code>.</li>
+</ul>
+<h3 id="the-window-says-cockpit-did-not-start">The window says Cockpit
+did not start</h3>
+<p>The window brings the stack up itself and reports when that fails.
+Run the same thing in a terminal to see the error:</p>
+<div class="sourceCode">
+<div class="sourceCode" id="cb56"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb56-1"><a href="#cb56-1" aria-hidden="true" tabindex="-1"></a><span class="ex">cockpit-start</span></span></code></pre></div>
+</div>
+<p>Usual causes: Apache not installed or its port taken, the sudoers
+rule from <a href="#step-7">Step 7</a> missing, or a full disk.
+<code>COCKPIT_NO_VERIFY=1 cockpit-start</code> skips the manifest check
+if that is what refuses to load the app (then use
+<code>~/scripts/cockpit_restore.sh</code> to put the shipped files
+back).</p>
+<h3 id="ctrlaltc-does-nothing">Ctrl+Alt+C does nothing</h3>
+<ul>
+<li>Under Wayland the compositor owns shortcuts: add one for
+<code>cockpit-start --toggle</code> in the desktop’s keyboard
+settings.</li>
+<li>Another application may already hold the combination — pick a
+different one:
+<code>~/scripts/install_hotkey.sh "&lt;Super&gt;c"</code>.</li>
+<li>Check what is registered:
+<code>gsettings get org.cinnamon.desktop.keybindings custom-list</code>
+(Cinnamon) or the desktop’s Keyboard settings.</li>
+</ul>
+<h3 id="no-tray-icon">No tray icon</h3>
+<p>GNOME Shell shows tray icons only with the <em>AppIndicator</em>
+extension
+(<code>sudo apt install gnome-shell-extension-appindicator</code>, then
+enable it and log out and in). KDE, XFCE, Cinnamon and MATE show it as
+is. Notifications work regardless. ### Claude / Gemini OAuth fails</p>
+<p>Both CLIs need a working browser OAuth flow:</p>
+<div id="cb36" class="sourceCode">
+<div class="sourceCode" id="cb57"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb57-1"><a href="#cb57-1" aria-hidden="true" tabindex="-1"></a><span class="co"># From a desktop environment with a browser available</span></span>
+<span id="cb57-2"><a href="#cb57-2" aria-hidden="true" tabindex="-1"></a><span class="ex">claude</span>   <span class="co"># Will print an auth URL; open it in your browser, sign in</span></span>
+<span id="cb57-3"><a href="#cb57-3" aria-hidden="true" tabindex="-1"></a><span class="ex">gemini</span>   <span class="co"># Same flow, separate auth</span></span></code></pre></div>
+</div>
+<p>If you’re SSHing in headlessly, you’ll need to do the auth on the
+machine’s actual desktop session first.</p>
+<p>You sign in <strong>once</strong>, in your own
+<code>~/.claude</code>. Agents the cockpit starts run against a
+cockpit-owned config directory with your credential file symlinked in,
+so they use that same login and a refreshed token is written back to the
+real file.</p>
+<h3 id="the-cockpits-agents-answer-in-someone-elses-voice">The cockpit’s
+agents answer in someone else’s voice</h3>
+<p>Symptom: answers come back in a style the cockpit never asked for —
+clipped, themed, or following house rules you set somewhere else — while
+the Style selector says something different.</p>
+<p>Cause: a <code>SessionStart</code> hook or plugin in your personal
+CLI config (<code>~/.claude/settings.json</code>). It is injected before
+the cockpit’s own prompt, so nothing inside the cockpit can override
+it.</p>
+<p>Fix: nothing to do — since build 97 the cockpit’s agents run against
+an isolated config and never see it. If you are on an older build, or
+you switched the <strong>Use my global CLI config</strong> capability
+on, turn that capability off (Settings –&gt; Capabilities) or disable
+the hook in your own config.</p>
+<h3 id="ollama-no-models-in-cockpit-dropdown">Ollama: “no models” in
+cockpit dropdown</h3>
+<div id="cb37" class="sourceCode">
+<div class="sourceCode" id="cb58"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb58-1"><a href="#cb58-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Confirm models exist</span></span>
+<span id="cb58-2"><a href="#cb58-2" aria-hidden="true" tabindex="-1"></a><span class="ex">ollama</span> list</span>
+<span id="cb58-3"><a href="#cb58-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb58-4"><a href="#cb58-4" aria-hidden="true" tabindex="-1"></a><span class="co"># If empty, pull the defaults:</span></span>
+<span id="cb58-5"><a href="#cb58-5" aria-hidden="true" tabindex="-1"></a><span class="ex">ollama</span> pull qwen2.5-coder:1.5b</span>
+<span id="cb58-6"><a href="#cb58-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb58-7"><a href="#cb58-7" aria-hidden="true" tabindex="-1"></a><span class="co"># Confirm OLLAMA_MODELS is being honored</span></span>
+<span id="cb58-8"><a href="#cb58-8" aria-hidden="true" tabindex="-1"></a><span class="fu">ls</span> ~/ollama/models/  <span class="co"># Should show downloaded blobs</span></span>
+<span id="cb58-9"><a href="#cb58-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb58-10"><a href="#cb58-10" aria-hidden="true" tabindex="-1"></a><span class="co"># If models live in /usr/share/ollama/.ollama/, the systemd override didn&#39;t apply</span></span>
+<span id="cb58-11"><a href="#cb58-11" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> systemctl edit ollama.service   <span class="co"># Re-set the Environment line</span></span>
+<span id="cb58-12"><a href="#cb58-12" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> systemctl daemon-reload <span class="kw">&amp;&amp;</span> <span class="fu">sudo</span> systemctl restart ollama</span></code></pre></div>
+</div>
+<h3 id="localai-no-models-in-cockpit-dropdown">LocalAI: “no models” in
+cockpit dropdown</h3>
+<pre><code># Confirm the service is actually running
+systemctl status localai
+
+# Confirm models exist
+curl http://127.0.0.1:8080/v1/models
+
+# If empty, pull a default
+curl -X POST http://127.0.0.1:8080/models/apply \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#39;{&quot;id&quot;:&quot;qwen3-1.7b&quot;}&#39;
+
+# Confirm LOCALAI_MODELS_PATH is being honored
+ls ~/localai/models/  # Should show downloaded files
+
+# If the service won&#39;t start, check the unit for typos in the paths
+systemctl cat localai.service
+journalctl -u localai -n 50 --no-pager</code></pre>
+<h3 id="tool-detection-always-says-not-found">Tool detection always says
+“not found”</h3>
+<div id="cb38" class="sourceCode">
+<div class="sourceCode" id="cb60"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb60-1"><a href="#cb60-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Verify the binaries are in PATH that Apache can see</span></span>
+<span id="cb60-2"><a href="#cb60-2" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> <span class="at">-u</span> www-data which ffmpeg</span>
+<span id="cb60-3"><a href="#cb60-3" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> <span class="at">-u</span> www-data which whisper</span>
+<span id="cb60-4"><a href="#cb60-4" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> <span class="at">-u</span> www-data which pandoc</span>
+<span id="cb60-5"><a href="#cb60-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb60-6"><a href="#cb60-6" aria-hidden="true" tabindex="-1"></a><span class="co"># If www-data can&#39;t see them but you can, the binaries are in a path</span></span>
+<span id="cb60-7"><a href="#cb60-7" aria-hidden="true" tabindex="-1"></a><span class="co"># www-data doesn&#39;t search. Either:</span></span>
+<span id="cb60-8"><a href="#cb60-8" aria-hidden="true" tabindex="-1"></a><span class="co">#   (a) Use Tools settings to set absolute path</span></span>
+<span id="cb60-9"><a href="#cb60-9" aria-hidden="true" tabindex="-1"></a><span class="co">#   (b) Add the path to /etc/environment so it&#39;s system-wide</span></span></code></pre></div>
+</div>
+<h3 id="workers-http-401-403">Workers HTTP 401 / 403</h3>
+<p>API key issue. Re-generate the key on the provider’s site, paste it
+into Workers settings, save.</p>
+<h3 id="workers-http-429">Workers HTTP 429</h3>
+<p>Rate limited. Wait a few minutes or switch providers. The cockpit’s
+usage tracker shows your call counts per provider in the settings
+modal.</p>
+<h3 id="plans-tab-is-empty-after-plan-mode-submit">Plans tab is empty
+after Plan-mode submit</h3>
+<p>Check the chat for system messages like “Plan creation failed”. Most
+common cause is one of the voter agents being unauthenticated or
+unreachable. Run <code>claude --print "test"</code> and
+<code>gemini --prompt "test"</code> from a terminal to confirm both are
+working.</p>
+<h3 id="ipv6-wget-bug-on-linux-mint">IPv6 / wget bug on Linux Mint</h3>
+<p>A known bug — <code>wget</code> defaults to IPv6 and times out on
+some Mint installs. Already absorbed into <code>cockpit_start.sh</code>,
+but if you see the symptom elsewhere:</p>
+<div id="cb39" class="sourceCode">
+<div class="sourceCode" id="cb61"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb61-1"><a href="#cb61-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Force IPv4 globally for wget</span></span>
+<span id="cb61-2"><a href="#cb61-2" aria-hidden="true" tabindex="-1"></a><span class="bu">echo</span> <span class="st">&#39;inet4_only = on&#39;</span> <span class="op">&gt;&gt;</span> ~/.wgetrc</span></code></pre></div>
+</div>
+<h3 id="apache-logs-filling-up">Apache logs filling up</h3>
+<p>The cockpit polls the bridge every 200 ms during streams, which
+generates a lot of access-log entries. If you don’t need them:</p>
+<div id="cb40" class="sourceCode">
+<div class="sourceCode" id="cb62"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb62-1"><a href="#cb62-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Disable access logging for /cockpit/bridge.php specifically</span></span>
+<span id="cb62-2"><a href="#cb62-2" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> bash <span class="at">-c</span> <span class="st">&#39;cat &gt; /etc/apache2/conf-available/cockpit-quiet.conf&#39;</span> <span class="op">&lt;&lt; &#39;EOF&#39;</span></span>
+<span id="cb62-3"><a href="#cb62-3" aria-hidden="true" tabindex="-1"></a><span class="st">SetEnvIf Request_URI &quot;/cockpit/bridge\.php&quot; cockpit_quiet</span></span>
+<span id="cb62-4"><a href="#cb62-4" aria-hidden="true" tabindex="-1"></a><span class="st">CustomLog ${APACHE_LOG_DIR}/access.log combined env=!cockpit_quiet</span></span>
+<span id="cb62-5"><a href="#cb62-5" aria-hidden="true" tabindex="-1"></a><span class="op">EOF</span></span>
+<span id="cb62-6"><a href="#cb62-6" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> a2enconf cockpit-quiet</span>
+<span id="cb62-7"><a href="#cb62-7" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> systemctl reload apache2</span></code></pre></div>
+</div>
+<hr />
+<h2 id="uninstall">Uninstall</h2>
+<p>If you ever need to wipe the cockpit:</p>
+<div id="cb41" class="sourceCode">
+<div class="sourceCode" id="cb63"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb63-1"><a href="#cb63-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Stop everything</span></span>
+<span id="cb63-2"><a href="#cb63-2" aria-hidden="true" tabindex="-1"></a><span class="ex">~/scripts/cockpit_stop.sh</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null</span>
+<span id="cb63-3"><a href="#cb63-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb63-4"><a href="#cb63-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Web root</span></span>
+<span id="cb63-5"><a href="#cb63-5" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> rm <span class="at">-rf</span> /var/www/html/cockpit/</span>
+<span id="cb63-6"><a href="#cb63-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb63-7"><a href="#cb63-7" aria-hidden="true" tabindex="-1"></a><span class="co"># Scripts</span></span>
+<span id="cb63-8"><a href="#cb63-8" aria-hidden="true" tabindex="-1"></a><span class="fu">rm</span> <span class="at">-rf</span> ~/scripts/cockpit_<span class="pp">*</span>.sh ~/scripts/agent_loop.sh ~/scripts/crud_executor.sh ~/scripts/install_capabilities.sh</span>
+<span id="cb63-9"><a href="#cb63-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb63-10"><a href="#cb63-10" aria-hidden="true" tabindex="-1"></a><span class="co"># Data (this is destructive — projects under here are gone forever)</span></span>
+<span id="cb63-11"><a href="#cb63-11" aria-hidden="true" tabindex="-1"></a><span class="co"># Keep this if you want to preserve your chats/library/snippets</span></span>
+<span id="cb63-12"><a href="#cb63-12" aria-hidden="true" tabindex="-1"></a><span class="fu">rm</span> <span class="at">-rf</span> ~/scripts/cockpit_data/</span>
+<span id="cb63-13"><a href="#cb63-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb63-14"><a href="#cb63-14" aria-hidden="true" tabindex="-1"></a><span class="co"># Sudoers fragment</span></span>
+<span id="cb63-15"><a href="#cb63-15" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> rm /etc/sudoers.d/cockpit</span>
+<span id="cb63-16"><a href="#cb63-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb63-17"><a href="#cb63-17" aria-hidden="true" tabindex="-1"></a><span class="co"># Apache PHP override (optional — only do this if no other PHP apps need it)</span></span>
+<span id="cb63-18"><a href="#cb63-18" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> rm /etc/php/8.3/apache2/conf.d/99-cockpit.ini</span>
+<span id="cb63-19"><a href="#cb63-19" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> systemctl restart apache2</span></code></pre></div>
+</div>
+<p>The Claude / Gemini / Ollama / LocalAI installations stay — they’re
+independent of the cockpit and you may want them for direct use.
+LocalAI's systemd service (<code>localai.service</code>) also stays
+enabled; disable it yourself with
+<code>sudo systemctl disable --now localai</code> if you no longer want
+it running.</p>
+<hr />
+<p>That’s it. If you’ve followed all 12 steps, you have a fully working
+AI Cockpit. The User Guide covers what to do once it’s running.</p>
+<hr />
+<h1 id="update-june-2026-additional-setup-for-new-features">Update —
+June 2026: Additional setup for new features</h1>
+<p>The base install above is unchanged. These extra steps enable
+features added later. All are optional — the cockpit runs without them,
+and each feature degrades gracefully (with a hint) when its tool is
+missing.</p>
+<h2 id="a.-uv-uvx-for-mcp-capabilities-claude-gemini">A. uv / uvx — for
+MCP capabilities (Claude &amp; Gemini)</h2>
+<p>Capabilities that run an MCP server (e.g. the bundled
+<code>time</code> capability) launch it via <code>uvx</code>, which
+ships with <strong>uv</strong> (Astral’s Python tool).</p>
+<div id="cb42" class="sourceCode">
+<div class="sourceCode" id="cb64"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb64-1"><a href="#cb64-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Official installer (adds ~/.local/bin to PATH)</span></span>
+<span id="cb64-2"><a href="#cb64-2" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-LsSf</span> https://astral.sh/uv/install.sh <span class="kw">|</span> <span class="fu">sh</span></span>
+<span id="cb64-3"><a href="#cb64-3" aria-hidden="true" tabindex="-1"></a><span class="co"># new shell, then verify:</span></span>
+<span id="cb64-4"><a href="#cb64-4" aria-hidden="true" tabindex="-1"></a><span class="ex">uvx</span> <span class="at">--version</span></span></code></pre></div>
+</div>
+<ul>
+<li>One-time network needed; after that <code>uvx &lt;server&gt;</code>
+is cached.</li>
+<li>Must be on the PATH the agents see — after installing,
+<strong>restart the cockpit</strong> (Stop → Start) so the agent
+sessions pick up the new PATH.</li>
+<li><code>npx</code> (from Node, Step 2) covers npm-based MCP servers
+and needs no extra setup.</li>
+</ul>
+<h2 id="b.-whisper.cpp-a-model-for-offline-voice-input">B. whisper.cpp +
+a model — for offline voice input</h2>
+<p>The <span class="material-symbols-rounded ico">mic</span> Voice
+button transcodes mic audio with <code>ffmpeg</code> (already installed)
+and transcribes it locally with whisper.cpp.</p>
+<div id="cb43" class="sourceCode">
+<div class="sourceCode" id="cb65"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb65-1"><a href="#cb65-1" aria-hidden="true" tabindex="-1"></a><span class="co"># The installer&#39;s optional whisper.cpp step does all of this for you, into</span></span>
+<span id="cb65-2"><a href="#cb65-2" aria-hidden="true" tabindex="-1"></a><span class="co"># ~/ai-tools/whisper.cpp (the one place Cockpit looks first). By hand:</span></span>
+<span id="cb65-3"><a href="#cb65-3" aria-hidden="true" tabindex="-1"></a><span class="fu">mkdir</span> <span class="at">-p</span> ~/ai-tools <span class="kw">&amp;&amp;</span> <span class="fu">git</span> clone https://github.com/ggerganov/whisper.cpp ~/ai-tools/whisper.cpp</span>
+<span id="cb65-4"><a href="#cb65-4" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/ai-tools/whisper.cpp</span>
+<span id="cb65-5"><a href="#cb65-5" aria-hidden="true" tabindex="-1"></a><span class="fu">cmake</span> <span class="at">-B</span> build <span class="kw">&amp;&amp;</span> <span class="fu">cmake</span> <span class="at">--build</span> build <span class="at">-j</span> <span class="at">--config</span> Release</span>
+<span id="cb65-6"><a href="#cb65-6" aria-hidden="true" tabindex="-1"></a><span class="co"># Grab a model — base is fast; large-v3-turbo is the best balance and fits a 4 GB GPU:</span></span>
+<span id="cb65-7"><a href="#cb65-7" aria-hidden="true" tabindex="-1"></a><span class="ex">./models/download-ggml-model.sh</span> large-v3-turbo</span></code></pre></div>
+</div>
+<ul>
+<li>The cockpit auto-detects the binary (<code>whisper-cli</code>). It
+uses the model <strong>pinned in
+<code>cockpit_data/whisper_config.json</code></strong> — the installer
+writes the one you chose — and with none pinned it falls back to the
+<strong>largest</strong> installed <code>ggml-*.bin</code>. You can also
+pick a model per dictation in the voice options. To pin specific paths,
+set <code>bin</code>, <code>model</code>, <code>language</code> in that
+file.</li>
+<li>Build with GPU support to use an AMD/NVIDIA card; CPU is fine for
+short clips.</li>
+<li>The web tier (www-data) must be able to read the binary + model
+under your home dir. If transcription says “permission denied”:
+<code>chmod -R a+rX ~/ai-tools/whisper.cpp</code>.</li>
+</ul>
+<h2 id="c.-prism-syntax-highlighting-already-vendored">C. Prism (syntax
+highlighting) — already vendored</h2>
+<p>No install needed. <code>prism.js</code> ships in the web root
+(offline, MIT). It is loaded with <code>Prism.manual = true</code> so it
+only highlights the cockpit’s code editor, not the chat console.</p>
+<h2 id="d.-new-config-files-created-on-first-use">D. New config files
+(created on first use)</h2>
+<p>Under <code>cockpit_data/</code>: <code>directives_global*.md</code>,
+<code>directives_config.json</code>, <code>claude_controls.json</code>,
+<code>gemini_controls.json</code>, <code>whisper_config.json</code>,
+<code>global_caps.json</code>, <code>help.json</code>. All are plain
+JSON/Markdown and editable in-app (the relevant panel’s edit button
+opens them in the floating editor).</p>
+<hr />
+<h1 id="update-september-2026-setup-for-the-new-features">Update —
+September 2026: Setup for the new features</h1>
+<p>The installer handles all of this on a supported Linux distribution —
+this section is for people installing by hand, or checking why one
+feature is greyed out when the rest work.</p>
+<h2 id="setup-bookshelf">E. Bookshelf — reading books</h2>
+<pre><code>sudo apt install pandoc          # epub, docx, odt, fb2
+sudo apt install calibre         # optional: mobi/azw and friends</code></pre>
+<p><code>pandoc</code> covers the common formats and is already
+installed for the guides. <code>calibre</code> is only needed for
+Amazon-style formats; it is a large package, and Bookshelf works without
+it for everything pandoc reads. Without either, the Bookshelf panel will
+say so rather than silently accepting a file it cannot split.</p>
+<h2 id="setup-pdf-vision">F. PDF Vision — rendering pages as images</h2>
+<pre><code>sudo apt install poppler-utils   # provides pdftoppm</code></pre>
+<p>Text extraction needs nothing extra; rendering the <em>pages</em>
+(for diagrams, scans and drawn tables) uses <code>pdftoppm</code>. Pair
+it with an agent that can actually accept an image — see <strong>Vision
+dispatch</strong> in the User Guide.</p>
+<h2 id="setup-music">G. Audio analysis and sheet music</h2>
+<pre><code>sudo apt install ffmpeg sox aubio-tools lilypond timidity</code></pre>
+<ul>
+<li><code>ffmpeg</code>, <code>sox</code> — decoding and level/loudness
+measurement.</li>
+<li><code>aubio-tools</code> — <code>aubiotrack</code>,
+<code>aubionotes</code>, <code>aubioonset</code>: tempo, pitch and onset
+detection. These are measurements, not model guesses.</li>
+<li><code>lilypond</code> — engraves detected notes into a sheet-music
+PDF.</li>
+<li><code>timidity</code> — plays notation back with a piano-like
+voice.</li>
+</ul>
+<p>Each tool preset checks for its own binary and reports the missing
+one by name, so a partial install degrades to a clear message rather
+than an obscure failure.</p>
+<h2 id="setup-intercom">H. Intercom — the hands-free loop</h2>
+<p>Intercom needs both halves of the voice path, and both are already
+covered above: <strong>whisper.cpp</strong> (section B) to hear you, and
+<strong>piper</strong> to answer. The installer offers piper as its own
+phase; by hand it lives in <code>~/ai-tools/piper</code>
+(<code>Installs/install_piper.sh</code>).</p>
+<p>For a language piper has no voice for, <code>espeak-ng</code> is used
+as the fallback and is installed alongside it.</p>
+<p>If dictation works but Intercom does not speak back, piper is the
+missing piece — not whisper.</p>
+<h2 id="setup-isolated-cli">I. Isolated CLI configuration</h2>
+<p>Agents launched by Cockpit now get their own CLI config directory by
+default, so your personal terminal settings do not change how Cockpit’s
+agents answer. Credentials are shared by reference, so you do
+<strong>not</strong> have to sign in twice.</p>
+<p>To put a supplier back on your own configuration, enable <strong>Use
+my global CLI config</strong> for that supplier in its slot
+settings.</p>
+<h2 id="setup-relay-name">J. Everywhere relay — naming a machine</h2>
+<p>Each rig now reports a name with its heartbeat, and the relay lists
+rigs by that name instead of a 32-character machine id. Set it from the
+account panel; it is sent on every heartbeat, so nothing has to be
+re-paired when it changes.</p>
+<div id="ug-search-box"
+style="position:fixed;top:16px;right:16px;z-index:9999;      background:#22262b;border:1px solid #3a3f46;border-radius:8px;      padding:6px 8px;display:flex;align-items:center;gap:6px;      box-shadow:0 4px 16px rgba(0,0,0,.4);font-family:system-ui,Segoe UI,sans-serif;      font-size:13px;">
+<p><span id="ug-search-count"
+style="color:#8a919c;min-width:44px;text-align:center;"></span></p>
+<p>↑</p>
+<p>↓</p>
+</div>
+<script>
+(function() {
+  const input = document.getElementById('ug-search-input');
+  const countEl = document.getElementById('ug-search-count');
+  const prevBtn = document.getElementById('ug-search-prev');
+  const nextBtn = document.getElementById('ug-search-next');
+  let marks = [];
+  let current = -1;
+
+  function clearMarks() {
+    document.querySelectorAll('mark.ug-hit').forEach(m => {
+      const parent = m.parentNode;
+      parent.replaceChild(document.createTextNode(m.textContent), m);
+      parent.normalize();
+    });
+    marks = []; current = -1;
+  }
+
+  function highlight(term) {
+    clearMarks();
+    if (!term) { countEl.textContent = ''; return; }
+    const lower = term.toLowerCase();
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        if (node.parentElement.closest('#ug-search-box, script, style')) return NodeFilter.FILTER_REJECT;
+        return node.nodeValue.toLowerCase().includes(lower) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+      }
+    });
+    const targets = [];
+    let n; while ((n = walker.nextNode())) targets.push(n);
+    targets.forEach(node => {
+      const text = node.nodeValue;
+      const lowerText = text.toLowerCase();
+      const frag = document.createDocumentFragment();
+      let i = 0, idx;
+      while ((idx = lowerText.indexOf(lower, i)) !== -1) {
+        frag.appendChild(document.createTextNode(text.slice(i, idx)));
+        const mark = document.createElement('mark');
+        mark.className = 'ug-hit';
+        mark.style.cssText = 'background:#e6b43c;color:#1a1d21;border-radius:2px;';
+        mark.textContent = text.slice(idx, idx + term.length);
+        frag.appendChild(mark);
+        marks.push(mark);
+        i = idx + term.length;
+      }
+      frag.appendChild(document.createTextNode(text.slice(i)));
+      node.parentNode.replaceChild(frag, node);
+    });
+    current = marks.length ? 0 : -1;
+    updateCount();
+    if (current >= 0) goTo(current);
+  }
+  function updateCount() {
+    countEl.textContent = marks.length ? (current + 1) + '/' + marks.length : (input.value ? '0/0' : '');
+  }
+  function goTo(i) {
+    marks.forEach(m => m.style.outline = '');
+    if (!marks.length) return;
+    current = ((i % marks.length) + marks.length) % marks.length;
+    const m = marks[current];
+    m.style.outline = '2px solid #e6b43c';
+    m.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    updateCount();
+  }
+  input.addEventListener('input', () => highlight(input.value.trim()));
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); goTo(current + (e.shiftKey ? -1 : 1)); }
+    if (e.key === 'Escape') { input.value = ''; clearMarks(); countEl.textContent = ''; input.blur(); }
+  });
+  nextBtn.addEventListener('click', () => goTo(current + 1));
+  prevBtn.addEventListener('click', () => goTo(current - 1));
+  document.addEventListener('keydown', e => {
+    if (e.key === '/' && document.activeElement !== input) { e.preventDefault(); input.focus(); }
+  });
+})();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,6 @@
+       . | .
+        \|/             AI Cockpit
+    .--- O ---.         by Dario Ruggi
+   /    /|\    \
+  '    / | \    '       Claude · Gemini · Ollama
+       . | .            Three agents. One console. Local-first.

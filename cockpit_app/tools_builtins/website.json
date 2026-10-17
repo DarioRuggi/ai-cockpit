@@ -1,0 +1,17 @@
+{
+  "id": "website",
+  "name": "Web site",
+  "description": "Look after a static web site folder: preview it in the browser (only this computer can open it), find what is wrong in it (markup, missing title or alt text, duplicate ids, broken links, images, styles and #anchors, file names whose case would break on Linux, unbalanced CSS), list its pages, pack it as a zip. Nothing is fetched from the internet and nothing in the site is changed. Give the site's folder (or one .html file of it) as the input.",
+  "binary": "php",
+  "version_args": "--version",
+  "website": "https://www.php.net/manual/en/features.commandline.webserver.php",
+  "packages": {"apt": "php-cli", "dnf": "php-cli", "pacman": "php", "zypper": "php8", "brew": "php"},
+  "presets": [
+    {"id": "serve", "label": "Preview in the browser", "description": "Serves the folder on 127.0.0.1 (a free port from 8200); PHP files run. It stops by itself; extra argument: how many minutes (1-240, default 30). Hidden files (.git, .env) are never served and a URL that matches no file answers 404, like on a real server.", "input_kinds": ["folder"], "output_kind": "text", "output_ext": "txt", "output_stem": "preview", "command": "bash {WEBROOT}/web_serve start {INPUT} {OUTPUT} {ARGS}", "timeout_seconds": 30},
+    {"id": "stop", "label": "Stop the preview", "description": "Stops the preview server of this folder.", "input_kinds": ["folder"], "output_kind": "text", "output_ext": "txt", "output_stem": "preview_stop", "command": "bash {WEBROOT}/web_serve stop {INPUT} {OUTPUT}", "timeout_seconds": 30},
+    {"id": "check", "label": "Check the site", "description": "Every page and style sheet: markup errors, missing <title>, lang, charset, viewport and alt text, duplicate ids, old tags, empty links, and every relative link, image, script, style and #anchor that points nowhere (a file name that differs only in case is reported as broken: it works on Windows and fails on Linux).", "input_kinds": ["folder"], "output_kind": "text", "output_ext": "txt", "output_stem": "site_check", "command": "php {WEBROOT}/web_check check {INPUT} {OUTPUT}", "timeout_seconds": 120},
+    {"id": "links", "label": "Broken links only", "description": "Only the relative links, images, scripts, styles and #anchors that point nowhere. External links are counted, never visited.", "input_kinds": ["folder"], "output_kind": "text", "output_ext": "txt", "output_stem": "site_links", "command": "php {WEBROOT}/web_check links {INPUT} {OUTPUT}", "timeout_seconds": 120},
+    {"id": "sitemap", "label": "List the pages", "description": "A table of every page with its title.", "input_kinds": ["folder"], "output_kind": "text", "output_ext": "md", "output_stem": "site_pages", "command": "php {WEBROOT}/web_check sitemap {INPUT} {OUTPUT}", "timeout_seconds": 120},
+    {"id": "pack", "label": "Pack as a zip", "description": "A zip of the site without hidden files, .git, node_modules and editor backups, ready to upload.", "input_kinds": ["folder"], "output_kind": "file", "output_ext": "zip", "output_stem": "{NAME}_site", "command": "php {WEBROOT}/web_check pack {INPUT} {OUTPUT}", "timeout_seconds": 180}
+  ]
+}

@@ -1,0 +1,115 @@
+{
+    "id": "kicad",
+    "name": "Electronics (KiCad)",
+    "binary": "kicad-cli",
+    "version_args": "version",
+    "website": "https://www.kicad.org",
+    "description": "Look at KiCad schematics and boards, check them for the common mistakes, and export what a board house needs. Info counts what is in a .kicad_sch or .kicad_pcb; Check is a LITE ERC/DRC made by reading the file (KiCad 7's command line has no ERC or DRC: those arrived in KiCad 8): unannotated and duplicate references, parts with no value or footprint, a net label used once, no board outline, parts off the board, tracks under 0.15 mm, vias with a tiny drill; BOM groups parts by value and footprint into a CSV; PDF, Netlist, Gerbers + drill (zipped for a board house) and Placement (pick-and-place) are made by kicad-cli. Run KiCad's own ERC and DRC before you order boards. The files are only read; exports run on a scratch copy.",
+    "packages": {
+        "apt": "kicad php-cli php-zip",
+        "dnf": "kicad php-cli",
+        "pacman": "kicad php",
+        "zypper": "kicad php8 php8-zip",
+        "brew": "kicad php"
+    },
+    "presets": [
+        {
+            "id": "check",
+            "label": "Check (lite ERC / DRC by reading the file)",
+            "description": "Not KiCad's rule checker: the common mistakes found by reading the schematic or board. Schematic: unannotated (R?) or duplicate references, no value, no footprint, a net label used once. Board: no outline (Edge.Cuts), a part outside the outline, duplicate references, tracks under 0.15 mm, vias with a drill under 0.2 mm.",
+            "input_kinds": [
+                "file",
+                "code"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_check",
+            "command": "php {WEBROOT}/kicad_tool check {INPUT} {OUTPUT}",
+            "timeout_seconds": 120
+        },
+        {
+            "id": "info",
+            "label": "Info: what is in the file",
+            "description": "Parts or footprints, nets, wires, labels, sheets, copper layers, tracks, vias, zones and the board size.",
+            "input_kinds": [
+                "file",
+                "code"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_info",
+            "command": "php {WEBROOT}/kicad_tool info {INPUT} {OUTPUT}",
+            "timeout_seconds": 120
+        },
+        {
+            "id": "bom",
+            "label": "Bill of materials (CSV)",
+            "description": "Parts grouped by value and footprint: references, quantity, value, footprint, library symbol. Power symbols are left out.",
+            "input_kinds": [
+                "file",
+                "code"
+            ],
+            "output_kind": "text",
+            "output_ext": "csv",
+            "output_stem": "{NAME}_bom",
+            "command": "php {WEBROOT}/kicad_tool bom {INPUT} {OUTPUT}",
+            "timeout_seconds": 120
+        },
+        {
+            "id": "pdf",
+            "label": "PDF of the schematic or board",
+            "description": "The schematic, or the board (copper, silkscreen, outline), as a PDF through kicad-cli.",
+            "input_kinds": [
+                "file",
+                "code"
+            ],
+            "output_kind": "document",
+            "output_ext": "pdf",
+            "output_stem": "{NAME}",
+            "command": "php {WEBROOT}/kicad_tool pdf {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "netlist",
+            "label": "Netlist",
+            "description": "The netlist in KiCad's s-expression format (kicad-cli).",
+            "input_kinds": [
+                "file",
+                "code"
+            ],
+            "output_kind": "text",
+            "output_ext": "net",
+            "output_stem": "{NAME}",
+            "command": "php {WEBROOT}/kicad_tool netlist {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "gerbers",
+            "label": "Gerbers + drill for a board house (zip)",
+            "description": "Every Gerber layer and the Excellon drill file of a .kicad_pcb in one zip, ready to upload to a board house.",
+            "input_kinds": [
+                "file",
+                "code"
+            ],
+            "output_kind": "document",
+            "output_ext": "zip",
+            "output_stem": "{NAME}_gerbers",
+            "command": "php {WEBROOT}/kicad_tool gerbers {INPUT} {OUTPUT}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "pos",
+            "label": "Placement file (pick and place, CSV)",
+            "description": "Reference, value, package, position, rotation and side of every part, in millimetres, for an assembly service.",
+            "input_kinds": [
+                "file",
+                "code"
+            ],
+            "output_kind": "text",
+            "output_ext": "csv",
+            "output_stem": "{NAME}_pos",
+            "command": "php {WEBROOT}/kicad_tool pos {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        }
+    ]
+}

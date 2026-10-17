@@ -1,0 +1,159 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// family_tool — the Genealogy tools' work, for the tool presets (tools_builtins/family.json). A command-line program, never reachable over the web.
+//
+//   php family_tool check      PEOPLE OUTPUT                    impossible or doubtful dates: death before birth, a child born before a parent (or after a mother's death), parent too young or too old,
+//                                                               marriage before a birth or after a death; unknown parent ids; a person who is their own ancestor; facts with no source
+//   php family_tool duplicates PEOPLE OUTPUT                    people who may be the same person (same name in any order, overlapping birth dates, shared parents or spouse)
+//   php family_tool tree       PEOPLE OUTPUT person=ID|NAME [dir=descendants|ancestors] [depth=N]   an indented tree
+//   php family_tool report     PEOPLE OUTPUT [asof=YYYY-MM-DD]  ages at death, anniversaries (birthdays, death and wedding days) in calendar order, with the years since
+//
+// PEOPLE is either a CSV with a header row (id, name, sex, born, died, father, mother, spouse, married, source; any order, other columns kept untouched; spouse and married may hold several values
+// separated by ;) or a GEDCOM text file (0 @I1@ INDI / NAME / SEX / BIRT / DEAT / FAMS / FAMC, 0 @F1@ FAM / HUSB / WIFE / CHIL / MARR, SOUR). Dates: 1850, 1850-03, 1850-03-12, 12 Mar 1850 (month names
+// in English, French, German, Italian, Portuguese, Spanish), 12/03/1850 (read day-first unless impossible, and reported), with ABT / ca / circa (about two years either way), BEF / AFT.
+// Partial dates are never made precise: a problem is reported only when it holds for every day the date could mean. Optional limits (check): mother_min=15 mother_max=50 father_min=15 father_max=75.
+// The original is never changed. Nothing is invented: a missing parent, date or source is reported as missing. This is a checking aid for your own research, not proof of any relationship.
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "family_tool: $m\n"); exit($rc); }
+[$sub, $in, $out] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? ''];
+$args = array_slice($argv, 4);
+if (!in_array($sub, ['check', 'duplicates', 'tree', 'report'], true) || $in === '' || $out === '') fail('usage: family_tool check|duplicates|tree|report PEOPLE OUTPUT [person=ID dir=descendants|ancestors depth=N asof=YYYY-MM-DD]', 2);
+$opt = []; foreach ($args as $a) foreach (preg_split('/\s+(?=\w+=)/', trim($a)) as $p) if (strpos($p, '=') !== false) { [$k, $v] = explode('=', $p, 2); $opt[strtolower(trim($k))] = trim($v); }
+if (!is_file($in)) fail("no such file: $in");
+$name = basename($in);
+
+function days(int $y, int $m, int $d): int { $y -= $m <= 2 ? 1 : 0; $era = intdiv($y >= 0 ? $y : $y - 399, 400); $yoe = $y - $era * 400; $doy = intdiv(153 * ($m + ($m > 2 ? -3 : 9)) + 2, 5) + $d - 1; $doe = $yoe * 365 + intdiv($yoe, 4) - intdiv($yoe, 100) + $doy; return $era * 146097 + $doe - 719468; }
+function dim(int $y, int $m): int { return [31, ($y % 4 == 0 && ($y % 100 != 0 || $y % 400 == 0)) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][$m - 1]; }
+function ascii(string $s): string { $s = mb_strtolower(trim($s)); $t = function_exists('iconv') ? @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $s) : false; return ($t !== false && $t !== '') ? $t : $s; }
+$MON = ['jan' => 1, 'janv' => 1, 'gen' => 1, 'ene' => 1, 'feb' => 2, 'fev' => 2, 'fevr' => 2, 'mar' => 3, 'mrz' => 3, 'apr' => 4, 'avr' => 4, 'abr' => 4, 'may' => 5, 'mai' => 5, 'mag' => 5, 'jun' => 6, 'juin' => 6, 'giu' => 6, 'jul' => 7, 'juil' => 7, 'lug' => 7,
+        'aug' => 8, 'aou' => 8, 'ago' => 8, 'sep' => 9, 'sept' => 9, 'set' => 9, 'oct' => 10, 'okt' => 10, 'out' => 10, 'ott' => 10, 'nov' => 11, 'dec' => 12, 'dez' => 12, 'dic' => 12];
+/** a date: [lo day, hi day, year-or-null, month, day, approx, ambiguous, text] or null when not understood (and '' is no date) */
+function pdate(string $raw): ?array {
+    global $MON; $t = ascii($raw); $t = trim(preg_replace('/\s+/', ' ', str_replace(['.', ','], ' ', $t))); if ($t === '') return null;
+    $appr = false; $bef = false; $aft = false;
+    if (preg_match('/^(abt|about|circa|ca|c|est|approx|environ|vers|um|circa|~)\s*(.*)$/', $t, $m)) { $appr = true; $t = $m[2]; }
+    elseif (preg_match('/^(bef|before|avant|vor|prima|antes)\s*(.*)$/', $t, $m)) { $bef = true; $t = $m[2]; }
+    elseif (preg_match('/^(aft|after|apres|nach|dopo|despues|depois)\s*(.*)$/', $t, $m)) { $aft = true; $t = $m[2]; }
+    $y = $mo = $d = null; $amb = false;
+    if (preg_match('/^(\d{3,4})(?:-(\d{1,2})(?:-(\d{1,2}))?)?$/', $t, $m)) { $y = (int)$m[1]; $mo = isset($m[2]) && $m[2] !== '' ? (int)$m[2] : null; $d = isset($m[3]) && $m[3] !== '' ? (int)$m[3] : null; }
+    elseif (preg_match('/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{3,4})$/', $t, $m)) { $a = (int)$m[1]; $b = (int)$m[2]; $y = (int)$m[3]; if ($a > 12) { $d = $a; $mo = $b; } elseif ($b > 12) { $d = $b; $mo = $a; } else { $d = $a; $mo = $b; $amb = $a !== $b; } }
+    elseif (preg_match('/^(?:(\d{1,2})\s+)?([a-z]{3,5})\s+(\d{3,4})$/', $t, $m) && isset($MON[$m[2]]) || preg_match('/^(?:(\d{1,2})\s+)?([a-z]{3,9})\s+(\d{3,4})$/', $t, $m) && isset($MON[substr($m[2], 0, 3)])) { $mo = $MON[$m[2]] ?? $MON[substr($m[2], 0, 3)]; $d = $m[1] !== '' ? (int)$m[1] : null; $y = (int)$m[3]; }
+    elseif (preg_match('/^([a-z]{3,9})\s+(\d{1,2})\s+(\d{3,4})$/', $t, $m) && isset($MON[substr($m[1], 0, 3)])) { $mo = $MON[substr($m[1], 0, 3)]; $d = (int)$m[2]; $y = (int)$m[3]; }
+    else return null;
+    if ($mo !== null && ($mo < 1 || $mo > 12)) return null; if ($d !== null && ($mo === null || $d < 1 || $d > dim($y, $mo))) return null;
+    $lo = days($y, $mo ?? 1, $d ?? 1); $hi = days($y, $mo ?? 12, $d ?? dim($y, $mo ?? 12));
+    if ($appr) { $lo -= 730; $hi += 730; } if ($bef) { $lo = -10000000; } if ($aft) { $hi = 10000000; }
+    return ['lo' => $lo, 'hi' => $hi, 'y' => ($bef || $aft) ? null : $y, 'm' => $mo, 'd' => $d, 'approx' => $appr || $bef || $aft, 'amb' => $amb, 'text' => trim($raw)];
+}
+function split_list(string $s): array { return array_values(array_filter(array_map('trim', preg_split('/\s*;\s*/', $s)), fn($x) => $x !== '')); }
+
+// ---- reading -------------------------------------------------------------------------------------------------------------------------------------
+$raw = (string)file_get_contents($in); if (strncmp($raw, "\xEF\xBB\xBF", 3) === 0) $raw = substr($raw, 3);
+if (!mb_check_encoding($raw, 'UTF-8')) $raw = mb_convert_encoding($raw, 'UTF-8', 'CP1252');
+$raw = str_replace(["\r\n", "\r"], "\n", $raw); if (trim($raw) === '') fail("$name is empty");
+$P = []; $problems = [];                       // $P[id] = [line, name, sex, born(raw), died(raw), father, mother, sp=>[[id, dateRaw]], src, extra]
+if (preg_match('/^\s*0\s+(HEAD|@[^@]+@\s+(INDI|FAM))\b/m', $raw)) {                    // GEDCOM
+    $recs = []; $cur = null; $ctx = null;
+    foreach (explode("\n", $raw) as $i => $l) { if (!preg_match('/^\s*(\d+)\s+(@[^@]+@\s+)?([A-Za-z_]+)\s*(.*)$/', $l, $m)) continue; $lv = (int)$m[1]; $tag = strtoupper($m[3]); $val = trim($m[4]);
+        if ($lv === 0) { $cur = trim($m[2], " @"); $recs[$cur] = ['type' => $tag, 'line' => $i + 1, 'kv' => []]; $ctx = null; continue; } if ($cur === null) continue;
+        if ($lv === 1) { $ctx = $tag; $recs[$cur]['kv'][] = [$tag, $val, $i + 1]; } elseif ($lv === 2) $recs[$cur]['kv'][] = [$ctx . '.' . $tag, $val, $i + 1]; }
+    $stitle = []; foreach ($recs as $id => $r) if ($r['type'] === 'SOUR') foreach ($r['kv'] as [$t, $v]) if ($t === 'TITL') $stitle[$id] = $v;
+    foreach ($recs as $id => $r) if ($r['type'] === 'INDI') { $p = ['line' => $r['line'], 'name' => '', 'sex' => '', 'born' => '', 'died' => '', 'father' => '', 'mother' => '', 'sp' => [], 'src' => []];
+        foreach ($r['kv'] as [$t, $v]) { if ($t === 'NAME' && $p['name'] === '') $p['name'] = trim(preg_replace('/\s+/', ' ', str_replace('/', ' ', $v))); elseif ($t === 'SEX') $p['sex'] = $v; elseif ($t === 'BIRT.DATE') $p['born'] = $v; elseif ($t === 'DEAT.DATE') $p['died'] = $v;
+            elseif ($t === 'SOUR' || preg_match('/^(BIRT|DEAT|MARR)\.SOUR$/', $t)) $p['src'][] = preg_match('/^@(.+)@$/', $v, $mm) ? ($stitle[$mm[1]] ?? $mm[1]) : $v; }
+        $P[$id] = $p; }
+    foreach ($recs as $id => $r) if ($r['type'] === 'FAM') { $h = $w = ''; $ch = []; $md = ''; $ms = [];
+        foreach ($r['kv'] as [$t, $v]) { $x = trim($v, '@ '); if ($t === 'HUSB') $h = $x; elseif ($t === 'WIFE') $w = $x; elseif ($t === 'CHIL') $ch[] = $x; elseif ($t === 'MARR.DATE') $md = $v; elseif ($t === 'MARR.SOUR') $ms[] = preg_match('/^@(.+)@$/', $v, $mm) ? ($stitle[$mm[1]] ?? $mm[1]) : $v; }
+        if ($h !== '' && isset($P[$h]) && $w !== '') { $P[$h]['sp'][] = [$w, $md]; $P[$h]['src'] = array_merge($P[$h]['src'], $ms); } if ($w !== '' && isset($P[$w]) && $h !== '') $P[$w]['sp'][] = [$h, $md];
+        foreach ($ch as $c) if (isset($P[$c])) { if ($h !== '') $P[$c]['father'] = $h; if ($w !== '') $P[$c]['mother'] = $w; } else $problems[] = [$r['line'], 'Error', "family $id lists a child @$c@ with no INDI record"]; }
+} else {                                                                                  // CSV
+    $first = strtok($raw, "\n"); $c = ["\t" => substr_count($first, "\t"), ';' => substr_count($first, ';'), ',' => substr_count($first, ',')]; arsort($c); $sep = array_key_first($c);
+    $h = fopen('php://memory', 'r+'); fwrite($h, $raw); rewind($h); $ln = 0; $hdr = null; $ci = [];
+    $alias = ['id' => ['id', 'ref', 'key', 'num', 'numero', 'nummer'], 'name' => ['name', 'nom', 'nome', 'nombre', 'person', 'full name'], 'sex' => ['sex', 'sexe', 'geschlecht', 'sesso', 'sexo', 'gender'],
+        'born' => ['born', 'birth', 'birth date', 'naissance', 'geboren', 'nato', 'nascimento', 'nacimiento', 'b', 'dob'], 'died' => ['died', 'death', 'death date', 'deces', 'gestorben', 'morto', 'morte', 'fallecimiento', 'd', 'dod'],
+        'father' => ['father', 'pere', 'vater', 'padre', 'pai', 'father id'], 'mother' => ['mother', 'mere', 'mutter', 'madre', 'mae', 'mother id'], 'spouse' => ['spouse', 'spouses', 'partner', 'epoux', 'ehepartner', 'coniuge', 'conjuge', 'esposo', 'spouse id'],
+        'married' => ['married', 'marriage', 'marriage date', 'mariage', 'heirat', 'matrimonio', 'casamento', 'wedding'], 'src' => ['source', 'sources', 'citation', 'quelle', 'fonte', 'fuente', 'ref source']];
+    while (($r = fgetcsv($h, 0, $sep, '"', '')) !== false) { $ln++; if ($r === [null] || (count($r) === 1 && trim((string)$r[0]) === '')) continue;
+        if ($hdr === null) { $hdr = array_map(fn($x) => ascii((string)$x), $r); foreach ($alias as $k => $as) foreach ($hdr as $i => $hn) if (in_array($hn, $as, true) && !in_array($i, $ci, true)) { $ci[$k] = $i; break; } if (!isset($ci['name']) && !isset($ci['id'])) fail("$name has no name or id column (found: " . implode(', ', $hdr) . ')'); continue; }
+        $g = fn($k) => isset($ci[$k]) ? trim((string)($r[$ci[$k]] ?? '')) : ''; $id = $g('id') !== '' ? $g('id') : 'L' . $ln;
+        if (isset($P[$id])) { $problems[] = [$ln, 'Error', "id \"$id\" already used on line " . $P[$id]['line']]; continue; }
+        $sp = []; $sids = split_list($g('spouse')); $sd = split_list($g('married')); foreach ($sids as $i => $s) $sp[] = [$s, $sd[$i] ?? ($i === 0 && count($sids) === 1 ? ($sd[0] ?? '') : '')];
+        $P[$id] = ['line' => $ln, 'name' => $g('name'), 'sex' => $g('sex'), 'born' => $g('born'), 'died' => $g('died'), 'father' => $g('father'), 'mother' => $g('mother'), 'sp' => $sp, 'src' => $g('src') !== '' ? [$g('src')] : []]; }
+    if ($hdr === null) fail("$name has no header row");
+}
+if (!$P) fail("no people found in $name");
+$byNameKey = []; foreach ($P as $id => $p) $byNameKey[$id] = $p['name'] !== '' ? $p['name'] : $id;
+function label(string $id): string { global $P; return ($P[$id]['name'] ?: $id) . " [$id]"; }
+function yrs(array $p): string { $b = pdate($p['born']); $d = pdate($p['died']); $f = fn($x, $raw) => $x === null ? ($raw === '' ? '' : '?') : ($x['y'] ?? '?'); $bs = $f($b, $p['born']); $ds = $f($d, $p['died']); return ($bs === '' && $ds === '') ? '' : "($bs" . "-$ds)"; }
+$D = []; foreach ($P as $id => $p) { $D[$id] = ['b' => pdate($p['born']), 'd' => pdate($p['died'])]; }
+function ageY(array $a, array $b): array { return [($b['lo'] - $a['hi']) / 365.25, ($b['hi'] - $a['lo']) / 365.25]; }    // [min, max] years from date a to date b
+
+// ---- check -------------------------------------------------------------------------------------------------------------------------------------
+if ($sub === 'check') {
+    $mmin = (float)($opt['mother_min'] ?? 15); $mmax = (float)($opt['mother_max'] ?? 50); $fmin = (float)($opt['father_min'] ?? 15); $fmax = (float)($opt['father_max'] ?? 75); $ambSeen = [];
+    $dateOf = function (string $raw, string $what, int $ln) use (&$problems, &$ambSeen) { if (trim($raw) === '') return null; $d = pdate($raw); if ($d === null) { $problems[] = [$ln, 'Error', "$what \"$raw\" is not a date I understand"]; return null; } if ($d['amb']) $problems[] = [$ln, 'Note', "$what \"$raw\" could be day-first or month-first: read as day-first"]; return $d; };
+    foreach ($P as $id => $p) { $l = $p['line']; $b = $dateOf($p['born'], 'birth date of ' . label($id), $l); $d = $dateOf($p['died'], 'death date of ' . label($id), $l); $D[$id] = ['b' => $b, 'd' => $d];
+        if ($b && $d && $d['hi'] < $b['lo']) $problems[] = [$l, 'Error', label($id) . ' died (' . $p['died'] . ') before being born (' . $p['born'] . ')'];
+        if ($b && $d) { [$mn] = ageY($b, $d); if ($mn > 110) $problems[] = [$l, 'Warning', label($id) . ' would have been at least ' . floor($mn) . ' at death: check the dates']; }
+        if ($p['born'] === '' ) $problems[] = [$l, 'Note', label($id) . ' has no birth date'];
+        if (!$p['src']) $problems[] = [$l, 'Note', label($id) . ' cites no source for any fact'];
+        foreach (['father' => 'M', 'mother' => 'F'] as $role => $_) if ($p[$role] !== '') { if (!isset($P[$p[$role]])) $problems[] = [$l, 'Error', label($id) . " names $role \"" . $p[$role] . '" who is not in the file']; }
+        foreach ($p['sp'] as [$sid, $md]) { if (!isset($P[$sid])) { $problems[] = [$l, 'Error', label($id) . " names spouse \"$sid\" who is not in the file"]; continue; } $m = $dateOf($md, 'marriage date of ' . label($id), $l);
+            foreach ([$id, $sid] as $q) { $bq = $q === $id ? $b : ($D[$q]['b'] ?? pdate($P[$q]['born'])); $dq = $q === $id ? $d : ($D[$q]['d'] ?? pdate($P[$q]['died']));
+                if ($m && $bq && $m['hi'] < $bq['lo']) $problems[] = [$l, 'Error', 'marriage of ' . label($id) . ' and ' . label($sid) . " ($md) is before " . label($q) . ' was born'];
+                if ($m && $dq && $m['lo'] > $dq['hi']) $problems[] = [$l, 'Error', 'marriage of ' . label($id) . ' and ' . label($sid) . " ($md) is after " . label($q) . ' died'];
+                if ($m && $bq) { [, $mx] = ageY($bq, $m); [$mn2] = ageY($bq, $m); if ($mx < 14 && $m['hi'] >= $bq['lo']) $problems[] = [$l, 'Warning', label($q) . ' would have been under 14 at the marriage to ' . label($q === $id ? $sid : $id)]; } } } }
+    foreach ($P as $id => $p) { $cb = $D[$id]['b']; if (!$cb) continue;
+        foreach (['mother' => [$mmin, $mmax, 'mother'], 'father' => [$fmin, $fmax, 'father']] as $role => [$mn, $mx, $lab]) { $pid = $p[$role]; if ($pid === '' || !isset($P[$pid])) continue; $pb = $D[$pid]['b']; $pd = $D[$pid]['d']; $l = $p['line'];
+            if ($pid === $id) { $problems[] = [$l, 'Error', label($id) . " is their own $lab"]; continue; }
+            if ($pb && $cb['hi'] < $pb['lo']) { $problems[] = [$l, 'Error', label($id) . ' (born ' . $p['born'] . ") was born before their $lab " . label($pid) . ' (born ' . $P[$pid]['born'] . ')']; continue; }
+            if ($pb) { [$amin, $amax] = ageY($pb, $cb); if ($amax < $mn) $problems[] = [$l, 'Warning', label($pid) . " would have been under $mn (at most " . round($amax, 1) . ") at the birth of " . label($id)]; if ($amin > $mx) $problems[] = [$l, 'Warning', label($pid) . " would have been over $mx (at least " . round($amin, 1) . ") at the birth of " . label($id)]; }
+            if ($pd) { $slack = $role === 'father' ? 300 : 0; if ($cb['lo'] > $pd['hi'] + $slack) $problems[] = [$l, 'Error', label($id) . ' (born ' . $p['born'] . ") was born after their $lab " . label($pid) . ' died (' . $P[$pid]['died'] . ($role === 'father' ? '; a birth up to nine months after a father\'s death is allowed' : '') . ')']; } } }
+    foreach ($P as $id => $p) { $seen = [$id => true]; $stack = array_filter([$p['father'], $p['mother']]); $guard = 0; while ($stack && $guard++ < 5000) { $x = array_pop($stack); if ($x === $id) { $problems[] = [$p['line'], 'Error', label($id) . ' is their own ancestor (a loop in the parent links)']; break; } if (isset($seen[$x]) || !isset($P[$x])) continue; $seen[$x] = true; foreach (['father', 'mother'] as $r) if ($P[$x][$r] !== '') $stack[] = $P[$x][$r]; } }
+    usort($problems, fn($a, $b) => $a[0] <=> $b[0]); $e = count(array_filter($problems, fn($m) => $m[1] === 'Error')); $w = count(array_filter($problems, fn($m) => $m[1] === 'Warning'));
+    $o = "# Check of $name\n\n" . count($P) . " people. A date problem is reported only when it holds for every day a partial or approximate date could mean. Limits used for parents' ages: mother $mmin-$mmax, father $fmin-$fmax (change with mother_min= etc.).\n\n";
+    foreach ($problems as [$l, $s, $t]) $o .= "$name($l) $s: $t\n"; if (!$problems) $o .= "No problems found.\n"; $o .= "\n" . count($problems) . " finding(s): $e error(s), $w warning(s). A flagged fact is a reason to look at the source again, not proof of a mistake.\n";
+    file_put_contents($out, $o); echo "Wrote $out ($e errors, $w warnings)\n"; exit(0);
+}
+// ---- duplicates --------------------------------------------------------------------------------------------------------------------------------
+if ($sub === 'duplicates') {
+    $key = function (string $n): string { $w = preg_split('/[^a-z0-9]+/', ascii($n), -1, PREG_SPLIT_NO_EMPTY); sort($w); return implode(' ', $w); }; $groups = [];
+    foreach ($P as $id => $p) if ($p['name'] !== '') $groups[$key($p['name'])][] = $id; $found = [];
+    foreach ($groups as $k => $ids) for ($i = 0; $i < count($ids); $i++) for ($j = $i + 1; $j < count($ids); $j++) { [$a, $b] = [$ids[$i], $ids[$j]]; $da = pdate($P[$a]['born']); $db = pdate($P[$b]['born']);
+        $why = ['same name (words in any order, accents and case ignored)']; $score = 1;
+        if ($da && $db) { if ($da['lo'] <= $db['hi'] && $db['lo'] <= $da['hi']) { $why[] = 'overlapping birth dates (' . $P[$a]['born'] . ' / ' . $P[$b]['born'] . ')'; $score += 2; } else { if (abs($da['lo'] - $db['lo']) > 365 * 3) continue; $why[] = 'birth dates within three years'; $score++; } } else $why[] = 'a birth date is missing, so they cannot be told apart by date';
+        foreach (['father', 'mother'] as $r) if ($P[$a][$r] !== '' && $P[$a][$r] === $P[$b][$r]) { $why[] = "same $r " . label($P[$a][$r]) . ' (could be siblings with the same name instead)'; $score++; }
+        $sa = array_column($P[$a]['sp'], 0); $sb = array_column($P[$b]['sp'], 0); if (array_intersect($sa, $sb)) { $why[] = 'same spouse'; $score += 2; }
+        $found[] = [$score, $a, $b, $why]; }
+    usort($found, fn($x, $y) => $y[0] <=> $x[0]); $o = "# Possible duplicate people in $name\n\nCandidates only: look at the sources before merging anyone. Name matching ignores accents, case and word order.\n\n";
+    foreach ($found as [$s, $a, $b, $why]) $o .= $name . '(' . $P[$a]['line'] . ') Warning: ' . label($a) . ' ' . yrs($P[$a]) . ' and ' . label($b) . ' (line ' . $P[$b]['line'] . ') ' . yrs($P[$b]) . ': ' . implode('; ', $why) . "\n";
+    if (!$found) $o .= "No duplicates found.\n"; $o .= "\n" . count($found) . " candidate pair(s).\n"; file_put_contents($out, $o); echo "Wrote $out (" . count($found) . " pairs)\n"; exit(0);
+}
+// ---- tree --------------------------------------------------------------------------------------------------------------------------------------
+if ($sub === 'tree') {
+    $q = $opt['person'] ?? ''; if ($q === '') fail('give the person: person=ID or person=Name', 2); $dir = strtolower($opt['dir'] ?? 'descendants'); if (!in_array($dir, ['descendants', 'ancestors'], true)) fail('dir must be descendants or ancestors', 2); $maxd = isset($opt['depth']) ? max(1, (int)$opt['depth']) : 12;
+    $root = null; if (isset($P[$q])) $root = $q; else { $c = []; foreach ($P as $id => $p) if (ascii($p['name']) === ascii($q)) $c[] = $id; if (!$c) foreach ($P as $id => $p) if (strpos(ascii($p['name']), ascii($q)) !== false) $c[] = $id; if (count($c) > 1) fail("\"$q\" matches several people, use the id: " . implode(', ', array_map('label', array_slice($c, 0, 8)))); if (!$c) fail("nobody called \"$q\" (and no such id)"); $root = $c[0]; }
+    $kids = []; foreach ($P as $id => $p) foreach (['father', 'mother'] as $r) if ($p[$r] !== '' && isset($P[$p[$r]])) $kids[$p[$r]][$id] = true;
+    $line = function (string $id) use ($P) { $p = $P[$id]; $s = $p['name'] ?: '(no name)'; $y = yrs($p); $x = "$s" . ($y ? " $y" : '') . " [$id]"; $sp = []; foreach ($p['sp'] as [$sid, $md]) $sp[] = (isset($P[$sid]) ? ($P[$sid]['name'] ?: $sid) : "$sid (not in file)") . ($md !== '' ? " $md" : ''); if ($sp) $x .= ' m. ' . implode('; ', $sp); if ($p['src']) $x .= ' {src: ' . mb_substr(implode(' | ', $p['src']), 0, 60) . '}'; else $x .= ' {no source}'; return $x; };
+    $o = "# " . ucfirst($dir) . " of " . label($root) . " from $name\n\nOnly relationships written in the file are shown; nobody is added or inferred.\n\n"; $count = 0; $warn = [];
+    $walk = function (string $id, int $depth, array $path) use (&$walk, &$o, &$count, &$warn, $line, $kids, $P, $dir, $maxd) { $o .= str_repeat('  ', $depth) . '- ' . $line($id) . "\n"; $count++; if ($depth + 1 >= $maxd) return;
+        $next = $dir === 'descendants' ? array_keys($kids[$id] ?? []) : array_values(array_filter([$P[$id]['father'], $P[$id]['mother']], fn($x) => $x !== '' && isset($P[$x])));
+        if ($dir === 'descendants') usort($next, fn($a, $b) => strcmp($P[$a]['born'], $P[$b]['born'])); foreach ($next as $n) { if (isset($path[$n])) { $warn[] = label($n); continue; } $walk($n, $depth + 1, $path + [$n => true]); } };
+    $walk($root, 0, [$root => true]); $o .= "\n" . ($count - 1) . ' ' . ($dir === 'descendants' ? 'descendant(s)' : 'ancestor(s)') . " shown" . (isset($opt['depth']) ? " (depth limit $maxd)" : '') . ".\n"; foreach ($warn as $w) $o .= "$name Warning: loop in parent links at $w\n";
+    file_put_contents($out, $o); echo "Wrote $out ($count lines)\n"; exit(0);
+}
+// ---- report ------------------------------------------------------------------------------------------------------------------------------------
+$asof = $opt['asof'] ?? date('Y-m-d'); $A = pdate($asof); if (!$A || $A['d'] === null) fail("asof must be a full date such as 2025-06-30, not \"$asof\"", 2); $today = $A['lo'];
+$o = "# Ages and anniversaries from $name (as of $asof)\n\n## Ages\n\n| Person | Born | Died | Age |\n|---|---|---|---|\n"; $ev = [];
+foreach ($P as $id => $p) { $b = pdate($p['born']); $d = pdate($p['died']); $age = '';
+    if ($b && $d) { [$mn, $mx] = ageY($b, $d); $age = $mx < 0 ? 'died before being born: check the dates' : (floor($mn) === floor($mx) ? 'died aged ' . floor($mn) : 'died aged ' . floor($mn) . '-' . floor($mx) . ' (dates incomplete)'); }
+    elseif ($b && $p['died'] === '') { $y = ($today - $b['hi']) / 365.25; $age = $y > 110 ? 'no death recorded; would be ' . floor($y) . ', so probably died: record missing' : 'no death recorded; ' . floor(($today - $b['lo']) / 365.25) . ' if living'; }
+    elseif ($b) $age = 'death date not understood'; else $age = 'no birth date';
+    $o .= '| ' . label($id) . ' | ' . ($p['born'] ?: '-') . ' | ' . ($p['died'] ?: '-') . " | $age |\n";
+    foreach ([['birth', $b], ['death', $d]] as [$k, $x]) if ($x && $x['m'] && $x['d'] && !$x['approx']) $ev[] = [$x['m'], $x['d'], $k, label($id), $x['y']];
+    foreach ($p['sp'] as [$sid, $md]) { $m = pdate($md); if ($m && $m['m'] && $m['d'] && !$m['approx'] && $id < $sid) $ev[] = [$m['m'], $m['d'], 'wedding', label($id) . ' and ' . label($sid), $m['y']]; } }
+usort($ev, fn($a, $b) => [$a[0], $a[1], $a[3]] <=> [$b[0], $b[1], $b[3]]); $cy = (int)substr($asof, 0, 4);
+$o .= "\n## Anniversaries by calendar day\n\nOnly full dates (day, month, year) are listed. 'years' counts to the as-of year.\n\n"; foreach ($ev as [$m, $d, $k, $who, $y]) $o .= sprintf("- %02d-%02d %s: %s (%d, %d years)\n", $m, $d, $k, $who, $y, $cy - $y); if (!$ev) $o .= "No full dates found.\n";
+file_put_contents($out, $o); echo "Wrote $out (" . count($P) . " people, " . count($ev) . " anniversaries)\n"; exit(0);

@@ -1,0 +1,19 @@
+{
+    "id": "explain-this",
+    "name": "Explain this",
+    "icon": "lightbulb",
+    "colour": "",
+    "description": "Explain simply what it says; for an error message, what it likely means and what to try first.",
+    "prompt": "Explain the text simply, as to someone new to the subject: what it says and what the key terms mean. If it is an error message, say what it most likely means and the first two or three things to try. Keep it short and use the language of the text.",
+    "skill": "",
+    "supplier": {
+        "type": "ollama",
+        "model": ""
+    },
+    "input": "clipboard",
+    "output": "notify",
+    "tools": "none",
+    "confirm": "first",
+    "allow_secrets": false,
+    "starter": true
+}

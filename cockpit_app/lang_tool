@@ -1,0 +1,142 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// lang_tool — the Language study tools' work, for the tool presets (tools_builtins/lang.json). A command-line program, never reachable over the web.
+//
+//   php lang_tool cards    LIST OUTPUT [both]     a vocabulary list -> an Anki import file (.txt, tab separated, with the header lines Anki reads); "both" adds the reverse cards
+//   php lang_tool check    LIST OUTPUT            lint a vocabulary list: duplicates, empty sides, the same text on both sides, invisible characters, very long entries
+//   php lang_tool freq     TEXT OUTPUT            the most frequent words of a text, with cumulative coverage: which words to learn first (Hebrew vowel marks are ignored)
+//   php lang_tool speak    LIST OUTPUT [ARGS]     the list as audio: term, a pause to answer, the translation. ARGS: term=es trans=en pause=2 max=100  (mp3 or wav)
+//   php lang_tool compare  AUDIO OUTPUT ARGS      what was said (Whisper) against what should have been said: ARGS: text=/path/expected.txt lang=en
+//
+// LIST: one entry per line, term and translation separated by a tab, ";", "," (CSV with quotes), " - " or " = "; an optional third column is an example sentence,
+// a fourth the tags. A header line (term, word, front, palabra, מילה ...) is skipped. UTF-8. The original is never changed.
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "lang_tool: $m\n"); exit($rc); }
+[$sub, $in, $out] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? ''];
+$args = array_slice($argv, 4);
+if (!in_array($sub, ['cards', 'check', 'freq', 'speak', 'compare'], true) || $in === '' || $out === '') fail('usage: lang_tool cards|check|freq|speak|compare INPUT OUTPUT [ARGS]', 2);
+if (!is_file($in)) fail("no such file: $in");
+$name = basename($in);
+function kv(array $args): array { $r = []; foreach ($args as $a) foreach (preg_split('/[\s,]+(?=\w+=)/', trim($a)) as $p) if (strpos($p, '=') !== false) { [$k, $v] = explode('=', $p, 2); $r[strtolower(trim($k))] = trim($v); } return $r; }
+$opt = kv($args); $flags = strtolower(implode(' ', $args));
+function utf8_text(string $f): string { $t = (string)file_get_contents($f); if (strncmp($t, "\xEF\xBB\xBF", 3) === 0) $t = substr($t, 3); if (!mb_check_encoding($t, 'UTF-8')) fail('the file is not valid UTF-8: convert it first'); return str_replace(["\r\n", "\r"], "\n", $t); }
+function strip_marks(string $s): string { return preg_replace('/[\x{0591}-\x{05C7}\x{200E}\x{200F}\x{202A}-\x{202E}\x{00AD}]/u', '', $s); }
+function words(string $s): array { preg_match_all('/[\p{L}\p{N}]+(?:[\'’\-][\p{L}\p{N}]+)*/u', mb_strtolower(strip_marks($s)), $m); return $m[0]; }
+
+/** the vocabulary rows: [line, term, translation, example, tags] */
+function vocab_rows(string $text): array {
+    $lines = explode("\n", $text); $rows = [];
+    $hasTab = false; foreach ($lines as $l) if (strpos($l, "\t") !== false) { $hasTab = true; break; }
+    $sep = null; if (!$hasTab) { $c = [';' => 0, ',' => 0]; foreach (array_slice($lines, 0, 20) as $l) { $c[';'] += substr_count($l, ';'); $c[','] += substr_count($l, ','); } if ($c[';'] > 0 && $c[';'] >= $c[',']) $sep = ';'; elseif ($c[','] > 0) $sep = ','; }
+    foreach ($lines as $i => $l) {
+        if (trim($l) === '' || preg_match('/^\s*(#|\/\/)/', $l)) continue;
+        if ($hasTab) $cells = explode("\t", $l); elseif ($sep !== null) $cells = str_getcsv($l, $sep, '"', ''); elseif (preg_match('/^(.+?)(?:\s+(?:-|–|—|=)\s+|\s*:\s+)(.+)$/u', $l, $m)) $cells = [$m[1], $m[2]]; else $cells = [$l];
+        $cells = array_map('trim', $cells); $rows[] = [$i + 1, $cells[0] ?? '', $cells[1] ?? '', $cells[2] ?? '', $cells[3] ?? ''];
+    }
+    if ($rows && preg_match('/^(term|word|front|source|vocab(ulary)?|palabra|t[eé]rmino|מילה|מונח|wort)$/iu', $rows[0][1])) array_shift($rows);
+    return $rows;
+}
+
+if ($sub === 'cards') {
+    $rows = vocab_rows(utf8_text($in)); if (!$rows) fail('no vocabulary found in the file');
+    $esc = fn($s) => htmlspecialchars($s, ENT_NOQUOTES | ENT_SUBSTITUTE, 'UTF-8'); $o = "#separator:tab\n#html:true\n#tags column:3\n"; $n = 0; $skipped = 0; $seen = [];
+    foreach ($rows as [$l, $t, $tr, $ex, $tags]) {
+        if ($t === '' || $tr === '') { $skipped++; continue; } $key = mb_strtolower($t) . "\0" . mb_strtolower($tr); if (isset($seen[$key])) { $skipped++; continue; } $seen[$key] = 1;
+        $back = $esc($tr) . ($ex !== '' ? '<br><i>' . $esc($ex) . '</i>' : ''); $tg = str_replace(' ', '_', $tags);
+        $o .= $esc($t) . "\t" . $back . "\t" . $tg . "\n"; $n++;
+        if (strpos($flags, 'both') !== false && mb_strtolower($t) !== mb_strtolower($tr)) { $o .= $esc($tr) . "\t" . $esc($t) . "\t" . $tg . "\n"; $n++; }
+    }
+    if ($n === 0) fail("no cards made ($skipped line(s) skipped: an empty side or a repeat). Each line needs a word and its translation, separated by a tab, a semicolon, an equals sign or \" - \"");
+    file_put_contents($out, $o); echo "Wrote $out: $n card(s)" . ($skipped ? ", $skipped skipped (an empty side or a repeat)" : '') . ". In Anki: File > Import, choose it; the header lines set the separator and HTML.\n"; exit(0);
+}
+
+if ($sub === 'check') {
+    $text = utf8_text($in); $rows = vocab_rows($text); $msgs = []; $err = 0; $warn = 0; $seen = []; $terms = [];
+    $add = function (string $k, int $l, string $m) use (&$msgs, &$err, &$warn, $name) { $msgs[] = "$name($l) $k: $m"; if ($k === 'Error') $err++; elseif ($k === 'Warning') $warn++; };
+    if (!$rows) $add('Error', 1, 'no vocabulary found');
+    foreach ($rows as [$l, $t, $tr, $ex, $tags]) {
+        if ($t === '') $add('Error', $l, 'the term is empty'); if ($tr === '' && $t !== '') $add('Error', $l, "'$t' has no translation");
+        if ($t !== '' && $tr !== '' && mb_strtolower(strip_marks($t)) === mb_strtolower(strip_marks($tr))) $add('Warning', $l, "the term and the translation are the same: '$t'");
+        $key = mb_strtolower(strip_marks($t)) . "\0" . mb_strtolower(strip_marks($tr)); if ($t !== '' && isset($seen[$key])) $add('Warning', $l, "'$t' repeats line " . $seen[$key]); else $seen[$key] = $l;
+        $tk = mb_strtolower(strip_marks($t)); if ($t !== '' && $tr !== '' && isset($terms[$tk]) && $terms[$tk][1] !== mb_strtolower(strip_marks($tr))) $add('Note', $l, "'$t' also has another translation on line " . $terms[$tk][0]);
+        if ($t !== '') $terms[$tk] = [$l, mb_strtolower(strip_marks($tr))];
+        foreach ([$t, $tr, $ex] as $c) { if (preg_match('/[\x{200B}-\x{200D}\x{FEFF}\x{00A0}]/u', $c)) { $add('Warning', $l, 'an invisible character (zero-width or non-breaking space) in "' . mb_substr($c, 0, 30) . '"'); break; } }
+        if (mb_strlen($t) > 60 || mb_strlen($tr) > 100) $add('Note', $l, 'a long entry (' . max(mb_strlen($t), mb_strlen($tr)) . ' characters): a card is easier to learn when it is short');
+        if (preg_match('/[\x{0590}-\x{05FF}]/u', $t) && preg_match('/[a-zA-Z]/', $t) && !preg_match('/[\x{200E}\x{200F}]/u', $t)) $add('Note', $l, 'Right-to-left and Latin letters mixed in one term: the display order can scramble it');
+    }
+    $rep = "# Vocabulary check: $name\n\n- Entries: " . count($rows) . "\n\n" . ($msgs ? "## Problems ($err errors, $warn warnings)\n\n" . implode("\n", $msgs) . "\n" : "No problems found.\n") . "\n[exit code " . ($err > 0 ? 1 : 0) . "]\n";
+    file_put_contents($out, $rep); echo "Wrote $out ($err errors, $warn warnings)\n"; exit(0);
+}
+
+if ($sub === 'freq') {
+    $w = words(utf8_text($in)); $w = array_values(array_filter($w, fn($x) => mb_strlen($x) >= 1 && !preg_match('/^\d+$/u', $x)));
+    if (!$w) fail('no words found'); $c = array_count_values($w); arsort($c); $total = count($w); $distinct = count($c);
+    $o = "# Word frequency: $name\n\n- Words: $total; different words: $distinct\n"; $cum = 0; $rank = 0; $at80 = null; $rows = '';
+    foreach ($c as $word => $n) { $rank++; $cum += $n; if ($at80 === null && $cum / $total >= 0.8) $at80 = $rank; if ($rank <= 200) $rows .= "| $rank | $word | $n | " . round(100 * $cum / $total, 1) . "% |\n"; }
+    $o .= "- Words needed to understand 80% of this text: " . ($at80 ?? $distinct) . "\n- Words that appear once: " . count(array_filter($c, fn($n) => $n === 1)) . "\n\n| Rank | Word | Count | Cumulative |\n|---|---|---|---|\n" . $rows;
+    file_put_contents($out, $o . "\n[exit code 0]\n"); echo "Wrote $out\n"; exit(0);
+}
+
+// ---- speech: the TTS that is installed ---------------------------------------------------------------------------------------------------------------
+$HERE = __DIR__; $home = ''; if (preg_match('/"home"\s*:\s*"([^"]*)"/', (string)@file_get_contents("$HERE/paths.json"), $pm)) $home = $pm[1]; if ($home === '') $home = getenv('HOME') ?: '';
+function sh(string $cmd, ?int &$rc = null): string { $o = []; exec($cmd . ' 2>&1', $o, $rc); return implode("\n", $o); }
+$PIPER = null; foreach (["$home/ai-tools/piper/piper", trim((string)shell_exec('command -v piper 2>/dev/null'))] as $c) if ($c !== '' && is_executable($c)) { $PIPER = $c; break; }
+$PIPER_MODELS = ['en' => 'en_US-lessac-medium.onnx', 'es' => 'es_ES-davefx-medium.onnx'];
+function say(string $text, string $lang, string $wav): bool {
+    global $PIPER, $PIPER_MODELS, $home; $lang = strtolower(substr($lang, 0, 2)); $text = trim(strip_marks($text)); if ($text === '') return false;
+    if ($PIPER && isset($PIPER_MODELS[$lang]) && is_file(dirname($PIPER) . '/' . $PIPER_MODELS[$lang])) { sh('printf %s ' . escapeshellarg($text) . ' | ' . escapeshellarg($PIPER) . ' --model ' . escapeshellarg(dirname($PIPER) . '/' . $PIPER_MODELS[$lang]) . ' --output_file ' . escapeshellarg($wav), $rc); if (is_file($wav) && filesize($wav) > 1000) return true; }
+    $es = trim((string)shell_exec('command -v espeak-ng 2>/dev/null')) ?: trim((string)shell_exec('command -v espeak 2>/dev/null')); if ($es === '') return false;
+    sh(escapeshellarg($es) . ' -v ' . escapeshellarg($lang) . ' -w ' . escapeshellarg($wav) . ' ' . escapeshellarg($text), $rc); return is_file($wav) && filesize($wav) > 1000;
+}
+if ($sub === 'speak') {
+    if (!trim((string)shell_exec('command -v ffmpeg 2>/dev/null'))) fail('ffmpeg is not installed');
+    $oext = strtolower(pathinfo($out, PATHINFO_EXTENSION)); if (!in_array($oext, ['mp3', 'wav'], true)) fail('the output must be .mp3 or .wav');
+    $tl = $opt['term'] ?? 'en'; $rl = $opt['trans'] ?? 'en'; $pause = max(0.5, min(10.0, (float)($opt['pause'] ?? 2))); $max = max(1, min(150, (int)($opt['max'] ?? 100)));
+    foreach ([$tl, $rl] as $lc) if (!preg_match('/^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$/', $lc)) fail("not a language code: $lc (en, es, he, fr ...)");
+    $rows = vocab_rows(utf8_text($in)); $rows = array_values(array_filter($rows, fn($r) => $r[1] !== '' && $r[2] !== '')); if (!$rows) fail('no vocabulary found in the file'); $rows = array_slice($rows, 0, $max);
+    $d = sys_get_temp_dir() . '/lang_sp_' . getmypid() . '_' . mt_rand(1000, 9999); mkdir($d, 0700, true);
+    register_shutdown_function(function () use ($d) { foreach (glob("$d/*") ?: [] as $f) @unlink($f); @rmdir($d); });
+    $parts = []; $i = 0; $failed = 0;
+    sh('ffmpeg -nostdin -y -loglevel error -f lavfi -i anullsrc=r=22050:cl=mono -t ' . $pause . ' ' . escapeshellarg("$d/pause.wav")); sh('ffmpeg -nostdin -y -loglevel error -f lavfi -i anullsrc=r=22050:cl=mono -t 1.2 ' . escapeshellarg("$d/gap.wav"));
+    foreach ($rows as [$l, $t, $tr]) {
+        $i++; $a = "$d/t$i.wav"; $b = "$d/r$i.wav"; $fa = "$d/t{$i}n.wav"; $fb = "$d/r{$i}n.wav";
+        if (!say($t, $tl, $a) || !say($tr, $rl, $b)) { $failed++; continue; }
+        foreach ([[$a, $fa], [$b, $fb]] as [$x, $y]) sh('ffmpeg -nostdin -y -loglevel error -i ' . escapeshellarg($x) . ' -ar 22050 -ac 1 -c:a pcm_s16le ' . escapeshellarg($y));
+        array_push($parts, $fa, "$d/pause.wav", $fb, "$d/gap.wav");
+    }
+    if (!$parts) fail('no speech could be made (is piper or espeak-ng installed, and does it have the language "' . $tl . '" / "' . $rl . '"?)');
+    $list = ''; foreach ($parts as $p) $list .= "file '" . str_replace("'", "'\\''", $p) . "'\n"; file_put_contents("$d/list.txt", $list);
+    $codec = $oext === 'mp3' ? '-c:a libmp3lame -b:a 96k' : '-c:a pcm_s16le';
+    sh('ffmpeg -nostdin -y -loglevel error -f concat -safe 0 -i ' . escapeshellarg("$d/list.txt") . ' ' . $codec . ' ' . escapeshellarg($out), $rc);
+    if (!is_file($out) || filesize($out) < 1000) fail('the audio could not be assembled');
+    echo "Wrote $out: " . ($i - $failed) . " entr" . (($i - $failed) === 1 ? 'y' : 'ies') . " (term in $tl, a " . $pause . " s pause, translation in $rl)" . ($failed ? ", $failed skipped (no voice made it)" : '') . "\n"; exit(0);
+}
+
+// ---- compare: what was said against what should have been said ------------------------------------------------------------------------------------
+if ($sub === 'compare') {
+    $tf = $opt['text'] ?? ''; $lang = $opt['lang'] ?? 'auto'; if (!preg_match('/^(auto|[a-z]{2,3})$/', $lang)) fail("not a language code: $lang");
+    if ($tf === '' || !is_file($tf)) fail('give the expected text in the extra arguments: text=/path/to/expected.txt lang=en');
+    if (filesize($tf) > 200000) fail('the expected text is over 200 KB'); $expected = words(utf8_text($tf));
+    $wr = "$HERE/whisper_run"; if (!is_file($wr)) fail('whisper_run is missing');
+    $tmp = sys_get_temp_dir() . '/lang_cmp_' . getmypid() . '.txt';
+    $log = sh('bash ' . escapeshellarg($wr) . ' ' . escapeshellarg($in) . ' ' . escapeshellarg($tmp) . ' ' . escapeshellarg($lang) . ' txt', $rc);
+    $heardRaw = is_file($tmp) ? (string)file_get_contents($tmp) : ''; @unlink($tmp);
+    if ($rc !== 0 || trim($heardRaw) === '') fail('the transcription failed: ' . trim(substr($heardRaw ?: $log, 0, 300)));
+    $heard = words($heardRaw); $n = count($expected); $m = count($heard); if ($n === 0) fail('the expected text has no words'); if ($n > 1500 || $m > 3000) fail('too long to compare (1500 expected words at most)');
+    $L = array_fill(0, $n + 1, array_fill(0, $m + 1, 0));
+    for ($i = $n - 1; $i >= 0; $i--) for ($j = $m - 1; $j >= 0; $j--) $L[$i][$j] = $expected[$i] === $heard[$j] ? $L[$i + 1][$j + 1] + 1 : max($L[$i + 1][$j], $L[$i][$j + 1]);
+    $i = 0; $j = 0; $ops = [];
+    while ($i < $n && $j < $m) { if ($expected[$i] === $heard[$j]) { $ops[] = ['=', $expected[$i]]; $i++; $j++; } elseif ($L[$i + 1][$j] >= $L[$i][$j + 1]) { $ops[] = ['-', $expected[$i++]]; } else { $ops[] = ['+', $heard[$j++]]; } }
+    while ($i < $n) $ops[] = ['-', $expected[$i++]]; while ($j < $m) $ops[] = ['+', $heard[$j++]];
+    $match = $L[0][0]; $subs = []; $miss = []; $extra = []; $k = 0; $no = count($ops);
+    while ($k < $no) { if ($ops[$k][0] === '-' && isset($ops[$k + 1]) && $ops[$k + 1][0] === '+') { $subs[] = [$ops[$k][1], $ops[$k + 1][1]]; $k += 2; } elseif ($ops[$k][0] === '-') { $miss[] = $ops[$k][1]; $k++; } elseif ($ops[$k][0] === '+') { $extra[] = $ops[$k][1]; $k++; } else $k++; }
+    $acc = round(100 * $match / $n);
+    $o = "# Speech compared with the text: " . basename($in) . "\n\n- Expected words: $n; heard: $m; matching in order: $match\n- Accuracy: **$acc%**\n- Heard as something else: " . count($subs) . "; not heard: " . count($miss) . "; added: " . count($extra) . "\n\n";
+    if ($subs) { $o .= "## Said differently\n\n| Expected | Heard |\n|---|---|\n"; foreach (array_slice($subs, 0, 40) as [$a, $b]) $o .= "| $a | $b |\n"; $o .= "\n"; }
+    if ($miss) $o .= "## Not heard\n\n" . implode(', ', array_slice($miss, 0, 60)) . "\n\n";
+    if ($extra) $o .= "## Added\n\n" . implode(', ', array_slice($extra, 0, 60)) . "\n\n";
+    $o .= "What was heard (Whisper's transcript):\n\n> " . trim(preg_replace('/\s+/u', ' ', $heardRaw)) . "\n\nNote: this is Whisper's reading, not a pronunciation score: a word it guesses right from context can hide a mispronunciation, and a clear word can be misread.\n";
+    file_put_contents($out, $o . "\n[exit code 0]\n"); echo "Wrote $out (accuracy $acc%)\n"; exit(0);
+}

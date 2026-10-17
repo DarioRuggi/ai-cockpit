@@ -1,0 +1,49 @@
+{
+    "id": "ytdlp",
+    "name": "yt-dlp (download)",
+    "binary": "/usr/local/bin/yt-dlp",
+    "version_args": "--version",
+    "description": "Download video/audio from the web via yt-dlp. The {INPUT} placeholder is the source URL (paste a URL as the input). Output is written next to the cockpit project. Respect copyright and site terms of service.",
+    "presets": [
+        {
+            "id": "audio-mp3",
+            "name": "Extract audio → MP3",
+            "args_template": "-x --audio-format mp3 --audio-quality 0 -o {OUTPUT} {INPUT}",
+            "output_ext": ".mp3",
+            "output_kind": "audio",
+            "description": "Download and extract best audio as MP3 (great for feeding whisper next)"
+        },
+        {
+            "id": "video-mp4",
+            "name": "Download video → MP4",
+            "args_template": "-f \"bv*+ba/b\" --merge-output-format mp4 -o {OUTPUT} {INPUT}",
+            "output_ext": ".mp4",
+            "output_kind": "video",
+            "description": "Download best video+audio, merged to MP4"
+        },
+        {
+            "id": "video-720",
+            "name": "Download video ≤720p → MP4",
+            "args_template": "-f \"bv*[height<=720]+ba/b[height<=720]\" --merge-output-format mp4 -o {OUTPUT} {INPUT}",
+            "output_ext": ".mp4",
+            "output_kind": "video",
+            "description": "Cap resolution at 720p to save space/bandwidth"
+        },
+        {
+            "id": "subs",
+            "name": "Download subtitles (SRT)",
+            "args_template": "--write-subs --write-auto-subs --sub-format srt --skip-download --convert-subs srt -o {OUTPUT} {INPUT}",
+            "output_ext": ".srt",
+            "output_kind": "subtitle",
+            "description": "Fetch subtitles (manual + auto-generated) as SRT, no media download"
+        },
+        {
+            "id": "metadata",
+            "name": "Info (JSON metadata)",
+            "args_template": "--dump-json --no-download {INPUT}",
+            "output_ext": ".json",
+            "output_kind": "text",
+            "description": "Dump video metadata as JSON without downloading"
+        }
+    ]
+}

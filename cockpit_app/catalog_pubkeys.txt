@@ -1,0 +1,3 @@
+# Public keys that may sign the Cockpit catalog feed (one base64 Ed25519 key per line). Add a line to rotate; keep the old one while old builds are in use.
+# added 2026-10-12
+Y6Jp1LkVRDNqsNnWCp9jo2FJgDPCUSXVOta9zCmytCM=

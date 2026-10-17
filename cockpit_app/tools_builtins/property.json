@@ -1,0 +1,50 @@
+{
+    "id": "property",
+    "name": "Real estate and rentals",
+    "description": "Checks and calculators for landlords, agents and buyers, from plain files. Rent roll reads a CSV (unit, tenant, rent, due date, paid, lease end, deposit, currency; columns are found by name in several languages) and lists overdue rent with the days and amount owing (part payments included), rent due in the next days, leases ending within N days or already ended, and deposit totals per currency. Calculate works out gross yield, net yield (cap rate), the monthly mortgage payment, monthly cash flow, cash-on-cash return and debt service coverage from the numbers you give; nothing is assumed. Listing check reads an advertisement text and reports missing required facts (area, rooms, price, availability) and wording nobody can verify (superlatives, vague locations, promised returns), in several languages. Arithmetic and text checks, not legal, financial, tax or investment advice: local law decides what a lease, deposit or listing must contain. The original is never changed.",
+    "binary": "php",
+    "version_args": "--version",
+    "website": "https://www.php.net",
+    "packages": {
+        "apt": "php-cli php-mbstring",
+        "dnf": "php-cli php-mbstring",
+        "pacman": "php",
+        "zypper": "php8 php8-mbstring",
+        "brew": "php"
+    },
+    "presets": [
+        {
+            "id": "rentroll",
+            "label": "Rent roll: overdue, upcoming, leases, deposits",
+            "description": "A CSV with unit, tenant, rent, due (date), paid (a date, yes/no or the amount received), lease end, deposit and currency. Overdue rent (warning, with days and amount owing), rent due within 7 days (soon=14 to change it), leases ending within 60 days (within=90 to change it) or already ended, deposit totals. today=2026-03-01 in the extra arguments fixes the date to compare with.",
+            "input_kinds": ["csv", "file", "spreadsheet", "text"],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_rentroll",
+            "command": "php {WEBROOT}/property_tool rentroll {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "calc",
+            "label": "Yield, cash flow and mortgage payment",
+            "description": "The input is a text file of key=value lines (or give them in the extra arguments, which win): price, rent (per month), down (an amount or 20%), rate (yearly %), years, closing, tax, insurance, maintenance and other (per year), vacancy and management (% of the rent). Gross yield, net yield, mortgage payment, monthly cash flow, cash-on-cash return, debt service coverage. A figure you leave out is left out, and the result says so.",
+            "input_kinds": ["text", "file"],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_numbers",
+            "command": "php {WEBROOT}/property_tool calc {INPUT} {OUTPUT} {ARGS}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "listing",
+            "label": "Listing text check",
+            "description": "The advertisement as plain text. Missing area, rooms, price or availability (warnings), an availability with no date, several different amounts or areas, \"close to\" with no distance, a renovation with no year, wording nobody can verify, and promised returns (warning). Found by wording, in several languages; problems come back as file(line), with Fix with agent.",
+            "input_kinds": ["text", "file", "document"],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_listing_check",
+            "command": "php {WEBROOT}/property_tool listing {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        }
+    ]
+}

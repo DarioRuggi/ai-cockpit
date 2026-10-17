@@ -1,0 +1,16 @@
+{
+  "id": "gemini", "display": "Gemini CLI", "kind": "agent", "transport": "process",
+  "command": "gemini",
+  "args": ["-p", "{prompt}", {"when": "model", "args": ["-m", "{model}"]}],
+  "parser": "plain",
+  "tiers": {
+    "read_only": ["--approval-mode", "default"],
+    "edit": ["--approval-mode", "auto_edit"],
+    "shell": ["--yolo"]
+  },
+  "detect": {"cmd": "gemini", "version_args": ["--version"]},
+  "cwd_policy": "project",
+  "limits": {"timeout_s": 600},
+  "notes": "Cockpit today does NOT run gemini-cli for card 2: it measured 50-110 s of startup per call and uses the REST API instead. This adapter exists for the cases that need the agent (tools, files). A REST adapter (curl process transport) is the fast path.",
+  "docs_checked": "2026-10-05"
+}

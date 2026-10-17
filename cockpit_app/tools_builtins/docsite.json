@@ -1,0 +1,69 @@
+{
+    "id": "docsite",
+    "name": "Documentation site",
+    "description": "Turn a folder of markdown pages into documentation. Check finds broken links between pages and to #anchors, missing images, links whose file name differs in case (they break on Linux), empty pages, pages with no title, skipped heading levels, repeated headings and pages nothing links to; Index writes a contents page in folder and number-prefix order; Build makes a static site in a zip: a page per .md with a sidebar, previous and next links, dark mode and a search box that works offline, links rewritten from .md to .html, images copied; One page makes a single self-contained HTML file with a table of contents, to print or send. Pandoc reads the markdown with its sandbox on (no file reads outside the page). Preview the built site with the Web site tools. The source is never changed.",
+    "binary": "pandoc",
+    "version_args": "--version",
+    "website": "https://pandoc.org",
+    "packages": {
+        "apt": "pandoc php-cli php-zip php-mbstring",
+        "dnf": "pandoc php-cli php-mbstring",
+        "pacman": "pandoc php",
+        "zypper": "pandoc php8 php8-zip php8-mbstring",
+        "brew": "pandoc php"
+    },
+    "presets": [
+        {
+            "id": "check",
+            "label": "Check the pages (links, images, titles)",
+            "description": "Broken page links, links to a heading that is not there, missing images, a link whose file name differs only in case, empty pages (errors); pages with no title (warning); skipped heading levels, repeated headings, pages no other page links to (notes). Problems come back as file(line), with Fix with agent.",
+            "input_kinds": [
+                "folder"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_check",
+            "command": "php {WEBROOT}/docs_tool check {INPUT} {OUTPUT}",
+            "timeout_seconds": 600
+        },
+        {
+            "id": "toc",
+            "label": "Contents page (index)",
+            "description": "A contents list of every page in folder and number-prefix order (01-install.md before 02-usage.md), titles from each page's first heading or front matter.",
+            "input_kinds": [
+                "folder"
+            ],
+            "output_kind": "text",
+            "output_ext": "md",
+            "output_stem": "{NAME}_contents",
+            "command": "php {WEBROOT}/docs_tool toc {INPUT} {OUTPUT}",
+            "timeout_seconds": 300
+        },
+        {
+            "id": "build",
+            "label": "Build the static site (zip)",
+            "description": "One HTML page per markdown page with a sidebar, previous/next links, dark mode and an offline search box; links rewritten .md to .html; images and other files copied. Unzip anywhere and open index.html, or serve the folder.",
+            "input_kinds": [
+                "folder"
+            ],
+            "output_kind": "document",
+            "output_ext": "zip",
+            "output_stem": "{NAME}_site",
+            "command": "php {WEBROOT}/docs_tool build {INPUT} {OUTPUT}",
+            "timeout_seconds": 900
+        },
+        {
+            "id": "single",
+            "label": "One page: everything in a single HTML file",
+            "description": "All the pages in one self-contained HTML file with a table of contents and a page break before each page when printed.",
+            "input_kinds": [
+                "folder"
+            ],
+            "output_kind": "document",
+            "output_ext": "html",
+            "output_stem": "{NAME}_all",
+            "command": "php {WEBROOT}/docs_tool single {INPUT} {OUTPUT}",
+            "timeout_seconds": 900
+        }
+    ]
+}

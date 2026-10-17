@@ -1,0 +1,21 @@
+{
+  "id": "music-notation",
+  "name": "Music scores",
+  "icon": "music_note",
+  "description": "Sheet music in LilyPond: written, checked, engraved, played.",
+  "detect": ["*.ly", "*.ily"],
+  "note": "This is a music-notation project in LilyPond (.ly files). Write relative-pitch melodies with \\relative c', put a \\version line at the top, keep the key, time signature and tempo in a shared 'global' block, and put a \\layout and a \\midi block in \\score so the tools can engrave and play it. Count the beats of every bar; the check reports a 'barcheck failed' warning where a bar is too long or too short, and the fault is in the bar BEFORE the position it names. Use bar checks (|) in the source so mistakes are caught early. Never invent the notes of an existing piece: transcribe from the material you were given, and say where you are unsure. LilyPond files can run code: the tools compile only inside a sandbox, and you must not add Scheme code that writes files or runs programs. After every change, run the check and fix what it lists, then build the PDF and play it.",
+  "verify": "score check",
+  "group": "Media",
+  "details": "Sheet music in LilyPond. The Music scores tool compiles a score in a sandbox and reports each error and warning with its line and column, with bar-check failures called out (a bar with the wrong number of beats), engraves the PDF, writes the MIDI and a picture, plays the score as MP3 through TiMidity++, brings an old file to the current syntax with convert-ly, imports MusicXML (MuseScore, Finale, Sibelius) and ABC tunes, and starts a new lead sheet. A LilyPond file can contain code that runs commands and its safe mode was removed, so every run happens inside bubblewrap with no network, no home folder and a read-only system; without bubblewrap the tool refuses to run.",
+  "examples": [
+    "A fiddle tune with chords from an ABC file",
+    "Find the bar with the wrong number of beats",
+    "Import a MuseScore export and clean it up",
+    "Hear the arrangement before printing the parts"
+  ],
+  "tools": [
+    {"tool": "score", "why": "check, engrave, play, import and scaffold LilyPond scores, in a sandbox"},
+    {"tool": "music", "why": "tempo, loudness and lyrics of a recording"}
+  ]
+}

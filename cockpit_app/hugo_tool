@@ -1,0 +1,72 @@
+#!/usr/bin/env php
+<?php
+// =============================================================================
+// hugo_tool — the Hugo site tools' work, for the tool presets (tools_builtins/hugo.json). A command-line program, never reachable over the web.
+//
+//   php hugo_tool check FOLDER OUTPUT          build the site (nothing kept) and report template and content errors as file(line,col), warnings, how many pages were made
+//   php hugo_tool build FOLDER OUTPUT.zip      build the site (minified) and zip it: unzip anywhere, or serve the folder
+//   php hugo_tool list  FOLDER OUTPUT          every content page: path, title, date, draft or not, expired or future
+//   php hugo_tool new   FOLDER OUTPUT NAME     a small working site NAME/ (hugo.toml, a home page, two posts, plain layouts, a stylesheet); no theme to download; never overwrites
+//
+// SAFETY: a Hugo site can read files and fetch from the network (resources.GetRemote, modules, themes), so every run happens inside bubblewrap: no network, no home folder, a read-only
+// system, only a scratch copy of the site writable. Without bwrap this tool REFUSES to run Hugo. The site itself is never changed.
+// =============================================================================
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+function fail(string $m, int $rc = 1): void { fwrite(STDERR, "hugo_tool: $m\n"); exit($rc); }
+[$sub, $in, $out] = [$argv[1] ?? '', $argv[2] ?? '', $argv[3] ?? ''];$args = array_slice($argv, 4);
+if (!in_array($sub, ['check', 'build', 'list', 'new'], true) || $in === '' || $out === '') fail('usage: hugo_tool check|build|list|new FOLDER OUTPUT [NAME]', 2);
+function sh(string $cmd, ?int &$rc = null): string { $o = []; exec($cmd . ' 2>&1', $o, $rc); return implode("\n", $o); }
+function have(string $b): bool { return trim((string)shell_exec('command -v ' . escapeshellarg($b) . ' 2>/dev/null')) !== ''; }
+$home = ''; if (preg_match('/"home"\s*:\s*"([^"]*)"/', (string)@file_get_contents(__DIR__ . '/paths.json'), $pm)) $home = $pm[1]; if ($home === '') $home = getenv('HOME') ?: '';
+
+if ($sub === 'new') {
+    if (!is_dir($in)) fail('new: give the folder to create the site in'); $nm = preg_replace('/[^A-Za-z0-9_-]/', '', preg_split('/\s+/', trim($args[0] ?? ''))[0] ?? ''); if ($nm === '') fail('new: type the site\'s name in the extra arguments (letters, digits, - and _)');
+    $d = rtrim($in, '/') . '/' . $nm; if (file_exists($d)) fail("new: $d already exists, nothing was changed"); foreach (['content/posts', 'layouts/_default', 'layouts/partials', 'static', 'archetypes'] as $x) mkdir("$d/$x", 0775, true);
+    file_put_contents("$d/hugo.toml", "baseURL = 'https://example.org/'\nlocale = 'en'\ntitle = '$nm'\n[params]\n  description = 'A small site made with Hugo.'\n");
+    file_put_contents("$d/archetypes/default.md", "+++\ntitle = '{{ replace .File.ContentBaseName \"-\" \" \" | title }}'\ndate = {{ .Date }}\ndraft = true\n+++\n");
+    file_put_contents("$d/content/_index.md", "+++\ntitle = 'Home'\n+++\n\nWelcome. This site is plain Hugo with its own small layouts: no theme to download.\n");
+    file_put_contents("$d/content/posts/first-post.md", "+++\ntitle = 'First post'\ndate = 2026-01-05T10:00:00Z\ndraft = false\n+++\n\nThe first post. Some **bold** text and a [link](/posts/second-post/).\n");
+    file_put_contents("$d/content/posts/second-post.md", "+++\ntitle = 'Second post'\ndate = 2026-02-01T10:00:00Z\ndraft = false\n+++\n\nThe second post.\n");
+    file_put_contents("$d/layouts/_default/baseof.html", "<!DOCTYPE html>\n<html lang=\"{{ .Site.Language.Locale }}\">\n<head>\n  <meta charset=\"utf-8\">\n  <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n  <title>{{ if .IsHome }}{{ .Site.Title }}{{ else }}{{ .Title }} · {{ .Site.Title }}{{ end }}</title>\n  <link rel=\"stylesheet\" href=\"{{ \"style.css\" | relURL }}\">\n</head>\n<body>\n  <header><a href=\"{{ \"/\" | relURL }}\">{{ .Site.Title }}</a></header>\n  <main>\n{{ block \"main\" . }}{{ end }}\n  </main>\n</body>\n</html>\n");
+    file_put_contents("$d/layouts/index.html", "{{ define \"main\" }}\n<h1>{{ .Title }}</h1>\n{{ .Content }}\n<h2>Posts</h2>\n<ul>\n{{ range (where .Site.RegularPages \"Section\" \"posts\").ByDate.Reverse }}\n  <li><a href=\"{{ .RelPermalink }}\">{{ .Title }}</a> <small>{{ .Date.Format \"2006-01-02\" }}</small></li>\n{{ end }}\n</ul>\n{{ end }}\n");
+    file_put_contents("$d/layouts/_default/single.html", "{{ define \"main\" }}\n<article>\n  <h1>{{ .Title }}</h1>\n  <p><small>{{ .Date.Format \"2006-01-02\" }}</small></p>\n  {{ .Content }}\n</article>\n{{ end }}\n");
+    file_put_contents("$d/layouts/_default/list.html", "{{ define \"main\" }}\n<h1>{{ .Title }}</h1>\n<ul>{{ range .Pages }}<li><a href=\"{{ .RelPermalink }}\">{{ .Title }}</a></li>{{ end }}</ul>\n{{ end }}\n");
+    file_put_contents("$d/static/style.css", "body{font:16px/1.6 system-ui,sans-serif;max-width:42rem;margin:0 auto;padding:1rem}header a{font-weight:700;text-decoration:none}\n");
+    file_put_contents($out, "Created $d: hugo.toml, a home page, two posts, plain layouts and a stylesheet (no theme). Next: Check, then Build the site.\n[exit code 0]\n"); echo "Created $d\n"; exit(0);
+}
+if (!is_dir($in)) fail("not a folder: $in");
+$HUGO = null; foreach ([trim((string)shell_exec('command -v hugo 2>/dev/null')), "$home/.local/bin/hugo", "$home/.local/share/cockpit/tools/hugo/hugo"] as $c) if ($c !== '' && is_executable($c)) { $HUGO = realpath($c); break; }
+if ($HUGO === null) fail('Hugo is not installed. Fetch the official extended release (github.com/gohugoio/hugo, hugo_extended_X_linux-amd64.tar.gz) into ~/.local/share/cockpit/tools/hugo/ and link it from ~/.local/bin');
+if (!have('bwrap')) fail("bwrap (bubblewrap) is not installed, and Hugo is not run without it: a site can read files and fetch from the network. Install it: sudo apt install bubblewrap");
+if (!is_file("$in/hugo.toml") && !is_file("$in/config.toml") && !is_file("$in/hugo.yaml") && !is_file("$in/hugo.json") && !is_dir("$in/config")) fail('no Hugo configuration here (hugo.toml, hugo.yaml, config.toml or a config/ folder): give the site\'s root folder');
+$tmp = sys_get_temp_dir() . '/hugo_' . getmypid() . '_' . mt_rand(1000, 9999); mkdir("$tmp/work", 0700, true);
+register_shutdown_function(function () use ($tmp) { if (strpos(basename($tmp), 'hugo_') !== 0 || !is_dir($tmp)) return; $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($tmp, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::CHILD_FIRST); foreach ($it as $f) { $f->isDir() && !$f->isLink() ? @rmdir($f->getPathname()) : @unlink($f->getPathname()); } @rmdir($tmp); });
+$root = rtrim(realpath($in), '/'); $size = 0;
+$it = new RecursiveIteratorIterator(new RecursiveCallbackFilterIterator(new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS), function ($f) { return !in_array($f->getFilename(), ['.git', 'public', 'node_modules', 'resources', '.hugo_build.lock'], true) && !$f->isLink(); }), RecursiveIteratorIterator::SELF_FIRST);
+foreach ($it as $f) { $rel = substr($f->getPathname(), strlen($root) + 1); if ($f->isDir()) { @mkdir("$tmp/work/$rel", 0700, true); continue; } $size += $f->getSize(); if ($size > 150 * 1048576) fail('the site folder is larger than 150 MB'); copy($f->getPathname(), "$tmp/work/$rel"); }
+$bw = 'bwrap --unshare-all --die-with-parent --new-session --ro-bind /usr /usr --symlink usr/lib /lib --symlink usr/lib64 /lib64 --symlink usr/bin /bin --symlink usr/sbin /sbin --ro-bind-try /etc/ssl /etc/ssl --ro-bind-try /etc/ld.so.cache /etc/ld.so.cache --ro-bind ' . escapeshellarg($HUGO) . ' /hugo --proc /proc --dev /dev --tmpfs /tmp --bind ' . escapeshellarg("$tmp/work") . ' /work --chdir /work --setenv HOME /tmp --setenv PATH /usr/bin:/bin --setenv LANG C.UTF-8 --setenv HUGO_CACHEDIR /tmp/hcache ';
+$run = function (string $a, int $secs = 180) use ($bw): array { $rc = 0; $o = sh('timeout ' . $secs . ' ' . $bw . '/hugo ' . $a, $rc); return [$rc, $o]; };
+$name = basename($root);
+
+if ($sub === 'list') {
+    [$rc, $o] = $run('list all'); $rows = []; foreach (explode("\n", $o) as $i => $l) { if ($i === 0 || trim($l) === '') continue; $c = str_getcsv($l, ',', '"', ''); if (count($c) >= 8) $rows[] = $c; }
+    if ($rc !== 0 && !$rows) fail('hugo could not list the content: ' . trim(substr($o, 0, 300)));
+    $md = "# Content of $name\n\n" . count($rows) . " page(s).\n\n| Path | Title | Date | Draft | Expires | Section |\n|---|---|---|---|---|---|\n"; $drafts = 0; foreach ($rows as $c) { $d = ($c[6] ?? '') === 'true' ? 'draft' : ''; $exp = substr($c[4], 0, 4) === '0001' ? '' : substr($c[4], 0, 10); if ($d) $drafts++; $md .= '| ' . str_replace('|', '/', $c[0]) . ' | ' . str_replace('|', '/', $c[2]) . ' | ' . substr($c[3], 0, 10) . " | $d | $exp | " . ($c[9] ?? '') . " |\n"; }
+    $md .= "\nDrafts: $drafts (they are not built unless you ask for drafts).\n"; file_put_contents($out, $md . "\n[exit code 0]\n"); echo "Wrote $out (" . count($rows) . " pages)\n"; exit(0);
+}
+$dest = $sub === 'build' ? '--minify' : '';
+[$rc, $o] = $run('--destination /work/_site ' . $dest . ' --logLevel info --printPathWarnings --printI18nWarnings --cleanDestinationDir');
+$msgs = []; $cnt = ['Error' => 0, 'Warning' => 0, 'Note' => 0]; $add = function (string $k, string $f, int $l, int $c, string $m) use (&$msgs, &$cnt) { $msgs[] = "$f($l" . ($c ? ",$c" : '') . ") $k: $m"; $cnt[$k]++; };
+foreach (explode("\n", $o) as $ln) { $ln = trim($ln); if ($ln === '') continue;
+    if (preg_match('/^(ERROR|WARN|Error)\s+(.*)$/', $ln, $m) || preg_match('/^Error:\s*(.*)$/', $ln, $m2)) { $k = (isset($m[1]) && $m[1] === 'WARN') ? 'Warning' : 'Error'; $txt = $m[2] ?? ($m2[1] ?? $ln); $file = 'hugo'; $line = 1; $col = 0;
+        if (preg_match_all('~(?:/work/)?([\w./-]+\.(?:html|md|toml|yaml|yml|json|xml|css|js|scss)):(\d+)(?::(\d+))?~', $txt, $pp, PREG_SET_ORDER)) { $p = end($pp); $file = $p[1]; $line = (int)$p[2]; $col = (int)($p[3] ?? 0); if (strpos($file, '/') === false) { $hit = glob("$tmp/work/layouts/{,*/,*/*/}$file", GLOB_BRACE); if (count($hit) === 1) $file = substr($hit[0], strlen("$tmp/work/")); } } $add($k, $file, $line, $col, trim(preg_replace('~/work/~', '', $txt))); } }
+$made = is_dir("$tmp/work/_site") ? count(glob("$tmp/work/_site/{*,*/*}.html", GLOB_BRACE) ?: []) : 0; $pages = preg_match('/Pages\s*\|\s*(\d+)/', $o, $pm2) ? (int)$pm2[1] : $made;
+if ($sub === 'check') {
+    $rep = "# Hugo check: $name\n\n- Hugo " . trim(sh(escapeshellarg($HUGO) . ' version')) . "\n- Built in a sandbox (no network, no home folder): pages $pages; HTML files written: $made\n\n"; if ($rc !== 0 && !$cnt['Error']) { $add('Error', 'hugo', 1, 0, trim(substr($o, 0, 300))); }
+    $rep .= ($msgs ? "## Problems ({$cnt['Error']} errors, {$cnt['Warning']} warnings)\n\n" . implode("\n", array_slice(array_unique($msgs), 0, 200)) . "\n" : "No problems found.\n") . "\n[exit code " . ($cnt['Error'] > 0 || $rc !== 0 ? 1 : 0) . "]\n"; file_put_contents($out, $rep); echo "Wrote $out ({$cnt['Error']} errors, {$cnt['Warning']} warnings)\n"; exit(0);
+}
+// build
+if ($rc !== 0 || !$made) fail("the build failed:\n  " . implode("\n  ", array_slice($msgs, 0, 4)) . ($msgs ? '' : trim(substr($o, 0, 300))));
+if (strtolower(pathinfo($out, PATHINFO_EXTENSION)) !== 'zip' || !class_exists('ZipArchive')) fail('the output must be a .zip (and php zip must be installed)');
+$z = new ZipArchive(); @unlink($out); $z->open($out, ZipArchive::CREATE); $n = 0; foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator("$tmp/work/_site", FilesystemIterator::SKIP_DOTS)) as $f) if ($f->isFile()) { $z->addFile($f->getPathname(), substr($f->getPathname(), strlen("$tmp/work/_site/"))); $n++; } $z->close();
+echo "Wrote $out: $n file(s), $pages page(s)" . ($cnt['Warning'] ? ", {$cnt['Warning']} warning(s): run Check" : '') . "\n";

@@ -1,0 +1,22 @@
+{
+  "id": "real-estate",
+  "name": "Real estate and rentals",
+  "icon": "real_estate_agent",
+  "description": "Rent rolls, lease dates, yield and mortgage sums, and listing texts that stand up.",
+  "detect": [],
+  "note": "This is a real-estate and rentals project: rent rolls, leases, listings and property sums. Never invent a rent, a price, an area, a date, a tenant detail or a legal requirement: use the user's files and say what you assumed. Tenants' names and amounts are personal data: keep them in the project and do not repeat them elsewhere. Listings state facts: area, rooms, price, availability; strike superlatives and promised returns, and never claim a property is safe, quiet, a good investment or free of defects without a source the user gives. Keep original files untouched and write new versions under new names. Run the Real estate tool after every change and report what it lists. You do arithmetic and drafting on the user's data: you are not a lawyer, estate agent, tax adviser or financial adviser, and you say so when a question about a lease, a deposit, an eviction, a tax or a purchase decision needs one.",
+  "verify": "property rentroll",
+  "group": "Work & community",
+  "details": "Property work from plain files. The Real estate tool reads a rent roll CSV (unit, tenant, rent, due date, paid, lease end, deposit) and lists overdue rent with days and amount owing, rent due soon, leases ending within the number of days you choose or already ended, and deposit totals. It works out gross and net yield, the mortgage payment, monthly cash flow, cash-on-cash return and debt service coverage from the numbers you give, assuming nothing. It checks a listing text for missing area, rooms, price and availability, and for wording nobody can verify, in several languages. Not legal, financial or tax advice: local law decides what leases, deposits and listings must contain. Data analysis answers free-form questions on the same files.",
+  "examples": [
+    "Who is overdue on rent today and how much do they owe",
+    "Which leases end in the next 90 days",
+    "Yield and monthly cash flow for this flat with these costs and a 25-year mortgage",
+    "Check this listing for missing facts and claims I cannot back up"
+  ],
+  "tools": [
+    {"tool": "property", "why": "rent roll checks, yield, cash flow and mortgage sums, listing text check"},
+    {"tool": "data", "why": "ask the rent roll free-form questions in SQL, charts"},
+    {"tool": "pandoc", "why": "turn a notice or report into a Word or PDF document"}
+  ]
+}

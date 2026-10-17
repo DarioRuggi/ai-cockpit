@@ -1,0 +1,20 @@
+{
+  "id": "arduino-embedded",
+  "name": "Arduino / embedded",
+  "icon": "developer_board",
+  "description": "Microcontroller sketches: linted, compiled for a named board.",
+  "detect": ["*.ino"],
+  "group": "Hardware & making",
+  "note": "This is an Arduino or microcontroller project (.ino sketches in C++). Know the board: its RAM is tiny (2 KB on an Uno), so avoid the String class and dynamic memory, keep text in program memory with F(\"...\"), and watch the global arrays. Never block with a long delay() if the sketch must react: use millis() and keep loop() free. Set pinMode before digitalWrite, call Serial.begin once before any Serial output, keep interrupt handlers very short with no delay(), no Serial output and no allocation, and mark values shared with an interrupt volatile. Never invent a pin number, a voltage or a sensor address: ask for the wiring. Mains voltage is dangerous: never help wire anything to mains without saying so plainly. Run Lint after every change; Compile needs the board's core: name the board (fqbn=arduino:avr:uno) and, if the core is not installed, give the user the one command to add it rather than assuming it is there. Uploading to a board is the user's action.",
+  "verify": "arduino lint",
+  "details": "Writing sketches for microcontrollers. The Arduino tool lints a sketch by reading it, with no board core needed (no setup or loop, Serial before Serial.begin, digitalWrite without pinMode, delay or Serial in an interrupt handler, String use, text that eats RAM, big global arrays), lists its libraries, pins, baud rate and memory, compiles it with arduino-cli for the board you name with errors as file(line,col) and the program and RAM use, and starts a non-blocking blink. If the board's core is not installed it says which core and the one command to add it: the tool never downloads or uploads anything.",
+  "examples": [
+    "Blink without delay() and report over serial",
+    "Why does my sketch run out of RAM",
+    "Read a temperature sensor and print it every second",
+    "Check a sketch for interrupt-handler mistakes"
+  ],
+  "tools": [
+    {"tool": "arduino", "why": "lint a sketch, list its libraries and pins, compile for a named board, start a new sketch"}
+  ]
+}
